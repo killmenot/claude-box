@@ -61,6 +61,9 @@ catch (e) { console.error('workspace manager disabled:', e.message); }
 let tasks = null;
 try { tasks = require(process.env.WEB_TASKS_MODULE || './web-tasks.js'); }
 catch (e) { console.error('tasks disabled:', e.message); }
+let panel = null;     // the right-hand "Today" panel (GitHub + an MCP snapshot collected by a cheap agent)
+try { panel = require(process.env.WEB_PANEL_MODULE || './web-panel.js'); if (chat && chat.getSdk) panel.init({ getSdk: chat.getSdk }); }
+catch (e) { console.error('panel disabled:', e.message); }
 // small JSON request bodies only
 function readJson(req, limit, cb) {
   let body = '', big = false;
@@ -194,6 +197,14 @@ const handler = (req, res) => {
           return r;
         }));
       });
+      return;
+    }
+    if (path === '/panel' || path === '/panel/refresh') {
+      if (!panel) { json(res, 503, { enabled: false, error: 'panel module not loaded' }); return; }
+      const w = /(?:^|&)what=(github|agent)(?:&|$)/.exec(req.url.split('?')[1] || '');
+      if (path === '/panel/refresh' && req.method !== 'POST') { json(res, 405, { error: 'POST only' }); return; }
+      const p = path === '/panel' ? panel.get() : panel.refresh(w ? w[1] : 'all');
+      p.then((o) => json(res, 200, o), (e) => json(res, 500, { error: String(e.message || e) }));
       return;
     }
     if (path === '/categories') {

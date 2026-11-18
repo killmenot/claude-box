@@ -20,7 +20,7 @@
     --sans:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
     --display:'Space Grotesk',system-ui,sans-serif;
     --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,"DejaVu Sans Mono",monospace;
-    --side:290px;
+    --side:290px; --rp:310px;
   }
   *{box-sizing:border-box}
   html,body{height:100%}
@@ -344,7 +344,45 @@
   @keyframes bar{0%,100%{height:4px}50%{height:14px}}
   .voice .txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic}
 
+  /* ---------- right-hand "Today" panel ---------- */
+  .app.rp{grid-template-columns:var(--side) minmax(0,1fr) var(--rp)}
+  #rpanel{display:none;flex-direction:column;min-height:0;background:var(--paper);border-left:1px solid var(--line);font-size:13px;line-height:1.4}
+  .app.rp #rpanel{display:flex}
+  #rpbtn.on{background:var(--hover);color:var(--ink)}
+  .rph{display:flex;align-items:center;gap:6px;height:48px;padding:0 8px 0 14px;border-bottom:1px solid var(--line)}
+  .rph h3{flex:1;margin:0;font:600 14px var(--sans)}
+  .rpbody{flex:1;overflow:auto;padding:6px 0 10px}
+  .rpsec{border-bottom:1px solid var(--line)}
+  .rpsec>summary{display:flex;align-items:center;gap:6px;padding:8px 14px;cursor:pointer;list-style:none;font-weight:600;color:var(--slate);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .rpsec>summary::-webkit-details-marker{display:none}
+  .rpsec>summary:before{content:"▸";font-size:9px;width:8px}
+  .rpsec[open]>summary:before{content:"▾"}
+  .rpsec>summary .n{margin-left:auto;font:500 11px var(--mono);color:var(--mute);text-transform:none;letter-spacing:0}
+  .rpsec>summary .n.hot{color:var(--work)}
+  .rpsec .rpsub{padding:2px 14px 4px 28px;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+  .rpsec .rpsub2{margin:0}.rpsec .rpsub2>summary{padding:4px 14px 4px 28px;font-size:11px;color:var(--mute);cursor:pointer}
+  .rpi{display:block;padding:6px 14px 6px 28px;cursor:pointer;border-left:2px solid transparent}
+  .rpi:hover{background:var(--hover)}
+  .rpi .t{display:block;color:var(--ink);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .rpi .s{display:block;color:var(--mute);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rpi .s a{color:inherit}
+  .rpi.now{border-left-color:var(--work)}
+  .rpi.new .t:after{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--iris);margin-left:6px;vertical-align:middle}
+  .rpi .tag{display:inline-block;font:500 10px var(--mono);padding:0 5px;border-radius:4px;background:var(--hover);color:var(--slate);margin-right:4px}
+  .rpi .tag.ok{background:#e6f6ec;color:#15803d}.rpi .tag.bad{background:#fdecec;color:#b91c1c}.rpi .tag.pend{background:#fff6dc;color:#a16207}
+  .rpi.need{padding-left:14px}
+  .rpi.need .src{font:500 10px var(--mono);color:var(--mute);text-transform:uppercase;margin-right:6px}
+  .rpempty{padding:4px 14px 8px 28px;color:var(--mute);font-size:12px}
+  .rpfoot{padding:8px 14px;border-top:1px solid var(--line);color:var(--mute);font:11px var(--mono)}
+  .rpfoot .err{color:var(--err)}
+  .rpspin{display:inline-block;width:9px;height:9px;border:2px solid var(--mute);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media (max-width:1100px){
+    .app.rp{grid-template-columns:var(--side) minmax(0,1fr)}
+    #rpanel{position:fixed;z-index:18;right:0;top:0;bottom:0;width:min(92vw,var(--rp));box-shadow:0 0 40px rgba(0,0,0,.25)}
+  }
   @media (max-width:760px){
+    .app.rp{grid-template-columns:1fr}
     .app{grid-template-columns:1fr}
     #side{position:fixed;z-index:20;left:0;top:0;bottom:0;width:min(86vw,320px);transform:translateX(-100%);
           transition:transform .18s ease}
@@ -390,6 +428,7 @@
     <span id="ttl"></span>
     <div class="seg hidden" id="modeseg"><button type="button" data-m="chat">Chat</button><button type="button" data-m="console">Console</button></div>
     <a id="popout" class="iconbtn hidden" target="_blank" rel="noopener" title="Open the console in a new browser tab" aria-label="Open the console in a new browser tab">↗</a>
+    <button id="rpbtn" class="iconbtn" type="button" title="Today: meetings, tasks, PRs, Slack" aria-label="Today panel">◧</button>
   </div>
   <div id="views">
     <div id="blank"><div class="inner">
@@ -436,6 +475,13 @@
     </div></div>
   </div>
 </main>
+<aside id="rpanel">
+  <div class="rph"><h3>Today</h3>
+    <button class="iconbtn" type="button" id="rprefresh" title="Refresh now (GitHub instantly; calendar, Jira and Slack take about a minute)">↻</button>
+    <button class="iconbtn" type="button" id="rpclose" title="Hide the panel">✕</button></div>
+  <div class="rpbody" id="rpbody"><div class="rpempty">loading…</div></div>
+  <div class="rpfoot" id="rpfoot"></div>
+</aside>
 
 <script>
 'use strict';
@@ -1716,9 +1762,14 @@ $('raddfrom').addEventListener('submit', function(e){ e.preventDefault(); var f=
 // deep link: /?task=PROJ-123&title=…&url=…&repos=a,b&text=… (from DataBox, a bookmarklet, anything)
 function taskFromUrl(){
   var q=new URLSearchParams(location.search), id=q.get('task'); if(!id && !q.get('title')) return false;
-  var key=/^[A-Za-z][A-Za-z0-9]+-\d+$/.test(id||'')?id.toUpperCase():'';
-  var body={id:key?'':(id||''), key:key, title:q.get('title')||'', url:q.get('url')||'', text:q.get('text')||'',
-    source:q.get('source')||'', repos:(q.get('repos')||'').split(',').map(function(x){ return x.trim(); }).filter(Boolean)};
+  taskLink({id:id||'', title:q.get('title')||'', url:q.get('url')||'', text:q.get('text')||'', source:q.get('source')||'',
+    repos:(q.get('repos')||'').split(',').map(function(x){ return x.trim(); }).filter(Boolean)});
+  return true;
+}
+// open a task by id/key: an existing one (or one with repos given) right away, otherwise the prefilled form
+function taskLink(b){
+  var id=b.key||b.id||'', key=/^[A-Za-z][A-Za-z0-9]+-\d+$/.test(id)?id.toUpperCase():'';
+  var body={id:key?'':id, key:key, title:b.title||'', url:b.url||'', text:b.text||'', source:b.source||'', repos:b.repos||[]};
   // a known task opens right away; a new one without repos= opens the prefilled "New task" form,
   // so its repos are picked here (a link from outside cannot see this server's repo list)
   var known=body.key||body.id;
@@ -1733,7 +1784,6 @@ function taskFromUrl(){
     $('tkey').value=body.key; $('ttitle').value=body.title||body.id; $('turl').value=body.url;
     $('repopanel').classList.add('hidden'); $('tnewform').classList.remove('hidden'); $('ttitle').focus();
   });
-  return true;
 }
 
 $('newbtn').addEventListener('click', function(){ if(CHAT_ON) showBlank(); else newConsole(); });
@@ -1766,7 +1816,7 @@ function tick(){
     if(!rows) return;
     ROWS=visibleRows(rows); BYTOK={};
     ROWS.forEach(function(s){ BYTOK[s.token]=s; });
-    renderList(); renderTop(); notifyTick(ROWS);
+    renderList(); renderTop(); notifyTick(ROWS); if(rpOn()) rpRender();
   }).catch(function(){});
 }
 setInterval(tick, 2000);
@@ -1787,6 +1837,113 @@ fetch('chat/info').then(function(r){ return r.ok?r.json():{}; }).catch(function(
     if(s) openSession(s); else { showBlank(); if(innerWidth<=760) $('app').classList.add('drawer'); }
   });
 });
+
+// ======================= "Today" panel (right): needs me, calendar, GitHub, Jira, Slack =======================
+// GET panel -> {github:{review,team,mine}, agent:{calendar,jira,slack,needs,at,…}, agentRunning, …} (scripts/web-panel.js)
+var RP={data:null, timer:null, open:{}, seen:{}};
+try{ RP.open=JSON.parse(ls('cb.rpopen')||'{}')||{}; }catch(e){}
+try{ RP.seen=JSON.parse(ls('cb.rpseen')||'{}')||{}; }catch(e){}
+function rpOn(){ return $('app').classList.contains('rp'); }
+function rpToggle(on){
+  if(on===undefined) on=!rpOn();
+  $('app').classList.toggle('rp', on); $('rpbtn').classList.toggle('on', on); ls('cb.rp', on?'1':'0');
+  if(on) rpLoad();
+}
+function rpLoad(refresh){
+  return fetch(refresh?'panel/refresh':'panel', {method:refresh?'POST':'GET'}).then(function(r){ return r.ok?r.json():null; })
+    .then(function(d){ if(!d) return; RP.data=d; rpRender(); clearTimeout(RP.timer);
+      if(d.agentRunning) RP.timer=setTimeout(rpLoad, 5000); }).catch(function(){});
+}
+function hm(iso){ var d=new Date(iso); return isNaN(d)?'':d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+function ago(iso){ var t=Date.parse(iso); return isNaN(t)?'':fmt(Math.floor(t/1000)); }
+function rpItem(o){
+  var a=' data-url="'+esc(o.url||'')+'"'+(o.session?' data-session="'+esc(o.session)+'"':'')+
+    (o.jira?' data-jira="'+esc(o.jira)+'" data-title="'+esc(o.jtitle||'')+'"':'')+(o.seen?' data-seen="'+esc(o.seen)+'"':'');
+  return '<div class="rpi'+(o.cls?' '+o.cls:'')+'"'+a+' title="'+esc(o.tip||o.title)+'"><span class="t">'+(o.pre||'')+esc(o.title)+'</span>'+
+    (o.sub?'<span class="s">'+o.sub+'</span>':'')+'</div>';
+}
+function rpSec(id, title, n, body, hot, dflt){
+  var open=RP.open[id]!==undefined?RP.open[id]:!!dflt;
+  return '<details class="rpsec" data-sec="'+id+'"'+(open?' open':'')+'><summary>'+esc(title)+
+    '<span class="n'+(hot?' hot':'')+'">'+(n==null?'':n)+'</span></summary>'+(body||'<div class="rpempty">nothing</div>')+'</details>';
+}
+function ciTag(c){ return c==='SUCCESS'?'<span class="tag ok">CI ✓</span>':(c==='FAILURE'||c==='ERROR')?'<span class="tag bad">CI ✗</span>':c?'<span class="tag pend">CI …</span>':''; }
+function decTag(d){ return d==='CHANGES_REQUESTED'?'<span class="tag bad">changes requested</span>':d==='APPROVED'?'<span class="tag ok">approved</span>':''; }
+function botTag(b){ if(!b) return '';
+  return b.status==='running'?'<span class="tag pend">bot reviewing</span>':b.findings?'<span class="tag bad">bot: '+b.findings+' found</span>':
+    b.status==='done'?'<span class="tag ok">bot: clean</span>':'<span class="tag">bot: '+esc(b.status)+'</span>'; }
+function rpRender(){
+  var d=RP.data; if(!d) return;
+  var g=d.github||{}, a=d.agent||{}, now=Date.now(), h='';
+  var cal=(a.calendar||[]).filter(function(e){ return !e.declined && (e.allDay || Date.parse(e.end||e.start)>now); });
+  // needs me: live items first (sessions waiting for me, a meeting about to start), then the agent's picks
+  var needs=[], urls={};
+  ROWS.filter(function(s){ return s.live && s.state==='waiting'; }).forEach(function(s){
+    needs.push(rpItem({cls:'need now', pre:'<span class="src">session</span>', title:dispName(s), sub:'waiting for your answer', session:s.token})); });
+  cal.forEach(function(e){ var t=Date.parse(e.start)-now;
+    if(!e.allDay && t>-5*60000 && t<15*60000){ urls[e.url]=1;
+      needs.push(rpItem({cls:'need now', pre:'<span class="src">meet</span>', title:e.title, url:e.url, sub:t>0?'starts in '+Math.ceil(t/60000)+' min':'started'})); } });
+  (a.needs||[]).forEach(function(n){ if(n.url && urls[n.url]) return; urls[n.url]=1;
+    var jk=n.source==='jira' && /^[A-Z][A-Z0-9]+-\d+$/.test(n.ref||'')?n.ref:'';
+    needs.push(rpItem({cls:'need', pre:'<span class="src">'+esc(n.source)+'</span>', title:n.title, sub:esc(n.why||''), url:n.url, jira:jk, jtitle:n.title})); });
+  h+=rpSec('needs','Needs me', needs.length||'', needs.join(''), needs.length, true);
+  h+=rpSec('cal','Calendar', cal.length, cal.map(function(e){
+    var t=Date.parse(e.start)-now;
+    return rpItem({cls:(!e.allDay&&t<15*60000&&t>-60*60000)?'now':'', title:e.title, url:e.url,
+      sub:e.allDay?'all day':esc(hm(e.start)+(e.end?'–'+hm(e.end):''))}); }).join(''));
+  var mine=g.mine||[], rv=g.review||[], team=g.team||[];
+  var newMine=mine.filter(function(p){ return RP.seen[p.url] && Date.parse(p.updated)>RP.seen[p.url]; }).length;
+  var gb='';
+  if(d.githubError) gb+='<div class="rpempty" style="color:var(--err)">'+esc(d.githubError)+'</div>';
+  gb+='<div class="rpsub">Waiting for me</div>'+(rv.length?rv.map(function(p){
+    return rpItem({title:p.title, url:p.url, sub:esc(p.repo.split('/')[1]+'#'+p.number+' · '+(p.author||'')+' · '+ago(p.updated))+' '+botTag(p.bot)}); }).join('')
+    :'<div class="rpempty">no personal review requests</div>');
+  if(team.length) gb+='<details class="rpsub2"'+(RP.open.team?' open':'')+' data-sec="team"><summary>+ '+team.length+' via teams</summary>'+team.map(function(p){
+    return rpItem({title:p.title, url:p.url, sub:esc(p.repo.split('/')[1]+'#'+p.number+' · '+(p.author||'')+' · '+ago(p.updated))+' '+botTag(p.bot)}); }).join('')+'</details>';
+  gb+='<div class="rpsub">My PRs</div>'+(mine.length?mine.map(function(p){
+    var isNew=RP.seen[p.url] && Date.parse(p.updated)>RP.seen[p.url];
+    var lr=p.lastReview?' · '+esc(p.lastReview.by)+(p.lastReview.state==='COMMENTED'?' commented':' '+p.lastReview.state.toLowerCase().replace('_',' ')):'';
+    return rpItem({cls:isNew?'new':'', title:p.title, url:p.url, seen:p.url, pre:p.draft?'<span class="tag">draft</span>':'',
+      sub:ciTag(p.ci)+decTag(p.decision)+esc(p.repo.split('/')[1]+'#'+p.number+(p.comments?' · 💬'+p.comments:'')+lr)}); }).join('')
+    :'<div class="rpempty">no open PRs</div>');
+  var hotGh=rv.length+mine.filter(function(p){ return p.ci==='FAILURE'||p.decision==='CHANGES_REQUESTED'; }).length;
+  h+=rpSec('gh','GitHub', rv.length+' · '+mine.length+(newMine?' · '+newMine+' new':''), gb, hotGh);
+  h+=rpSec('jira','Jira', (a.jira||[]).length, (a.jira||[]).map(function(j){
+    return rpItem({title:j.title, pre:'<span class="tag">'+esc(j.key)+'</span>', jira:j.key, jtitle:j.title, url:j.url, tip:'Open a task workspace for '+j.key,
+      sub:esc([j.status,j.priority].filter(Boolean).join(' · '))+(j.url?' · <a href="'+esc(j.url)+'" target="_blank" rel="noopener" data-ext>Jira ↗</a>':'')}); }).join(''));
+  h+=rpSec('slack','Slack', (a.slack||[]).length, (a.slack||[]).map(function(m){
+    return rpItem({title:m.text, url:m.url, sub:esc([m.from, m.channel&&m.channel!==m.from?m.channel:'', m.at?ago(m.at):''].filter(Boolean).join(' · '))}); }).join(''));
+  $('rpbody').innerHTML=h;
+  var f=[];
+  if(d.agentRunning) f.push('<span class="rpspin"></span> collecting…');
+  else if(a.at) f.push('updated '+ago(a.at)+' ago'+(a.cost!=null?' · $'+Number(a.cost).toFixed(3):''));
+  else if(d.enabled===false) f.push('agent collection is off (WEB_PANEL=0)');
+  if(d.agentError) f.push('<span class="err">'+esc(d.agentError)+'</span>');
+  $('rpfoot').innerHTML=f.join(' · ');
+}
+$('rpbody').addEventListener('toggle', function(e){
+  var sec=e.target.getAttribute && e.target.getAttribute('data-sec'); if(!sec) return;
+  RP.open[sec]=e.target.open; ls('cb.rpopen', JSON.stringify(RP.open));
+}, true);
+$('rpbody').addEventListener('click', function(e){
+  if(e.target.closest('[data-ext]')) return;               // a plain link inside an item
+  var it=e.target.closest('.rpi'); if(!it) return;
+  var url=it.getAttribute('data-url'), ses=it.getAttribute('data-session'), jira=it.getAttribute('data-jira'), seen=it.getAttribute('data-seen');
+  if(seen){ RP.seen[seen]=Date.now(); var k=Object.keys(RP.seen); if(k.length>300) delete RP.seen[k[0]]; ls('cb.rpseen', JSON.stringify(RP.seen)); it.classList.remove('new'); }
+  if(ses){ openSession(ses); return; }
+  if(jira && !(e.metaKey||e.ctrlKey)){ taskLink({key:jira, title:it.getAttribute('data-title')||'', url:url}); if(innerWidth<=1100) rpToggle(false); return; }
+  if(url) window.open(url, '_blank', 'noopener');
+});
+// "My PRs" seen-marks start from the first time the panel shows them, so nothing is "new" on day one
+function rpSeedSeen(){ var g=RP.data&&RP.data.github; if(!g) return; var ch=false;
+  (g.mine||[]).forEach(function(p){ if(!RP.seen[p.url]){ RP.seen[p.url]=Date.parse(p.updated)||Date.now(); ch=true; } });
+  if(ch) ls('cb.rpseen', JSON.stringify(RP.seen)); }
+$('rpbtn').addEventListener('click', function(){ rpToggle(); });
+$('rpclose').addEventListener('click', function(){ rpToggle(false); });
+$('rprefresh').addEventListener('click', function(){ $('rpfoot').innerHTML='<span class="rpspin"></span> refreshing…'; rpLoad(true); });
+setInterval(function(){ if(!document.hidden && rpOn()) rpLoad().then(rpSeedSeen); }, 60000);
+if(ls('cb.rp')==='1' || (ls('cb.rp')===null && innerWidth>1100)) rpToggle(true);
+setTimeout(function(){ rpSeedSeen(); }, 3000);
 
 // ======================= search =======================
 (function(){

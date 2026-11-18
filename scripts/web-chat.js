@@ -650,4 +650,6 @@ async function apiStatus(token) {
   return out;
 }
 
-module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus };
+async function getSdk() { await sdkReady; return sdk; }
+
+module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk };
