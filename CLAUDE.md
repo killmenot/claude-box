@@ -14,8 +14,9 @@ Guidance for Claude Code (and other agents) working in this repository.
 
 ## Project shape (quick orientation)
 
-- `claude-box` — host entry point (launch / attach / `--web` / `--tunnel`).
-- `scripts/` — in-container menu, web terminal (ttyd) sidecar, launcher, metrics, notify.
+- `claude-box` — host entry point: first-run setup, then brings up the web UI (`--tunnel`, `--stop`, `--status`).
+- `scripts/` — the in-container web server in Node (`web-serve.js` entrypoint, `web-sidecar.js`, session registry,
+  metrics, search, preview) plus two shell pieces: `web-menu.sh` (ttyd console picker) and `notify.sh` (Claude hook).
   `scripts/web-chat.js` — web chat mode: Claude Agent SDK sessions streamed to the launcher over `/chat/ws`.
 - `site/` — the static marketing landing for **claude-box.dev** (Tailwind, self-hosted
   fonts, no CDN; deploy with `./site/deploy.sh`).

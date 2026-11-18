@@ -30,12 +30,14 @@ claude-box is designed for a Linux host. On Windows it runs through **WSL2** (in
 
 ## Configuring claude-box
 
-4. **`PROJECT_DIR` in `.env` is a WSL path, not a Windows one.** From inside Ubuntu, Docker doesn't understand
-   `C:\...`; it needs `/mnt/c/...`. Example:
+4. **`PROJECT_DIR` in `.env` is a WSL path, not a Windows one.** The first start of `claude-box` asks for it
+   (default `~/workspace` inside Ubuntu). From inside Ubuntu, Docker doesn't understand `C:\...`; to use a
+   Windows folder, answer with its `/mnt/c/...` form. Example:
    ```env
    PROJECT_DIR=/mnt/c/Users/<user>/Documents/<...>/<workspace>
    ```
    (the path to the **parent** projects folder; don't point it at `claude-box` itself).
+   The same first start also asks for the web login and password.
 
 5. **Authorization and the rest** — same as in the README: `CLAUDE_CODE_OAUTH_TOKEN`, and if needed
    `HTTPS_PROXY`/`GH_TOKEN` in `.env`.
@@ -43,8 +45,8 @@ claude-box is designed for a Linux host. On Windows it runs through **WSL2** (in
 ## Running
 
 6. **The `claude-box.bat` launcher** (sits in the repository root) — double-click it in Explorer.
-   It figures out its own folder (`%~dp0`), converts the path to WSL form, and goes one level up
-   to show the full workspace menu.
+   It figures out its own folder (`%~dp0`), converts the path to WSL form and starts the web UI;
+   the console window stays open with the address to open in the browser (and the first-run questions).
 
 7. **Icon + shortcut** (optional). Once, in PowerShell:
    ```powershell
@@ -70,7 +72,7 @@ claude-box is designed for a Linux host. On Windows it runs through **WSL2** (in
 
 > Cross-platform section (Linux/macOS/Windows). A link from the main [README](README.md) leads here.
 
-Symptom — `./claude-box --build` (or `docker compose build`) fails at the image download stage:
+Symptom — `./claude-box` (or `docker compose build`) fails at the image download stage:
 
 ```
 failed to solve: node:22-slim: failed to authorize: failed to fetch anonymous token:
@@ -93,7 +95,7 @@ direct access to the registry; usually there is).
 ```bash
 ./scripts/certs-fix.sh        # puts certs/*.crt into the host trust store (update-ca-certificates)
                               # and restarts docker
-./claude-box --build
+./claude-box
 ```
 
 ⚠️ The script **restarts docker** — other running containers will stop (bring them back up afterwards with
@@ -108,7 +110,7 @@ sudo cat /proc/$(pgrep -x dockerd)/environ | tr '\0' '\n' | grep -i proxy   # fi
 # (systemd drop-in /etc/systemd/system/docker.service.d/*.conf, EnvironmentFile,
 #  /etc/docker/daemon.json → "proxies", or ~/.docker/config.json → "proxies"), then:
 sudo systemctl restart docker
-./claude-box --build
+./claude-box
 ```
 
 ### macOS / Windows (Docker Desktop)

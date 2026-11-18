@@ -1,0 +1,11 @@
+# Overlay for `claude-box --no-proxy`: run WITHOUT the proxy from .env (the host's direct egress).
+# Explicit empty values in `environment` win over env_file.
+services:
+  web:
+    environment:
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - ALL_PROXY=
+      - all_proxy=

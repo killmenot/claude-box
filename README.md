@@ -13,22 +13,32 @@ Claude traffic via a foreign TLS proxy, with state and plugins preserved between
 ## Running
 
 ```bash
-./claude-box           # start the container (or attach to a running one)
-./claude-box --build   # rebuild the image and start
-./claude-box --install # print how to add claude-box to PATH (changes nothing)
-./claude-box --web      # bring up the web terminal (ttyd) at http://localhost:7681
-./claude-box --web --tunnel # + publish it externally (cloudflared without a token / ngrok)
-./claude-box --web-stop # stop the web terminal
+./claude-box            # build (cached) and start the web UI, print its address
+./claude-box --tunnel   # + publish it on a public https URL (cloudflared without a token / ngrok)
+./claude-box --no-proxy # run without the proxy from .env (the host's direct egress)
+./claude-box --status   # is it running, where, which console sessions
+./claude-box --stop     # stop it (running sessions come back on the next start)
+./claude-box --setup    # re-run the first-run setup
+./claude-box --install  # print how to add claude-box to PATH (changes nothing)
 ```
 
-`claude-box` is aware of the directory it was launched from (relative to `PROJECT_DIR`):
+claude-box is a web UI: open the printed address (`http://localhost:7681`, or `https://localhost:8443`
+for clipboard and notifications) and work with Claude in the browser — as a chat or in a real terminal.
+The old `--web` / `--build` flags are still accepted and do the same as a plain `./claude-box`.
 
-- **in a project subfolder** (`$PROJECT_DIR/<project>`) — it goes straight to a single-page session picker for that folder: `• New session` + saved sessions for `--resume`;
-- **in the root of `PROJECT_DIR`** — the full **menu** (fzf picker: type to search, ↑↓ and Enter): temporary session (scratch) / create a new folder / run `claude` in a subfolder / `bash` in the container;
-- **outside `PROJECT_DIR`** — the container isn't mounted there, so a notification is printed and a **temporary** (scratch) session is started.
+**First start.** `claude-box` sets itself up in the terminal:
+
+1. creates `.env` from `.env.example` if there is none (tokens, proxy and the rest live there);
+2. asks for the **workspace folder** — the host folder with your projects, mounted as `/workspace`
+   (default `~/workspace`, created if missing) and saves it as `PROJECT_DIR`;
+3. asks for the **web login and password** (`WEB_TERMINAL_USER`, default `claude`, and
+   `WEB_TERMINAL_PASSWORD`; Enter generates a password and shows it once). The browser asks for them
+   before showing the UI; they are also what `--tunnel` requires.
+
+Later starts ask nothing; `./claude-box --setup` asks again. Without a terminal (a script, CI) it does
+not ask: a missing `.env` or workspace is an error with a hint.
 
 To call `claude-box` from anywhere, add it to PATH (`./claude-box --install` shows how).
-The working folder `/workspace` is set in `.env` via `PROJECT_DIR` — this is the **parent** folder containing projects (its subfolders, newest first, are what appear in the menu).
 
 > If the build fails with `x509: certificate signed by unknown authority`, that's about the proxy
 > certificate on the host Docker daemon; for how to fix it on Linux/macOS/Windows see
@@ -43,10 +53,18 @@ The working folder `/workspace` is set in `.env` via `PROJECT_DIR` — this is t
 - **MCP servers** — user-scope, seeded from `claude-defaults/mcp.json` into `~/.claude.json` at startup: `atlassian`, `github`, `sentry`, `context7`, `kubernetes`, `figma`, `playwright`, `grafana`. Remote ones (`atlassian`/`sentry`/`figma`) are authorized once via `/mcp`; `github` takes `GH_TOKEN`, `context7` takes `CONTEXT7_API_KEY`, `grafana` takes `GRAFANA_URL`+`GRAFANA_SERVICE_ACCOUNT_TOKEN` from `.env`.
 - **git** — identity set in `home/.gitconfig`.
 - **Completion signals** — when Claude finishes a response (or is waiting for input/permission), a bell rings and the tab title changes to `✅/❓/⏳ <session>`; from another tab you can see which Claude has become free. To disable — `CLAUDE_NOTIFY_DISABLE=1` in `.env` (hooks already seeded remain until you manually clear `home/.claude/settings.json`).
-- **Web terminal** — `claude-box --web` brings up ttyd on `127.0.0.1:7681`; the browser opens a picker of tmux sessions (different tabs = different claude sessions, which survive closing the tab). Port/password — `WEB_TERMINAL_PORT` / `WEB_TERMINAL_PASSWORD` in `.env`. Several concurrent sessions share `~/.claude.json` (a shared `./home`), the seed is serialized via flock, but simultaneous active work in the same folder/session from different tabs is not recommended.
-- **Web chat (HTML mode)** — the launcher (`claude-box --web`) shows a Claude Code-style sidebar of sessions grouped by folder. Each session opens as a native web chat by default: messages stream in over a WebSocket (`/chat/ws`), Markdown/code render as real HTML (select and copy normally), tool calls show as collapsible rows with their results and diffs, and permission requests / Claude's questions appear as buttons. Under the hood the sidecar drives Claude through the **Claude Agent SDK** (`scripts/web-chat.js`), on the same session files as the CLI. The **Chat / Console** switch in the top bar hands the same session over to the classic terminal (`claude --resume` in tmux, for slash commands and anything TUI-only) and back — one owner at a time, so switching to the console stops the chat process and switching back closes the console. New sessions start from a folder picker; the classic console menu is still one click away. Idle chat processes stop after `WEB_CHAT_IDLE_MINUTES` (default 60) and resume on the next message. Files can be attached with the paperclip, by pasting (e.g. a screenshot) or by dropping them on the chat (up to 20 files / 30 MB per message): they are saved under `~/.claude/web-uploads/` (override with `WEB_CHAT_UPLOADS`), images are also sent inline, and every file is listed by path so Claude can read it. The **Tools:** button in the composer folds tool calls into one line per run (compact), shows them all, or hides them.
+- **Web terminal (Console)** — the in-browser terminal is ttyd on `127.0.0.1:7682`, behind the same port and login as the rest of the UI; it opens a picker of tmux sessions (different tabs = different claude sessions, which survive closing the tab; a new one asks for its folder). Port / login / password — `WEB_TERMINAL_PORT` / `WEB_TERMINAL_USER` / `WEB_TERMINAL_PASSWORD` in `.env`. Several concurrent sessions share `~/.claude.json` (a shared `./home`); simultaneous active work in the same folder/session from different tabs is not recommended.
+- **Web chat (HTML mode)** — the launcher shows a Claude Code-style sidebar of sessions grouped by folder. Each session opens as a native web chat by default: messages stream in over a WebSocket (`/chat/ws`), Markdown/code render as real HTML (select and copy normally), tool calls show as collapsible rows with their results and diffs, and permission requests / Claude's questions appear as buttons. Under the hood the sidecar drives Claude through the **Claude Agent SDK** (`scripts/web-chat.js`), on the same session files as the CLI. The **Chat / Console** switch in the top bar hands the same session over to the classic terminal (`claude --resume` in tmux, for slash commands and anything TUI-only) and back — one owner at a time, so switching to the console stops the chat process and switching back closes the console. New sessions start from a folder picker; the classic console menu is still one click away. Idle chat processes stop after `WEB_CHAT_IDLE_MINUTES` (default 60) and resume on the next message. Files can be attached with the paperclip, by pasting (e.g. a screenshot) or by dropping them on the chat (up to 20 files / 30 MB per message): they are saved under `~/.claude/web-uploads/` (override with `WEB_CHAT_UPLOADS`), images are also sent inline, and every file is listed by path so Claude can read it. The **Tools:** button in the composer folds tool calls into one line per run (compact), shows them all, or hides them.
 - **Sessions survive a container restart** — the web container keeps the list of running sessions on disk (`home/.claude/web-live-sessions.json`, refreshed every 15s and on shutdown). On the next start every one of them is brought back automatically (`claude --resume` in its original folder, same tmux name), so the launcher shows them live again. The web service also has `restart: unless-stopped`, so it comes back by itself after a Docker/host restart. A session is remembered once Claude has fired its first hook in it (i.e. after the first prompt). Set `WEB_RESTORE_SESSIONS=0` in `.env` to turn this off.
-- **Public access from your phone** — `claude-box --web --tunnel` brings up the web terminal and publishes it externally (the tunnel runs inside the container), printing a public `https://` address — connect from your mobile anywhere. The backend is chosen automatically: by default **cloudflared** (TryCloudflare — **no token and no account**, a random `*.trycloudflare.com`); if `NGROK_AUTHTOKEN` is set in `.env`, it goes through **ngrok** (optional `NGROK_DOMAIN` for a permanent address). In any case **`WEB_TERMINAL_PASSWORD` is mandatory** — without it the tunnel won't come up (the web terminal stays local); a public shell without a password is not allowed. The tunnel points at the sidecar's http port (`WEB_TERMINAL_PORT`), but the public URL is still `https` (TLS is terminated by the tunnel provider) — so notifications and clipboard work in the phone's browser. It's torn down together with `--web-stop`.
+- **Public access from your phone** — `claude-box --tunnel` brings up the web UI and publishes it externally (the tunnel runs inside the container), printing a public `https://` address — connect from your mobile anywhere. The backend is chosen automatically: by default **cloudflared** (TryCloudflare — **no token and no account**, a random `*.trycloudflare.com`); if `NGROK_AUTHTOKEN` is set in `.env`, it goes through **ngrok** (optional `NGROK_DOMAIN` for a permanent address). In any case **`WEB_TERMINAL_PASSWORD` is mandatory** — without it the tunnel won't come up (the web terminal stays local); a public shell without a password is not allowed. The tunnel points at the sidecar's http port (`WEB_TERMINAL_PORT`), but the public URL is still `https` (TLS is terminated by the tunnel provider) — so notifications and clipboard work in the phone's browser. It's torn down together with `--stop`.
+
+## Tests
+
+```bash
+node --test tests/*.test.js     # web server modules: registry, search, preview, metrics, startup
+bash tests/web-menu.test.sh     # console deep links / resume (needs tmux, jq)
+bash tests/claude-box.test.sh   # host entry point: first-run setup, docker calls (docker is stubbed)
+```
 
 ---
 
@@ -76,11 +94,10 @@ Open `.env`, uncomment the line and paste the token:
 GH_TOKEN=ghp_xxx
 ```
 
-Restart the container — and `gh` is ready:
+Restart claude-box (`./claude-box --stop && ./claude-box`) — and `gh` is ready:
 
 ```bash
-./claude-box
-# inside:
+# in the web terminal:
 gh auth status     # should show "Logged in ... (GH_TOKEN)"
 gh pr create ...
 ```
@@ -102,7 +119,7 @@ Jira/Confluence connect via Atlassian's official remote MCP server.
 
 Authorization — **once**:
 
-1. Start the container: `./claude-box`
+1. Start claude-box (`./claude-box`) and open a session in the **Console** (the terminal).
 2. In Claude type `/mcp` → choose **atlassian** → **Authenticate**.
 3. Claude will show an OAuth link — open it in a browser, log in to Atlassian, grant access.
 4. The authorization is saved in the passed-through `home/` (`~/.claude`) — no need to log in again on restarts.
