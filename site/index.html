@@ -49,7 +49,7 @@
         <h1 class="mt-4 font-display text-[clamp(2.5rem,5.4vw,3.9rem)] font-bold leading-[1.02] tracking-tightest">Run Claude Code<br>in a <span class="text-iris">box.</span></h1>
         <p class="mt-5 max-w-[46ch] text-[18.5px] leading-relaxed text-slate">A Dockerized Claude Code you open in any browser. Let it run on <span class="font-semibold text-ink">auto</span> — it can't touch anything outside <span class="font-mono text-ink">/workspace</span>, and its traffic is proxied, so it can't break your machine or phone your code home.</p>
         <div id="get-started" class="mt-7 flex flex-wrap items-center gap-3">
-          <button class="cmd" data-copy="claude-box --web" aria-label="Copy command"><span class="p">$</span> claude-box --web <span data-copy-icon>⧉</span></button>
+          <button class="cmd" data-copy="claude-box" aria-label="Copy command"><span class="p">$</span> claude-box <span data-copy-icon>⧉</span></button>
           <a href="https://github.com/rcrvano/claude-box" class="btn-ghost">★ Star on GitHub <span data-stars class="text-slate"></span></a>
         </div>
         <div class="mt-6 flex flex-wrap gap-x-5 gap-y-2 font-mono text-[12.5px] text-slate">
@@ -176,7 +176,7 @@
         <!-- the rest (expandable) -->
         <div class="more-rows" data-more>
           <div class="spec"><span class="id">04</span><h3>Web terminal, any device</h3><p>Claude Code over ttyd in the browser. tmux-backed sessions survive a closed tab or reboot; each one is deep-linkable.</p></div>
-          <div class="spec"><span class="id">05</span><h3>Open it from your phone</h3><p><code>claude-box --web --tunnel</code> publishes the terminal over a public HTTPS URL — cloudflared by default (no account needed), ngrok optional. Drop in from your phone, anywhere.</p></div>
+          <div class="spec"><span class="id">05</span><h3>Open it from your phone</h3><p><code>claude-box --tunnel</code> publishes the web UI over a public HTTPS URL — cloudflared by default (no account needed), ngrok optional. Drop in from your phone, anywhere.</p></div>
           <div class="spec"><span class="id">06</span><h3>It taps your shoulder</h3><p>Browser notifications and a tab-title marker the moment a run finishes 🟢 or needs your input 🟡.</p></div>
           <div class="spec"><span class="id">07</span><h3>Proxied egress</h3><p>Claude → Anthropic traffic is routed through a TLS proxy; internal targets bypass it via <code>NO_PROXY</code>.</p></div>
           <div class="spec"><span class="id">08</span><h3>MCP servers, pre-seeded</h3><p>GitHub, Atlassian, Sentry, context7, Kubernetes, Figma, Playwright and Grafana seeded into user scope on start.</p></div>
@@ -196,7 +196,7 @@
         <div class="kicker">Web terminal</div>
         <h2 class="mt-3 font-display text-[clamp(1.7rem,3.2vw,2.3rem)] font-bold leading-tight tracking-tighter">Your terminal, in any browser.</h2>
         <p class="mt-4 text-[17px] leading-relaxed text-slate">Open Claude Code over ttyd from a laptop, tablet, or phone. Sessions live in tmux, so they survive a closed tab or a reboot — and every one is deep-linkable, so a bookmarked URL drops you straight back in.</p>
-        <p class="mt-3 text-[15px] leading-relaxed text-slate">Need it off your LAN? <span class="font-mono text-ink">claude-box --web --tunnel</span> publishes a public HTTPS address (cloudflared by default, ngrok optional) — check on a run from your phone while you're out.</p>
+        <p class="mt-3 text-[15px] leading-relaxed text-slate">Need it off your LAN? <span class="font-mono text-ink">claude-box --tunnel</span> publishes a public HTTPS address (cloudflared by default, ngrok optional) — check on a run from your phone while you're out.</p>
         <div class="mt-6 flex flex-wrap gap-2.5 font-mono text-[12px] text-slate">
           <span class="rounded-full border border-line bg-panel px-3 py-1">laptop</span>
           <span class="rounded-full border border-line bg-panel px-3 py-1">tablet</span>
@@ -222,7 +222,9 @@
       <div class="mt-10 grid gap-4 md:grid-cols-3">
         <div class="card"><div class="step n">01</div><h3 class="mt-2 font-display text-[17px] font-bold">Clone the repo</h3><pre class="mt-3.5 overflow-x-auto rounded-[10px] bg-screen p-3.5 font-mono text-xs text-screen-txt"><span class="t-i">git</span> clone github.com/
   rcrvano/claude-box</pre></div>
-        <div class="card"><div class="step n">02</div><h3 class="mt-2 font-display text-[17px] font-bold">Launch the box</h3><pre class="mt-3.5 overflow-x-auto rounded-[10px] bg-screen p-3.5 font-mono text-xs text-screen-txt"><span class="t-i">$</span> claude-box --web</pre></div>
+        <div class="card"><div class="step n">02</div><h3 class="mt-2 font-display text-[17px] font-bold">Launch the box</h3><pre class="mt-3.5 overflow-x-auto rounded-[10px] bg-screen p-3.5 font-mono text-xs text-screen-txt"><span class="t-i">$</span> claude-box
+workspace [~/workspace]: ↵
+login [claude]: ↵</pre></div>
         <div class="card"><div class="step n">03</div><h3 class="mt-2 font-display text-[17px] font-bold">Open in your browser</h3><pre class="mt-3.5 overflow-x-auto rounded-[10px] bg-screen p-3.5 font-mono text-xs text-screen-txt">https://localhost:8443</pre></div>
       </div>
     </section>
@@ -255,7 +257,7 @@
         <h2 class="mt-3 font-display text-[clamp(2rem,4vw,2.9rem)] font-bold tracking-tightest">Box your Claude.</h2>
         <p class="mx-auto mt-3 max-w-[42ch] text-[17px] text-slate">Isolated, durable, reachable from anywhere. One command to start.</p>
         <div class="mt-7 flex flex-wrap items-center justify-center gap-3">
-          <button class="cmd" data-copy="claude-box --web" aria-label="Copy command"><span class="p">$</span> claude-box --web <span data-copy-icon>⧉</span></button>
+          <button class="cmd" data-copy="claude-box" aria-label="Copy command"><span class="p">$</span> claude-box <span data-copy-icon>⧉</span></button>
           <a href="https://github.com/rcrvano/claude-box" class="btn-ghost">★ Star on GitHub <span data-stars class="text-slate"></span></a>
         </div>
       </div>
@@ -287,9 +289,9 @@
       <div>
         <div class="mb-3 font-mono text-[11px] uppercase tracking-wider text-slate">Commands</div>
         <ul class="space-y-2 font-mono text-[13px] text-slate">
-          <li>claude-box --web</li>
-          <li>… --web --tunnel</li>
-          <li>… --build</li>
+          <li>claude-box</li>
+          <li>… --tunnel</li>
+          <li>… --stop</li>
         </ul>
       </div>
     </div>
