@@ -263,6 +263,13 @@
   .tgroup.skill .tsum .tc{color:var(--ink)}
   .tgroup.skill:not(.open) .titems{display:none}
   .tgroup.skill.open .titems{border-left:2px solid var(--line);padding-left:10px;margin-left:3px}
+  .skilldoc{margin:4px 0;color:var(--mute);font-size:12px}
+  .skilldoc>summary{cursor:pointer;text-align:right;list-style:none;opacity:.8}
+  .skilldoc>summary::-webkit-details-marker{display:none}
+  .skilldoc>summary:before{content:"▸ ";font-size:10px}
+  .skilldoc[open]>summary:before{content:"▾ "}
+  .skilldoc>summary:hover{color:var(--ink);opacity:1}
+  .skilldoc>.body{color:var(--ink);font-size:13px;border-left:2px solid var(--line);padding-left:10px;margin:6px 0 0 3px;max-height:60vh;overflow:auto}
   .toolsbtn{border:0;background:transparent;color:var(--mute);font:600 11px var(--mono);cursor:pointer;padding:4px 2px;white-space:nowrap}
   .toolsbtn:hover{color:var(--ink)}
   .attbtn{border:0;background:transparent;color:var(--mute);cursor:pointer;padding:4px;display:flex;border-radius:8px}
@@ -976,6 +983,13 @@ function userTextHtml(p, t, imgs){
   if(cmd){ var args=/<command-args>([\s\S]*?)<\/command-args>/.exec(t); addUser(p, cmd[1].trim()+(args&&args[1].trim()?' '+args[1].trim():'')); return; }
   var out=/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(t);
   if(out){ if(out[1].trim()) p.inner.appendChild(el('div','note','<pre>'+esc(out[1].trim())+'</pre>')); return; }
+  // a skill's instructions (SKILL.md) injected after a Skill call: collapsed, opens on click
+  var sk=/^Base directory for this skill: (\S+)/.exec(t);
+  if(sk){
+    var d=el('details','skilldoc'), nm=sk[1].replace(/\/+$/,'').split('/').pop();
+    d.innerHTML='<summary>'+esc(nm)+' · skill instructions</summary><div class="body">'+md(t)+'</div>';
+    p.inner.appendChild(d); return;
+  }
   if(/^\s*</.test(t) || /^Caveat:/.test(t)) return;
   // our own optimistic echo arrives back from the SDK — don't print it twice
   var pe=p.r.pendingEcho||[]; var ix=pe.indexOf(t.trim());
