@@ -1438,7 +1438,7 @@ function folderAction(a, name, path){
 }
 
 // ======================= tasks: one folder (with its own repo clones) per task =======================
-var TDATA={tasks:[], repos:[], candidates:[], jobs:[]}, TBYSLUG={}, rjobTimer=null;
+var TDATA={tasks:[], repos:[], candidates:[], jobs:[]}, TBYSLUG={}, rjobTimer=null, PENDING_TASK=null;
 var TSTATE={clean:'nothing unsaved', dirty:'uncommitted changes', unpushed:'commits not pushed',
             archived:'archived — folder removed, branch kept'};
 function tPost(op, body){
@@ -1558,13 +1558,15 @@ $('tshowarch').addEventListener('change', renderTasks);
 $('tnew').addEventListener('click', function(){ $('repopanel').classList.add('hidden'); $('tnewform').classList.toggle('hidden');
   if(!$('tnewform').classList.contains('hidden')) $('ttitle').focus(); });
 $('trepobtn').addEventListener('click', function(){ $('tnewform').classList.add('hidden'); $('repopanel').classList.toggle('hidden'); });
-$('tnewform').querySelector('[data-x]').addEventListener('click', function(){ $('tnewform').classList.add('hidden'); });
+$('tnewform').querySelector('[data-x]').addEventListener('click', function(){ $('tnewform').classList.add('hidden'); PENDING_TASK=null; });
 $('tnewform').addEventListener('submit', function(e){
   e.preventDefault();
   var key=$('tkey').value.trim(), title=$('ttitle').value.trim(); if(!key && !title){ $('ttitle').focus(); return; }
   var repos=[].map.call($('trepopick').querySelectorAll('input:checked'), function(i){ return i.value; });
   var btn=$('tnewform').querySelector('button[type=submit]'); btn.disabled=true; btn.textContent='Creating…';
-  tPost('open',{key:key, title:title, url:$('turl').value.trim(), repos:repos}).then(function(t){
+  var pend=PENDING_TASK||{}; PENDING_TASK=null;
+  tPost('open',{key:key, title:title, url:$('turl').value.trim(), repos:repos,
+    id:key?'':(pend.id||''), text:pend.text||'', source:pend.source||''}).then(function(t){
     if(t.errors && t.errors.length) alert('Some repos could not be cloned:\n'+t.errors.join('\n'));
     $('tkey').value=''; $('ttitle').value=''; $('turl').value=''; $('tnewform').classList.add('hidden');
     loadTasks(); openTask(t);
@@ -1581,8 +1583,20 @@ function taskFromUrl(){
   var key=/^[A-Za-z][A-Za-z0-9]+-\d+$/.test(id||'')?id.toUpperCase():'';
   var body={id:key?'':(id||''), key:key, title:q.get('title')||'', url:q.get('url')||'', text:q.get('text')||'',
     source:q.get('source')||'', repos:(q.get('repos')||'').split(',').map(function(x){ return x.trim(); }).filter(Boolean)};
-  tPost('open', body).then(function(t){ loadTasks(); openTask(t); })
-    .catch(function(e){ showBlank(); alert('Could not open the task: '+e.message); });
+  // a known task opens right away; a new one without repos= opens the prefilled "New task" form,
+  // so its repos are picked here (a link from outside cannot see this server's repo list)
+  var known=body.key||body.id;
+  fetch('tasks').then(function(r){ return r.ok?r.json():{tasks:[]}; }).catch(function(){ return {tasks:[]}; }).then(function(o){
+    var ex=(o.tasks||[]).filter(function(t){ return known && t.id===known; })[0];
+    if(ex || body.repos.length){
+      tPost('open', body).then(function(t){ loadTasks(); openTask(t); })
+        .catch(function(e){ showBlank(); alert('Could not open the task: '+e.message); });
+      return;
+    }
+    showBlank(); PENDING_TASK=body;
+    $('tkey').value=body.key; $('ttitle').value=body.title||body.id; $('turl').value=body.url;
+    $('repopanel').classList.add('hidden'); $('tnewform').classList.remove('hidden'); $('ttitle').focus();
+  });
   return true;
 }
 
