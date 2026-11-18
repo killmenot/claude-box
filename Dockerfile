@@ -83,12 +83,13 @@ RUN node /opt/claude-web-src/build-index.js \
       /opt/claude-web-src/launcher.html /usr/local/share/claude-web/launcher.html
 
 # The web server (Node): entrypoint, sidecar, chat, session registry, metrics, search, preview.
-# All modules live side by side in /usr/local/lib/claude-web; the two commands that other
-# processes call (the entrypoint and the registry CLI) are symlinked onto PATH.
+# All modules live side by side in /usr/local/lib/claude-web; the commands that other
+# processes call (the entrypoint, the registry CLI, cb-session) are symlinked onto PATH.
 COPY scripts/*.js /usr/local/lib/claude-web/
 RUN ln -sf /usr/local/lib/claude-web/web-serve.js /usr/local/bin/claude-web-serve \
  && ln -sf /usr/local/lib/claude-web/web-registry.js /usr/local/bin/claude-web-registry \
- && chmod +x /usr/local/lib/claude-web/web-serve.js /usr/local/lib/claude-web/web-registry.js
+ && ln -sf /usr/local/lib/claude-web/cb-session.js /usr/local/bin/cb-session \
+ && chmod +x /usr/local/lib/claude-web/web-serve.js /usr/local/lib/claude-web/web-registry.js /usr/local/lib/claude-web/cb-session.js
 
 # The two shell pieces: the ttyd landing picker (tmux) and the Claude hook (bell + tab title +
 # registry), plus the tmux config (set-titles -> tab title)

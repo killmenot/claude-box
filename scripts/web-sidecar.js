@@ -172,6 +172,30 @@ const handler = (req, res) => {
       });
       return;
     }
+    if (path === '/chat/api/new' || path === '/chat/api/status') {
+      // headless sessions for agents (scripts/cb-session.js); see web-chat.js apiNew/apiStatus
+      if (!chat) { json(res, 503, { ok: false, error: 'chat module not loaded' }); return; }
+      const ok = (p) => p.then((r) => json(res, 200, Object.assign({ ok: true }, r)),
+        (e) => json(res, 400, { ok: false, error: String(e.message || e) }));
+      if (path === '/chat/api/status') {
+        const m = /(?:^|&)token=([^&]*)/.exec(req.url.split('?')[1] || '');
+        ok(m ? chat.apiStatus(safeDecode(m[1])) : Promise.reject(new Error('token is required'))); return;
+      }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return; }
+      readJson(req, 256 << 10, (o) => {
+        if (!o) { json(res, 400, { ok: false, error: 'bad request' }); return; }
+        ok(chat.apiNew(o).then((r) => {
+          if (o.category) {        // file the session under a sidebar category (created if missing)
+            const c = readCats(), name = String(o.category).slice(0, 80);
+            let cat = c.cats.find((x) => x.name === name);
+            if (!cat) { cat = { id: 'c' + Date.now().toString(36), name }; c.cats.push(cat); }
+            c.map[r.token] = cat.id; writeCats(cleanCats(c));
+          }
+          return r;
+        }));
+      });
+      return;
+    }
     if (path === '/categories') {
       if (req.method !== 'POST') { json(res, 200, readCats()); return; }
       let body = '', big = false;
