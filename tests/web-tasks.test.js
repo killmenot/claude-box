@@ -78,6 +78,11 @@ test('lifecycle: base repo, open, commit, archive, reopen, forget', async () => 
   assert.ok(!fs.existsSync(t.path));
 });
 
+test('a title equal to the key does not repeat in the folder name', async () => {
+  const t = await tasks.open({ key: 'LAM-5251', title: 'LAM-5251' });
+  assert.strictEqual(t.slug, 'LAM-5251');
+});
+
 test('tasks without a Jira key get a local id; unknown repos are reported, not fatal', async () => {
   const t = await tasks.open({ title: 'Fix grafana alerts', repos: ['nope'] });
   assert.match(t.id, /^local:fix-grafana-alerts$/);
