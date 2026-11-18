@@ -115,6 +115,43 @@ function saveUploads(files) {
   });
 }
 
+// ---------- slash command list for the composer's "/" autocomplete ----------
+// Kept per folder (project commands and skills differ) plus the latest list as a fallback, and
+// saved to disk, so a session whose claude process is not running yet still gets suggestions.
+const CMD_FILE = process.env.WEB_CHAT_COMMANDS || path.join(require('os').homedir(), '.claude', 'web-commands.json');
+let CMD = { last: [], byCwd: {} };
+try { CMD = Object.assign(CMD, JSON.parse(fs.readFileSync(CMD_FILE, 'utf8'))); } catch (_) {}
+function rememberCommands(cwd, list) {
+  const clean = (Array.isArray(list) ? list : []).filter((c) => c && c.name).slice(0, 500).map((c) => ({
+    name: String(c.name).slice(0, 80), description: String(c.description || '').slice(0, 300),
+    argumentHint: String(c.argumentHint || '').slice(0, 120), aliases: (c.aliases || []).slice(0, 5).map(String) }));
+  if (!clean.length) return cachedCommands(cwd);
+  CMD.last = clean; if (cwd) CMD.byCwd[cwd] = clean;
+  const keys = Object.keys(CMD.byCwd); if (keys.length > 200) delete CMD.byCwd[keys[0]];
+  try { const tmp = CMD_FILE + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(CMD)); fs.renameSync(tmp, CMD_FILE); } catch (_) {}
+  return clean;
+}
+function cachedCommands(cwd) { return (cwd && CMD.byCwd[cwd]) || CMD.last || []; }
+// Ask a claude process for the list without sending it anything: it starts, answers
+// supportedCommands() (~1 s, no API call, no transcript) and is closed again.
+const WARMING = new Set();
+async function warmCommands(cwd) {
+  if (!cwd || WARMING.has(cwd) || CMD.byCwd[cwd]) return;
+  WARMING.add(cwd);
+  let stop = null, q = null;
+  const never = { [Symbol.asyncIterator]() { return { next: () => new Promise((r) => { stop = () => r({ done: true, value: undefined }); }) }; } };
+  const timer = setTimeout(() => { try { q && q.close(); } catch (_) {} }, 30000);
+  try {
+    await sdkReady; if (!sdk) return;
+    q = sdk.query({ prompt: never, options: { cwd, systemPrompt: { type: 'preset', preset: 'claude_code' },
+      env: Object.assign({}, process.env, { CLAUDE_WEB_CHAT: '1' }) } });
+    if (!q.supportedCommands) return;
+    const list = rememberCommands(cwd, await q.supportedCommands());
+    for (const c of CHATS) if (c.cwd === cwd && !c.q) { c.info.commandList = list; c.emit({ ev: 'info', info: c.info }); }
+  } catch (e) { log('warm commands', cwd, e.message); }
+  finally { clearTimeout(timer); if (stop) stop(); try { q && q.close(); } catch (_) {} WARMING.delete(cwd); }
+}
+
 class Chat {
   constructor({ cid, cwd, name, token }) {
     this.cid = cid || null; this.cwd = cwd; this.name = name; this.token = token || null;
@@ -122,9 +159,14 @@ class Chat {
     this.state = 'stopped'; this.q = null; this.input = null;
     this.perms = new Map();           // id -> {resolve, tool, input, reason, suggestions}
     this.turn = [];                   // SDK messages of the current turn (for late subscribers)
-    this.info = { cwd, model: '', permissionMode: '', commands: [], cost: null };
+    this.info = { cwd, model: '', permissionMode: '', commands: [], cost: null, commandList: cachedCommands(cwd) };
+    if (!CMD.byCwd[cwd]) warmCommands(cwd);
     this.titled = !!token; this.idleTimer = null; this.closing = null;
     CHATS.add(this); if (this.cid) BY_CID.set(this.cid, this);
+  }
+  setCommands(list) {
+    this.info.commandList = rememberCommands(this.cwd, list);
+    this.emit({ ev: 'info', info: this.info });
   }
   emit(obj) {
     for (const s of this.subs) {
@@ -192,7 +234,13 @@ class Chat {
       this.info = Object.assign(this.info, { model: m.model, permissionMode: m.permissionMode,
         cwd: m.cwd || this.cwd, commands: m.slash_commands || [] });
       this.emit({ ev: 'info', info: this.info });
+      // names come with init; descriptions and argument hints need one more call
+      const q = this.q;
+      if (q && q.supportedCommands) q.supportedCommands().then((list) => this.setCommands(list), (e) => log('commands', e.message));
       return;
+    }
+    if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
+      this.setCommands(m.commands); return;
     }
     if (m.type === 'system' && m.subtype === 'session_state_changed') { this.setState(m.state); return; }
     if (m.type === 'system' && m.subtype === 'status' && m.permissionMode) {
@@ -562,5 +610,6 @@ async function fireLoop(r, prompt) {
   log('loop resumed:', r.token);
 }
 setTimeout(() => resumeLoops().catch((e) => log('resumeLoops', e.message)), 5000);
+setTimeout(() => { if (!CMD.last.length) warmCommands(WS_ROOT); }, 8000);
 
 module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename };
