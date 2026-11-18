@@ -2,17 +2,23 @@
 'use strict';
 // Lightweight HTTP sidecar in front of ttyd. Single origin:
 //   /            -> launcher (html/launcher.html)
-//   /sessions    -> claude-web-registry list (JSON)
-//   /metrics     -> claude-web-metrics (JSON)
-//   /chat/ws     -> web chat over the Claude Agent SDK (claude-web-chat.js), /chat/info, /dirs
+//   /sessions    -> session registry list (web-registry.js)
+//   /metrics     -> host + session metrics (web-metrics.js)
+//   /preview     -> tmux screenshot of a session (web-preview.js)
+//   /search      -> search through session history (web-search.js)
+//   /chat/ws     -> web chat over the Claude Agent SDK (web-chat.js), /chat/info, /dirs
 //   /categories  -> GET/POST the sidebar categories (~/.claude/web-categories.json)
-//   /workspace   -> folder page: GET list, POST /workspace/{mkdir,rename,clone} (claude-web-workspace.js)
+//   /workspace   -> folder page: GET list, POST /workspace/{mkdir,rename,clone} (web-workspace.js)
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
+// Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
 const http = require('http');
 const https = require('https');
 const net = require('net');
 const fs = require('fs');
-const { execFile } = require('child_process');
+const registry = require('./web-registry.js');
+const { metrics } = require('./web-metrics.js');
+const { preview } = require('./web-preview.js');
+const { search } = require('./web-search.js');
 
 const IFACE = process.env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
 const PORT  = parseInt(process.env.WEB_TERMINAL_PORT || '7681', 10);
@@ -20,11 +26,12 @@ const TLS_PORT = parseInt(process.env.WEB_TLS_PORT || '8443', 10);   // https li
 const TTYD  = parseInt(process.env.TTYD_PORT || '7682', 10);
 const LAUNCHER = process.env.WEB_LAUNCHER || '/usr/local/share/claude-web/launcher.html';
 const PW = process.env.WEB_TERMINAL_PASSWORD || '';
+const USER = process.env.WEB_TERMINAL_USER || 'claude';
 
 // Web chat module (HTML UI over the Agent SDK). Optional: if it fails to load, the launcher
 // falls back to console-only and everything else keeps working.
 let chat = null;
-try { chat = require(process.env.WEB_CHAT_MODULE || '/usr/local/lib/claude-web/web-chat.js'); }
+try { chat = require(process.env.WEB_CHAT_MODULE || './web-chat.js'); }
 catch (e) { console.error('web chat disabled:', e.message); }
 // Sidebar categories: user-made groups + session -> category assignments. Stored server-side
 // so every device (desktop, phone) sees the same layout. Shape: {cats:[{id,name}], map:{token:id}}.
@@ -48,7 +55,7 @@ function writeCats(o) {
   fs.writeFileSync(tmp, JSON.stringify(o)); fs.renameSync(tmp, CATS_FILE);
 }
 let workspace = null;
-try { workspace = require(process.env.WEB_WORKSPACE_MODULE || '/usr/local/lib/claude-web/web-workspace.js'); }
+try { workspace = require(process.env.WEB_WORKSPACE_MODULE || './web-workspace.js'); }
 catch (e) { console.error('workspace manager disabled:', e.message); }
 // small JSON request bodies only
 function readJson(req, limit, cb) {
@@ -69,12 +76,12 @@ process.on('unhandledRejection', (e) => console.error('unhandledRejection:', (e 
 function safeDecode(s) { try { return decodeURIComponent(s); } catch (_) { return s; } }
 
 // basic-auth: the sidecar serves /sessions (session names/paths) and the launcher — when a
-// password is set they MUST sit behind the same barrier as the terminal. The login is claude.
+// password is set they MUST sit behind the same barrier as the terminal. Login: WEB_TERMINAL_USER.
 function authed(req) {
   if (!PW) return true;
   const m = /^Basic (.+)$/.exec(req.headers['authorization'] || '');
   if (!m) return false;
-  try { return Buffer.from(m[1], 'base64').toString() === 'claude:' + PW; } catch (_) { return false; }
+  try { return Buffer.from(m[1], 'base64').toString() === USER + ':' + PW; } catch (_) { return false; }
 }
 
 function proxy(req, res) {
@@ -99,11 +106,8 @@ const handler = (req, res) => {
     }
     const path = req.url.split('?')[0];
     if (path === '/sessions') {
-      execFile('claude-web-registry', ['list'], { maxBuffer: 4 << 20 }, (e, out) => {
-        if (e) { json(res, 500, '[]'); return; }
-        let rows; try { rows = JSON.parse(out); } catch (_) { json(res, 500, '[]'); return; }
-        json(res, 200, chat ? chat.decorate(rows) : rows);
-      });
+      let rows; try { rows = registry.list(); } catch (_) { json(res, 500, '[]'); return; }
+      json(res, 200, chat ? chat.decorate(rows) : rows);
       return;
     }
     if (path === '/chat/info') {
@@ -164,21 +168,15 @@ const handler = (req, res) => {
     }
     if (path === '/metrics') {
       const m = /[?&]id=([^&]*)/.exec(req.url);
-      const args = m ? ['--id', safeDecode(m[1])] : [];
-      execFile('claude-web-metrics', args, { maxBuffer: 1 << 20 }, (e, out) => {
-        try { res.writeHead(e ? 500 : 200, { 'content-type': 'application/json' }); res.end(e ? '{}' : out); } catch (_) {}
-      });
+      metrics(m ? safeDecode(m[1]) : '').then((o) => json(res, 200, o), () => json(res, 500, '{}'));
       return;
     }
     if (path === '/preview') {
       const q = req.url.split('?')[1] || '';
       const m = /(?:^|&)id=([^&]*)/.exec(q);
       if (!m) { try { res.writeHead(400, { 'content-type': 'application/json' }); res.end('{}'); } catch (_) {} return; }
-      const args = [safeDecode(m[1])];
-      if (/(?:^|&)full=1(?:&|$)/.test(q)) args.push('--full');
-      execFile('claude-web-preview', args, { maxBuffer: 4 << 20 }, (e, out) => {
-        try { res.writeHead(e ? 500 : 200, { 'content-type': 'application/json' }); res.end(e ? '{}' : out); } catch (_) {}
-      });
+      preview(safeDecode(m[1]), /(?:^|&)full=1(?:&|$)/.test(q))
+        .then((o) => json(res, 200, o), () => json(res, 500, '{}'));
       return;
     }
     if (path === '/delete' && req.method === 'POST') {
@@ -189,9 +187,7 @@ const handler = (req, res) => {
       if (!m) { try { res.writeHead(400, { 'content-type': 'application/json' }); res.end('{"ok":false}'); } catch (_) {} return; }
       const tok = safeDecode(m[1]);
       Promise.resolve(chat && chat.stopByToken(tok)).catch(() => {}).then(() => {
-        execFile('claude-web-registry', ['delete', tok], { maxBuffer: 1 << 20 }, (e) => {
-          json(res, e ? 500 : 200, e ? '{"ok":false}' : '{"ok":true}');
-        });
+        try { registry.remove(tok); json(res, 200, '{"ok":true}'); } catch (_) { json(res, 500, '{"ok":false}'); }
       });
       return;
     }
@@ -207,10 +203,7 @@ const handler = (req, res) => {
       const capped = query.slice(0, 200);               // cap on query length
       const ms = /(?:^|&)scope=([^&]*)/.exec(q);
       const scope = (ms && safeDecode(ms[1]) === 'all') ? 'all' : 'prompts';
-      execFile('claude-web-search', [capped, '--scope', scope],
-        { maxBuffer: 4 << 20, timeout: 20000 }, (e, out) => {   // headroom for the "tail" of frequent queries over a large corpus
-          try { res.writeHead(e ? 500 : 200, { 'content-type': 'application/json' }); res.end(e ? '[]' : out); } catch (_) {}
-        });
+      search(capped, scope).then((o) => json(res, 200, o), () => json(res, 500, '[]'));
       return;
     }
     // everything else (/term, /token, ttyd static assets) -> ttyd
@@ -251,12 +244,20 @@ function onUpgrade(req, socket, head) {
 //          so the browser has NO clipboard or notifications, but the terminal works.
 //   https on WEB_TLS_PORT      — secure context: clipboard + notifications (needs a cert).
 // No redirect: each port serves the terminal on its own scheme, the user chooses.
-const httpServer = http.createServer(handler);
-httpServer.on('upgrade', onUpgrade);
-httpServer.listen(PORT, IFACE, () => console.error(`sidecar http://${IFACE}:${PORT} -> ttyd ${TTYD}`));
-
-if (tls) {
-  const httpsServer = https.createServer(tls, handler);
-  httpsServer.on('upgrade', onUpgrade);
-  httpsServer.listen(TLS_PORT, IFACE, () => console.error(`sidecar https://${IFACE}:${TLS_PORT} -> ttyd ${TTYD}`));
+function start() {
+  const servers = [];
+  const httpServer = http.createServer(handler);
+  httpServer.on('upgrade', onUpgrade);
+  httpServer.listen(PORT, IFACE, () => console.error(`sidecar http://${IFACE}:${PORT} -> ttyd ${TTYD}`));
+  servers.push(httpServer);
+  if (tls) {
+    const httpsServer = https.createServer(tls, handler);
+    httpsServer.on('upgrade', onUpgrade);
+    httpsServer.listen(TLS_PORT, IFACE, () => console.error(`sidecar https://${IFACE}:${TLS_PORT} -> ttyd ${TTYD}`));
+    servers.push(httpsServer);
+  }
+  return servers;
 }
+
+module.exports = { start };
+if (require.main === module) start();

@@ -1,6 +1,6 @@
 'use strict';
 // claude-box web chat: drives Claude sessions through the Claude Agent SDK and streams them to
-// the browser over ONE multiplexed WebSocket (/chat/ws). Loaded by claude-web-sidecar.
+// the browser over ONE multiplexed WebSocket (/chat/ws). Loaded by web-sidecar.js.
 //
 // A Claude session is driven by exactly ONE owner at a time:
 //   chat    — an Agent SDK query() owned by this module (HTML UI in the launcher)
@@ -65,13 +65,13 @@ function log(...a) { console.error('[chat]', ...a); }
 function sh(cmd, args) {
   return new Promise((res) => execFile(cmd, args, { maxBuffer: 4 << 20 }, (e, out) => res(e ? null : String(out))));
 }
+const reg = require('./web-registry.js');
 const registry = {
-  async get(token) { const o = await sh('claude-web-registry', ['get', token]); try { return o ? JSON.parse(o) : null; } catch (_) { return null; } },
+  async get(token) { try { return reg.get(token); } catch (_) { return null; } },
   async upsert(f) {
-    const a = ['upsert', '--claude-id', f.cid, '--cwd', f.cwd || '', '--name', f.name || '', '--tmux', f.name || '',
-      '--state', f.state || '', '--mode', 'chat'];
-    if (f.title) a.push('--title', f.title);
-    return ((await sh('claude-web-registry', a)) || '').trim();
+    try {
+      return reg.upsert({ cid: f.cid, cwd: f.cwd, name: f.name, tmux: f.name, state: f.state, title: f.title, mode: 'chat' });
+    } catch (e) { log('registry upsert failed:', e.message); return ''; }
   },
 };
 async function tmuxAlive(name) {

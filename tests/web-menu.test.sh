@@ -19,12 +19,13 @@ command -v jq   >/dev/null 2>&1 || { echo "SKIP: jq not found";   exit 0; }
 tmp="$(mktemp -d)"
 export HOME="$tmp"
 export TMUX_TMPDIR="$tmp"           # a private tmux server: never touch the developer's own
+unset TMUX                          # inside tmux, $TMUX would point back at the real server
 cleanup(){ tmux kill-server 2>/dev/null; rm -rf "$tmp"; }
 trap cleanup EXIT
 
 bin="$tmp/bin"; mkdir -p "$bin"
-chmod +x "$ROOT/scripts/web-registry.sh"
-ln -sf "$ROOT/scripts/web-registry.sh" "$bin/claude-web-registry"
+chmod +x "$ROOT/scripts/web-registry.js"
+ln -sf "$ROOT/scripts/web-registry.js" "$bin/claude-web-registry"
 export PATH="$bin:$PATH"
 
 # --- helpers from web-menu.sh (sourced as a library, without starting the picker) ---

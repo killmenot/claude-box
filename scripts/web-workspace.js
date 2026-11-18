@@ -1,6 +1,6 @@
 'use strict';
 // claude-box workspace manager for the launcher's folder page: list /workspace folders (with git
-// info), create, rename, and clone git repositories. Loaded by claude-web-sidecar.
+// info), create, rename, and clone git repositories. Loaded by web-sidecar.js.
 // Every path is confined to WORKSPACE_DIR: names are single path segments, never paths.
 
 const fs = require('fs');

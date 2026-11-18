@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ttyd landing: for each connection (tab) — an fzf picker of tmux sessions.
-# "New session" / entering a new name -> tmux new-session with claude-launch inside;
+# "New session" / entering a new name -> pick a folder -> tmux new-session running claude there;
 # selecting an existing one -> tmux attach; "Rename session…" -> rename-session.
 # Renaming is a separate menu item (not a hotkey): F2/Ctrl-R is intercepted by
 # the browser. This way different tabs hold different claude sessions.
@@ -116,11 +116,26 @@ shell_and_enter() {
   exec tmux -u attach-session -t "$nm"
 }
 
-# create a new session and enter it
+# Folder for a new console session: an fzf picker over the workspace subfolders (most recent on
+# top) + the workspace root. Esc -> the root.
+pick_dir() {
+  local ws="${WORKSPACE_DIR:-/workspace}" d
+  d="$( { printf '%s\n' "$ws"
+          find "$ws" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%T@\t%p\n' 2>/dev/null \
+            | sort -rn | cut -f2-; } \
+        | fzf --height=60% --reverse --border=rounded --pointer='▶' \
+              --color='pointer:208,prompt:208' --prompt='folder ▸ ' \
+              --header='Enter — start Claude in this folder · Esc — workspace root' 2>/dev/null)"
+  [ -n "$d" ] && [ -d "$d" ] || d="$ws"
+  printf '%s' "$d"
+}
+
+# create a new session (claude in a picked folder) and enter it
 new_and_enter() {
-  local name="$1"
-  printf '%s  starting new session: %s%s\n' "$O" "$name" "$R"
-  tmux -u new-session -d -s "$name" claude-launch 2>/dev/null || true
+  local name="$1" dir
+  dir="$(pick_dir)"
+  printf '%s  starting new session: %s (%s)%s\n' "$O" "$name" "$dir" "$R"
+  tmux -u new-session -d -s "$name" -c "$dir" claude 2>/dev/null || true
   enter "$name"
 }
 

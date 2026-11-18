@@ -62,26 +62,9 @@ RUN case "${TARGETARCH:-amd64}" in arm64) a=arm64 ;; *) a=amd64 ;; esac \
 COPY certs/ /usr/local/share/ca-certificates/
 RUN update-ca-certificates
 
-# Startup menu (folder/session selection) + session list helper for the resume picker
-COPY scripts/menu.sh /usr/local/bin/claude-launch
-COPY scripts/sessions.js /usr/local/bin/claude-sessions
-RUN chmod +x /usr/local/bin/claude-launch /usr/local/bin/claude-sessions
-
-# Web terminal: ttyd launcher + landing picker for tmux sessions
-COPY scripts/web-serve.sh /usr/local/bin/claude-web-serve
-COPY scripts/web-menu.sh /usr/local/bin/claude-web-menu
-COPY scripts/web-registry.sh /usr/local/bin/claude-web-registry
-COPY scripts/web-sidecar.js /usr/local/bin/claude-web-sidecar
-COPY scripts/web-metrics.sh /usr/local/bin/claude-web-metrics
-COPY scripts/web-preview.sh /usr/local/bin/claude-web-preview
-COPY scripts/web-search.sh /usr/local/bin/claude-web-search
-RUN chmod +x /usr/local/bin/claude-web-serve /usr/local/bin/claude-web-menu \
-      /usr/local/bin/claude-web-registry /usr/local/bin/claude-web-sidecar \
-      /usr/local/bin/claude-web-metrics /usr/local/bin/claude-web-preview \
-      /usr/local/bin/claude-web-search
-
-# Web chat: Claude Agent SDK + ws for the HTML chat mode of the launcher (claude-web-chat.js,
-# loaded by the sidecar). Kept in its own prefix, versions pinned like the binaries above.
+# Web chat: Claude Agent SDK + ws for the HTML chat mode of the launcher (web-chat.js).
+# Kept in its own prefix, versions pinned like the binaries above. Installed BEFORE the scripts
+# are copied, so editing a script does not re-run npm.
 ARG CLAUDE_AGENT_SDK_VERSION=0.3.326
 ARG WS_VERSION=8.18.0
 RUN mkdir -p /opt/claude-web-chat && cd /opt/claude-web-chat \
@@ -89,8 +72,6 @@ RUN mkdir -p /opt/claude-web-chat && cd /opt/claude-web-chat \
  && npm install --omit=dev --no-audit --no-fund \
       "@anthropic-ai/claude-agent-sdk@${CLAUDE_AGENT_SDK_VERSION}" "ws@${WS_VERSION}" \
  && npm cache clean --force
-COPY scripts/web-chat.js /usr/local/lib/claude-web/web-chat.js
-COPY scripts/web-workspace.js /usr/local/lib/claude-web/web-workspace.js
 
 # Custom ttyd frontend (--index): sound on bell, hidden scroll, deep-link.
 # xterm is vendored locally (html/vendor) and inlined into a self-contained index.html
@@ -101,14 +82,28 @@ RUN node /opt/claude-web-src/build-index.js \
  && node /opt/claude-web-src/build-launcher.js \
       /opt/claude-web-src/launcher.html /usr/local/share/claude-web/launcher.html
 
-# Claude completion signals: notifier + tmux config (set-titles -> tab title)
+# The web server (Node): entrypoint, sidecar, chat, session registry, metrics, search, preview.
+# All modules live side by side in /usr/local/lib/claude-web; the two commands that other
+# processes call (the entrypoint and the registry CLI) are symlinked onto PATH.
+COPY scripts/*.js /usr/local/lib/claude-web/
+RUN ln -sf /usr/local/lib/claude-web/web-serve.js /usr/local/bin/claude-web-serve \
+ && ln -sf /usr/local/lib/claude-web/web-registry.js /usr/local/bin/claude-web-registry \
+ && chmod +x /usr/local/lib/claude-web/web-serve.js /usr/local/lib/claude-web/web-registry.js
+
+# The two shell pieces: the ttyd landing picker (tmux) and the Claude hook (bell + tab title +
+# registry), plus the tmux config (set-titles -> tab title)
+COPY scripts/web-menu.sh /usr/local/bin/claude-web-menu
 COPY scripts/notify.sh /usr/local/bin/claude-notify
 COPY scripts/tmux.conf /etc/tmux.conf
-RUN chmod +x /usr/local/bin/claude-notify
+RUN chmod +x /usr/local/bin/claude-web-menu /usr/local/bin/claude-notify
 
-# Shared defaults (settings + MCP) — seeded into ~/.claude at startup (see menu.sh)
+# Shared defaults (settings + MCP) — seeded into ~/.claude at startup (see web-serve.js)
 COPY claude-defaults/ /opt/claude-defaults/
+
+# A claude installed or updated by the native installer lives in ~/.local/bin (the home dir is
+# a bind mount, so it survives image rebuilds) — prefer it over the image's npm copy.
+ENV PATH=/home/node/.local/bin:$PATH
 
 WORKDIR /workspace
 USER node
-ENTRYPOINT ["/usr/local/bin/claude-launch"]
+ENTRYPOINT ["/usr/local/bin/claude-web-serve"]

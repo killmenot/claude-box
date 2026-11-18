@@ -5,13 +5,7 @@ home/
 .env
 *.sh
 scripts/*.sh
-!scripts/menu.sh
-# web terminal: needed in the image (web-terminal-selfcheck.sh — host-only, stays excluded)
-!scripts/web-serve.sh
+# the two shell pieces that run inside the image (host-only scripts like certs-fix.sh stay excluded)
 !scripts/web-menu.sh
-!scripts/web-registry.sh
-!scripts/web-metrics.sh
-!scripts/web-preview.sh
-!scripts/web-search.sh
 !scripts/notify.sh
-docker-compose.yml
+docker-compose*.yml
