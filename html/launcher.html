@@ -382,7 +382,14 @@
   .rpsec .rpsub{padding:2px 14px 4px 28px;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
   .rpsec .rpsub2{margin:0}.rpsec .rpsub2>summary{padding:4px 14px 4px 28px;font-size:11px;color:var(--mute);cursor:pointer}
   .rpi{display:block;padding:6px 14px 6px 28px;cursor:pointer;border-left:2px solid transparent}
+  .rpi{position:relative}
   .rpi:hover{background:var(--hover)}
+  .rpi .rphide{position:absolute;right:8px;top:6px;display:none;border:0;background:var(--panel);color:var(--mute);border-radius:5px;
+               width:20px;height:20px;line-height:18px;font-size:11px;cursor:pointer;box-shadow:0 0 0 1px var(--line)}
+  .rpi:hover .rphide,.rpi.hid .rphide{display:block}
+  .rpi .rphide:hover{color:var(--ink)}
+  @media (hover:none){ .rpi .rphide{display:block;opacity:.6} }
+  .rpi.hid{opacity:.45}
   .rpi .t{display:block;color:var(--ink);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
   .rpi .s{display:block;color:var(--mute);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .rpi .s a{color:inherit}
@@ -395,6 +402,9 @@
   .rpempty{padding:4px 14px 8px 28px;color:var(--mute);font-size:12px}
   .rpfoot{padding:8px 14px;border-top:1px solid var(--line);color:var(--mute);font:11px var(--mono)}
   .rpfoot .err{color:var(--err)}
+  .rpfoot{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}
+  .rpfoot select{font:11px var(--mono);color:var(--slate);background:transparent;border:1px solid var(--line);border-radius:5px;padding:1px 2px}
+  .rpfoot .linkbtn{font:11px var(--mono)}
   .rpspin{display:inline-block;width:9px;height:9px;border:2px solid var(--mute);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px}
   @keyframes spin{to{transform:rotate(360deg)}}
   @media (max-width:1100px){
@@ -2088,8 +2098,11 @@ function hm(iso){ var d=new Date(iso); return isNaN(d)?'':d.toLocaleTimeString([
 function ago(iso){ var t=Date.parse(iso); return isNaN(t)?'':fmt(Math.floor(t/1000)); }
 function rpItem(o){
   var a=' data-url="'+esc(o.url||'')+'"'+(o.session?' data-session="'+esc(o.session)+'"':'')+
-    (o.jira?' data-jira="'+esc(o.jira)+'" data-title="'+esc(o.jtitle||'')+'"':'')+(o.seen?' data-seen="'+esc(o.seen)+'"':'');
-  return '<div class="rpi'+(o.cls?' '+o.cls:'')+'"'+a+' title="'+esc(o.tip||o.title)+'"><span class="t">'+(o.pre||'')+esc(o.title)+'</span>'+
+    (o.jira?' data-jira="'+esc(o.jira)+'" data-title="'+esc(o.jtitle||'')+'"':'')+(o.seen?' data-seen="'+esc(o.seen)+'"':'')+
+    (o.hk?' data-hk="'+esc(o.hk)+'" data-hs="'+esc(o.hs||'')+'" data-ht="'+esc(o.title)+'"':'');
+  var btn=o.hk?(o.isHidden?'<button class="rphide" type="button" data-unhide title="Show it again">↺</button>'
+                           :'<button class="rphide" type="button" data-hide title="Hide until it changes">✕</button>'):'';
+  return '<div class="rpi'+(o.cls?' '+o.cls:'')+(o.isHidden?' hid':'')+'"'+a+' title="'+esc(o.tip||o.title)+'">'+btn+'<span class="t">'+(o.pre||'')+esc(o.title)+'</span>'+
     (o.sub?'<span class="s">'+o.sub+'</span>':'')+'</div>';
 }
 function rpSec(id, title, n, body, hot, dflt){
@@ -2102,55 +2115,94 @@ function decTag(d){ return d==='CHANGES_REQUESTED'?'<span class="tag bad">change
 function botTag(b){ if(!b) return '';
   return b.status==='running'?'<span class="tag pend">bot reviewing</span>':b.findings?'<span class="tag bad">bot: '+b.findings+' found</span>':
     b.status==='done'?'<span class="tag ok">bot: clean</span>':'<span class="tag">bot: '+esc(b.status)+'</span>'; }
+// hide keys and signatures: an item stays hidden while these values stay the same
+function sigPr(p){ return ['pr', p.draft?'draft':'ready', p.ci||'', p.decision||'', p.comments||0, p.lastReview?p.lastReview.state+'@'+p.lastReview.at:''].join('|'); }
 function rpRender(){
   var d=RP.data; if(!d) return;
-  var g=d.github||{}, a=d.agent||{}, now=Date.now(), h='';
+  var g=d.github||{}, a=d.agent||{}, now=Date.now(), h='', HID=d.hidden||{}, nHidden=0, byUrl={};
+  // o.hk/o.hs set -> hidden when HID[hk].sig===hs; RP.showHidden lists them greyed out with ↺
+  function keep(o){ if(o.url) byUrl[o.url]={hk:o.hk, hs:o.hs}; var x=o.hk&&HID[o.hk];
+    if(x && x.sig===(o.hs||'')){ nHidden++; if(!RP.showHidden) return false; o.isHidden=true; } return true; }
+  function list(items){ return items.filter(keep).map(rpItem); }
   var cal=(a.calendar||[]).filter(function(e){ return !e.declined && (e.allDay || Date.parse(e.end||e.start)>now); });
-  // needs me: live items first (sessions waiting for me, a meeting about to start), then the agent's picks
+  var calH=list(cal.map(function(e){ var t=Date.parse(e.start)-now;
+    return {cls:(!e.allDay&&t<15*60000&&t>-60*60000)?'now':'', title:e.title, url:e.url, hk:'cal:'+e.title+'|'+String(e.start).slice(0,10), hs:e.start+'|'+(e.end||''),
+      sub:e.allDay?'all day':esc(hm(e.start)+(e.end?'–'+hm(e.end):''))}; }));
+  var mine=g.mine||[], rv=g.review||[], team=g.team||[];
+  var prSub=function(p){ return esc(p.repo.split('/')[1]+'#'+p.number+' · '+(p.author||'')+' · '+ago(p.updated))+' '+botTag(p.bot); };
+  var rvH=list(rv.map(function(p){ return {title:p.title, url:p.url, sub:prSub(p), hk:'rq:'+p.url, hs:'requested'}; }));
+  var teamH=list(team.map(function(p){ return {title:p.title, url:p.url, sub:prSub(p), hk:'rq:'+p.url, hs:'team'}; }));
+  var newMine=0;
+  var mineH=list(mine.map(function(p){
+    var isNew=RP.seen[p.url] && Date.parse(p.updated)>RP.seen[p.url];
+    var lr=p.lastReview?' · '+esc(p.lastReview.by)+(p.lastReview.state==='COMMENTED'?' commented':' '+p.lastReview.state.toLowerCase().replace('_',' ')):'';
+    return {cls:isNew?'new':'', title:p.title, url:p.url, seen:p.url, pre:p.draft?'<span class="tag">draft</span>':'', hk:'pr:'+p.url, hs:sigPr(p),
+      sub:ciTag(p.ci)+decTag(p.decision)+esc(p.repo.split('/')[1]+'#'+p.number+(p.comments?' · 💬'+p.comments:'')+lr), _new:isNew};
+  }).filter(function(o){ if(o._new && !(HID[o.hk] && HID[o.hk].sig===o.hs)) newMine++; return true; }));
+  var jiraH=list((a.jira||[]).map(function(j){
+    return {title:j.title, pre:'<span class="tag">'+esc(j.key)+'</span>', jira:j.key, jtitle:j.title, url:j.url, tip:'Open a task workspace for '+j.key,
+      hk:'jira:'+j.key, hs:(j.status||'')+'|'+(j.priority||''),
+      sub:esc([j.status,j.priority].filter(Boolean).join(' · '))+(j.url?' · <a href="'+esc(j.url)+'" target="_blank" rel="noopener" data-ext>Jira ↗</a>':'')}; }));
+  var gmailH=list((a.gmail||[]).map(function(m){
+    return {title:m.subject||'(no subject)', url:m.url, hk:'mail:'+(m.url||m.subject), hs:m.at||'',
+      sub:esc([m.from, m.snippet, m.at?ago(m.at):''].filter(Boolean).join(' · '))}; }));
+  var slackH=list((a.slack||[]).map(function(m){
+    return {title:m.text, url:m.url, hk:'slack:'+(m.url||m.text), hs:m.text,
+      sub:esc([m.from, m.channel&&m.channel!==m.from?m.channel:'', m.at?ago(m.at):''].filter(Boolean).join(' · '))}; }));
+  // needs me: live items first (sessions waiting for me, a meeting about to start), then the agent's picks.
+  // An agent pick that points at an item of another section shares its key, so hiding either hides both.
   var needs=[], urls={};
   ROWS.filter(function(s){ return s.live && s.state==='waiting'; }).forEach(function(s){
     needs.push(rpItem({cls:'need now', pre:'<span class="src">session</span>', title:dispName(s), sub:'waiting for your answer', session:s.token})); });
   cal.forEach(function(e){ var t=Date.parse(e.start)-now;
     if(!e.allDay && t>-5*60000 && t<15*60000){ urls[e.url]=1;
       needs.push(rpItem({cls:'need now', pre:'<span class="src">meet</span>', title:e.title, url:e.url, sub:t>0?'starts in '+Math.ceil(t/60000)+' min':'started'})); } });
-  (a.needs||[]).forEach(function(n){ if(n.url && urls[n.url]) return; urls[n.url]=1;
-    var jk=n.source==='jira' && /^[A-Z][A-Z0-9]+-\d+$/.test(n.ref||'')?n.ref:'';
-    needs.push(rpItem({cls:'need', pre:'<span class="src">'+esc(n.source)+'</span>', title:n.title, sub:esc(n.why||''), url:n.url, jira:jk, jtitle:n.title})); });
+  needs=needs.concat(list((a.needs||[]).filter(function(n){ if(n.url && urls[n.url]) return false; urls[n.url]=1; return true; }).map(function(n){
+    var jk=n.source==='jira' && /^[A-Z][A-Z0-9]+-\d+$/.test(n.ref||'')?n.ref:'', same=n.url&&byUrl[n.url];
+    return {cls:'need', pre:'<span class="src">'+esc(n.source)+'</span>', title:n.title, sub:esc(n.why||''), url:n.url, jira:jk, jtitle:n.title,
+      hk:same?same.hk:'need:'+(n.url||n.title), hs:same?same.hs:''}; })));
   h+=rpSec('needs','Needs me', needs.length||'', needs.join(''), needs.length, true);
-  h+=rpSec('cal','Calendar', cal.length, cal.map(function(e){
-    var t=Date.parse(e.start)-now;
-    return rpItem({cls:(!e.allDay&&t<15*60000&&t>-60*60000)?'now':'', title:e.title, url:e.url,
-      sub:e.allDay?'all day':esc(hm(e.start)+(e.end?'–'+hm(e.end):''))}); }).join(''));
-  var mine=g.mine||[], rv=g.review||[], team=g.team||[];
-  var newMine=mine.filter(function(p){ return RP.seen[p.url] && Date.parse(p.updated)>RP.seen[p.url]; }).length;
+  // a block shows only when its connector is there (a.sources from the last agent run; old snapshots: all)
+  var on=function(k){ return !a.sources || a.sources[k]!==false; };
+  if(on('calendar')) h+=rpSec('cal','Calendar', calH.length, calH.join(''));
   var gb='';
   if(d.githubError) gb+='<div class="rpempty" style="color:var(--err)">'+esc(d.githubError)+'</div>';
-  gb+='<div class="rpsub">Waiting for me</div>'+(rv.length?rv.map(function(p){
-    return rpItem({title:p.title, url:p.url, sub:esc(p.repo.split('/')[1]+'#'+p.number+' · '+(p.author||'')+' · '+ago(p.updated))+' '+botTag(p.bot)}); }).join('')
-    :'<div class="rpempty">no personal review requests</div>');
-  if(team.length) gb+='<details class="rpsub2"'+(RP.open.team?' open':'')+' data-sec="team"><summary>+ '+team.length+' via teams</summary>'+team.map(function(p){
-    return rpItem({title:p.title, url:p.url, sub:esc(p.repo.split('/')[1]+'#'+p.number+' · '+(p.author||'')+' · '+ago(p.updated))+' '+botTag(p.bot)}); }).join('')+'</details>';
-  gb+='<div class="rpsub">My PRs</div>'+(mine.length?mine.map(function(p){
-    var isNew=RP.seen[p.url] && Date.parse(p.updated)>RP.seen[p.url];
-    var lr=p.lastReview?' · '+esc(p.lastReview.by)+(p.lastReview.state==='COMMENTED'?' commented':' '+p.lastReview.state.toLowerCase().replace('_',' ')):'';
-    return rpItem({cls:isNew?'new':'', title:p.title, url:p.url, seen:p.url, pre:p.draft?'<span class="tag">draft</span>':'',
-      sub:ciTag(p.ci)+decTag(p.decision)+esc(p.repo.split('/')[1]+'#'+p.number+(p.comments?' · 💬'+p.comments:'')+lr)}); }).join('')
-    :'<div class="rpempty">no open PRs</div>');
-  var hotGh=rv.length+mine.filter(function(p){ return p.ci==='FAILURE'||p.decision==='CHANGES_REQUESTED'; }).length;
-  h+=rpSec('gh','GitHub', rv.length+' · '+mine.length+(newMine?' · '+newMine+' new':''), gb, hotGh);
-  h+=rpSec('jira','Jira', (a.jira||[]).length, (a.jira||[]).map(function(j){
-    return rpItem({title:j.title, pre:'<span class="tag">'+esc(j.key)+'</span>', jira:j.key, jtitle:j.title, url:j.url, tip:'Open a task workspace for '+j.key,
-      sub:esc([j.status,j.priority].filter(Boolean).join(' · '))+(j.url?' · <a href="'+esc(j.url)+'" target="_blank" rel="noopener" data-ext>Jira ↗</a>':'')}); }).join(''));
-  h+=rpSec('slack','Slack', (a.slack||[]).length, (a.slack||[]).map(function(m){
-    return rpItem({title:m.text, url:m.url, sub:esc([m.from, m.channel&&m.channel!==m.from?m.channel:'', m.at?ago(m.at):''].filter(Boolean).join(' · '))}); }).join(''));
-  $('rpbody').innerHTML=h;
+  gb+='<div class="rpsub">Waiting for me</div>'+(rvH.length?rvH.join(''):'<div class="rpempty">no personal review requests</div>');
+  if(teamH.length) gb+='<details class="rpsub2"'+(RP.open.team?' open':'')+' data-sec="team"><summary>+ '+teamH.length+' via teams</summary>'+teamH.join('')+'</details>';
+  gb+='<div class="rpsub">My PRs</div>'+(mineH.length?mineH.join(''):'<div class="rpempty">no open PRs</div>');
+  var hotGh=rvH.length+mine.filter(function(p){ return (p.ci==='FAILURE'||p.decision==='CHANGES_REQUESTED') && !(HID['pr:'+p.url] && HID['pr:'+p.url].sig===sigPr(p)); }).length;
+  if(d.github) h+=rpSec('gh','GitHub', rvH.length+' · '+mineH.length+(newMine?' · '+newMine+' new':''), gb, hotGh);   // only when gh is logged in
+  if(on('jira')) h+=rpSec('jira','Jira', jiraH.length, jiraH.join(''));
+  if(on('slack')) h+=rpSec('slack','Slack', slackH.length, slackH.join(''));
+  if(on('gmail') && (a.gmail || a.sources)) h+=rpSec('gmail','Gmail', gmailH.length, gmailH.join(''));
+  if(h!==RP.html){ RP.html=h; $('rpbody').innerHTML=h; }    // the 2s session tick must not rebuild it under the pointer
   var f=[];
   if(d.agentRunning) f.push('<span class="rpspin"></span> collecting…');
   else if(a.at) f.push('updated '+ago(a.at)+' ago'+(a.cost!=null?' · $'+Number(a.cost).toFixed(3):''));
   else if(d.enabled===false) f.push('agent collection is off (WEB_PANEL=0)');
+  var EV=[[5,'5 min'],[10,'10 min'],[15,'15 min'],[30,'30 min'],[60,'1 h'],[0,'only on ↻']], ev=d.every==null?15:d.every;
+  if(!EV.some(function(x){ return x[0]===ev; })) EV.push([ev, ev+' min']);
+  f.push('<select id="rpevery" title="How often calendar, Jira, Slack and Gmail are collected (GitHub: every minute)">'+
+    EV.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===ev?' selected':'')+'>'+(x[0]?'every '+x[1]:x[1])+'</option>'; }).join('')+'</select>');
+  if(nHidden) f.push('<button class="linkbtn" type="button" id="rpshowhid">'+(RP.showHidden?'hide the '+nHidden+' hidden':nHidden+' hidden · show')+'</button>');
   if(d.agentError) f.push('<span class="err">'+esc(d.agentError)+'</span>');
-  $('rpfoot').innerHTML=f.join(' · ');
+  f=f.join(' · '); if(f!==RP.foot){ RP.foot=f; $('rpfoot').innerHTML=f; }
 }
+function rpHide(it, unhide){
+  var key=it.getAttribute('data-hk'), d=RP.data; if(!key || !d) return;
+  d.hidden=d.hidden||{};
+  if(unhide) delete d.hidden[key]; else d.hidden[key]={sig:it.getAttribute('data-hs')||'', at:Date.now()};
+  rpRender();
+  fetch('panel/hide',{method:'POST', headers:{'content-type':'application/json'},
+    body:JSON.stringify(unhide?{key:key, unhide:true}:{key:key, sig:it.getAttribute('data-hs')||'', title:it.getAttribute('data-ht')||''})})
+    .then(function(r){ return r.json(); }).then(function(o){ if(o && o.hidden){ d.hidden=o.hidden; rpRender(); } }).catch(function(){});
+}
+$('rpfoot').addEventListener('click', function(e){ if(e.target.id==='rpshowhid'){ RP.showHidden=!RP.showHidden; rpRender(); } });
+$('rpfoot').addEventListener('change', function(e){
+  if(e.target.id!=='rpevery') return; var v=+e.target.value;
+  fetch('panel/settings',{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({every:v})})
+    .then(function(){ return rpLoad(); });
+});
 $('rpbody').addEventListener('toggle', function(e){
   var sec=e.target.getAttribute && e.target.getAttribute('data-sec'); if(!sec) return;
   RP.open[sec]=e.target.open; ls('cb.rpopen', JSON.stringify(RP.open));
@@ -2158,6 +2210,8 @@ $('rpbody').addEventListener('toggle', function(e){
 $('rpbody').addEventListener('click', function(e){
   if(e.target.closest('[data-ext]')) return;               // a plain link inside an item
   var it=e.target.closest('.rpi'); if(!it) return;
+  if(e.target.closest('[data-hide]')){ e.stopPropagation(); rpHide(it, false); return; }
+  if(e.target.closest('[data-unhide]')){ e.stopPropagation(); rpHide(it, true); return; }
   var url=it.getAttribute('data-url'), ses=it.getAttribute('data-session'), jira=it.getAttribute('data-jira'), seen=it.getAttribute('data-seen');
   if(seen){ RP.seen[seen]=Date.now(); var k=Object.keys(RP.seen); if(k.length>300) delete RP.seen[k[0]]; ls('cb.rpseen', JSON.stringify(RP.seen)); it.classList.remove('new'); }
   if(ses){ openSession(ses); return; }

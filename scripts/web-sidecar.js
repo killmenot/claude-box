@@ -215,6 +215,22 @@ const handler = (req, res) => {
       });
       return;
     }
+    if (path === '/panel/settings' && req.method === 'POST') {   // {every: minutes, 0 = only on demand}
+      if (!panel) { json(res, 503, { ok: false }); return; }
+      readJson(req, 1024, (o) => {
+        try { json(res, 200, Object.assign({ ok: true }, panel.setEvery(o && o.every))); }
+        catch (e) { json(res, 400, { ok: false, error: String(e.message || e) }); }
+      });
+      return;
+    }
+    if (path === '/panel/hide' && req.method === 'POST') {     // {key, sig, title} | {key, unhide:true} | {all:true}
+      if (!panel) { json(res, 503, { ok: false }); return; }
+      readJson(req, 16 << 10, (o) => {
+        try { json(res, 200, Object.assign({ ok: true }, o && o.all ? panel.unhideAll() : panel.hide(o || {}))); }
+        catch (e) { json(res, 400, { ok: false, error: String(e.message || e) }); }
+      });
+      return;
+    }
     if (path === '/panel' || path === '/panel/refresh') {
       if (!panel) { json(res, 503, { enabled: false, error: 'panel module not loaded' }); return; }
       const w = /(?:^|&)what=(github|agent)(?:&|$)/.exec(req.url.split('?')[1] || '');
