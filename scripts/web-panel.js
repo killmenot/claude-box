@@ -16,9 +16,22 @@ const WS_ROOT = process.env.WORKSPACE_DIR || '/workspace';
 const FILE = process.env.WEB_PANEL_FILE || path.join(HOME, '.claude', 'web-panel.json');
 const MODEL = process.env.WEB_PANEL_MODEL || 'claude-haiku-5-5';
 const EVERY_MIN = parseFloat(process.env.WEB_PANEL_MINUTES || '15');
+const SETTINGS_FILE = process.env.WEB_PANEL_SETTINGS || path.join(HOME, '.claude', 'web-panel-settings.json');
+// the agent interval is picked in the panel (0 = only on ↻); WEB_PANEL_MINUTES is the default
+function everyMin() {
+  try { const v = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')).every; if (typeof v === 'number' && v >= 0) return v; } catch (_) {}
+  return EVERY_MIN;
+}
+function setEvery(v) {
+  v = Number(v); if (!(v >= 0 && v <= 240)) throw new Error('every: 0..240 minutes');
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ every: v }));
+  return { every: v };
+}
 const ENABLED = process.env.WEB_PANEL !== '0';
 const REVIEWS_DIR = process.env.WEB_PANEL_REVIEWS || path.join(WS_ROOT, 'reviews');
 const IDLE_STOP_MS = 2 * 3600e3;          // no agent runs when nobody has opened the panel for 2h
+const HIDDEN_FILE = process.env.WEB_PANEL_HIDDEN || path.join(HOME, '.claude', 'web-panel-hidden.json');
+const HIDDEN_DAYS = 60;
 
 function log(...a) { console.error('[panel]', ...a); }
 let getSdk = async () => null;
@@ -82,7 +95,7 @@ function reviewerState() {
 
 // ---------------------------------------------------------------- agent snapshot (MCP)
 const SCHEMA = {
-  type: 'object', required: ['calendar', 'jira', 'slack', 'needs'],
+  type: 'object', required: ['calendar', 'jira', 'slack', 'gmail', 'needs'],
   properties: {
     calendar: { type: 'array', items: { type: 'object', required: ['title', 'start'], properties: {
       title: { type: 'string' }, start: { type: 'string', description: 'ISO 8601 with offset' }, end: { type: 'string' },
@@ -94,8 +107,11 @@ const SCHEMA = {
     slack: { type: 'array', items: { type: 'object', required: ['text'], properties: {
       kind: { type: 'string', enum: ['mention', 'thread', 'dm'] }, channel: { type: 'string' }, from: { type: 'string' },
       text: { type: 'string', description: 'one line, at most 200 characters' }, url: { type: 'string' }, at: { type: 'string' } } } },
+    gmail: { type: 'array', items: { type: 'object', required: ['subject'], properties: {
+      from: { type: 'string' }, subject: { type: 'string' }, snippet: { type: 'string', description: 'at most 120 characters' },
+      url: { type: 'string', description: 'https://mail.google.com/mail/u/0/#inbox/<thread id>' }, at: { type: 'string' } } } },
     needs: { type: 'array', maxItems: 5, items: { type: 'object', required: ['title', 'source'], properties: {
-      source: { type: 'string', enum: ['calendar', 'jira', 'slack', 'github'] }, title: { type: 'string' },
+      source: { type: 'string', enum: ['calendar', 'jira', 'slack', 'gmail', 'github'] }, title: { type: 'string' },
       why: { type: 'string', description: 'what exactly I have to do, a few words' }, url: { type: 'string' },
       ref: { type: 'string', description: 'Jira key / PR repo#number / Slack channel' } } } },
   },
@@ -109,7 +125,8 @@ function agentPrompt(ghData) {
 1. calendar: my Google Calendar events from now until the end of my working day today (if the day is almost over, include tomorrow morning). Skip events I declined and "Out of office"/working-location blocks. Times as ISO 8601 with offset. url: the video call link if there is one.
 2. jira: Jira issues assigned to me that are not done (statusCategory != Done), most recently updated first, at most 15. url: the browse link.
 3. slack: what needs my attention in Slack from the last 24 hours: messages that mention me, new replies in threads I took part in, direct messages to me. At most 10, newest first, each with its permalink; text is a one-line summary.
-4. needs: the 3–5 items across ALL sources (including the GitHub data below) where I personally have to act soon: a question to me, a review requested from me, my PR with failing CI or changes requested, a meeting starting within the next hour, a blocking Jira issue. Most urgent first. Leave out anything that only informs.
+4. gmail: unread emails from the last 48 hours in my inbox that a person wrote to me and that may need a reply or action. Leave out newsletters, notifications and automated mail (GitHub, Jira, Slack, calendar, CI, marketing). At most 8, newest first. url: https://mail.google.com/mail/u/0/#inbox/<thread id>.
+5. needs: the 3–5 items across ALL sources (including the GitHub data below) where I personally have to act soon: a question to me, a review requested from me, my PR with failing CI or changes requested, a meeting starting within the next hour, a blocking Jira issue. Most urgent first. Leave out anything that only informs.
 
 GitHub (already collected, use it only for "needs"): ${gh}
 
@@ -123,7 +140,7 @@ function agentRun(reason) {
   agent.running = (async () => {
     const sdk = await getSdk();
     if (!sdk) { agent.error = 'Agent SDK not loaded'; return; }
-    const t0 = Date.now(); agent.lastRun = t0; let out = null, cost = null, err = null;
+    const t0 = Date.now(); agent.lastRun = t0; let out = null, cost = null, err = null, sources = null;
     try {
       if (!gh.data && !gh.busy) await ghRun(); else if (gh.busy) await gh.busy;
       const q = sdk.query({ prompt: agentPrompt(gh.data), options: {
@@ -138,7 +155,12 @@ function agentRun(reason) {
       } });
       const timer = setTimeout(() => { try { q.close(); } catch (_) {} }, 5 * 60000);
       try {
-        for await (const m of q) if (m.type === 'result') {
+        for await (const m of q) if (m.type === 'system' && m.subtype === 'init') {
+          // which connectors this account has: a block is shown only when its tools exist
+          const t = (m.tools || []).filter((n) => n.startsWith('mcp__'));
+          sources = { calendar: t.some((n) => /calendar/i.test(n)), jira: t.some((n) => /atlassian|jira/i.test(n)),
+            slack: t.some((n) => /slack/i.test(n)), gmail: t.some((n) => /gmail/i.test(n)) };
+        } else if (m.type === 'result') {
           cost = m.total_cost_usd;
           if (m.structured_output) out = m.structured_output;
           else if (m.subtype !== 'success') err = m.subtype;
@@ -147,7 +169,8 @@ function agentRun(reason) {
       } finally { clearTimeout(timer); }
     } catch (e) { err = String(e.message || e); }
     if (out) {
-      const snap = Object.assign({ at: new Date().toISOString(), took: Math.round((Date.now() - t0) / 1000), cost, model: MODEL }, out);
+      const snap = Object.assign({ at: new Date().toISOString(), took: Math.round((Date.now() - t0) / 1000), cost, model: MODEL }, out,
+        sources ? { sources } : {});
       try { fs.writeFileSync(FILE + '.tmp', JSON.stringify(snap)); fs.renameSync(FILE + '.tmp', FILE); } catch (e) { err = e.message; }
     }
     agent.error = err; log('agent run', reason, err ? 'failed: ' + err : 'ok', Math.round((Date.now() - t0) / 1000) + 's', cost != null ? '$' + cost.toFixed(4) : '');
@@ -155,15 +178,36 @@ function agentRun(reason) {
   return agent.running;
 }
 
+// ---------------------------------------------------------------- hidden items
+// key -> {sig, title, at}. The launcher hides an item while its signature (the values that
+// matter for it: draft / CI / review state of a PR, status of a Jira issue, time of a meeting…)
+// is the same as when it was hidden; any change brings it back.
+function readHidden() {
+  let h = {}; try { h = JSON.parse(fs.readFileSync(HIDDEN_FILE, 'utf8')) || {}; } catch (_) {}
+  const old = Date.now() - HIDDEN_DAYS * 864e5;
+  for (const k of Object.keys(h)) if (!h[k] || h[k].at < old) delete h[k];
+  return h;
+}
+function writeHidden(h) { fs.writeFileSync(HIDDEN_FILE + '.tmp', JSON.stringify(h)); fs.renameSync(HIDDEN_FILE + '.tmp', HIDDEN_FILE); }
+function hide(o) {
+  const h = readHidden(), key = String((o && o.key) || '').slice(0, 500);
+  if (!key) throw new Error('key is required');
+  if (o.unhide) delete h[key];
+  else h[key] = { sig: String(o.sig || '').slice(0, 500), title: String(o.title || '').slice(0, 200), at: Date.now() };
+  writeHidden(h);
+  return { hidden: h };
+}
+function unhideAll() { writeHidden({}); return { hidden: {} }; }
+
 // ---------------------------------------------------------------- API
 async function get() {
   agent.lastView = Date.now();
   if (Date.now() - gh.at > 60000) await ghRun();
   const snap = readSnapshot();
-  const due = !snap || Date.now() - Date.parse(snap.at) > EVERY_MIN * 60000;
+  const ev = everyMin(), due = !snap || (ev > 0 && Date.now() - Date.parse(snap.at) > ev * 60000);
   if (ENABLED && due && !agent.running && Date.now() - agent.lastRun > 60000) agentRun(snap ? 'stale' : 'first');
   return { enabled: ENABLED, github: gh.data, githubError: gh.error, githubAt: gh.at ? new Date(gh.at).toISOString() : null,
-    agent: snap, agentRunning: !!agent.running, agentError: agent.error, every: EVERY_MIN };
+    agent: snap, agentRunning: !!agent.running, agentError: agent.error, every: everyMin(), hidden: readHidden() };
 }
 async function refresh(what) {
   agent.lastView = Date.now();
@@ -171,11 +215,11 @@ async function refresh(what) {
   if (what !== 'github' && ENABLED) agentRun('manual');
   return get();
 }
-// background refresh while the panel is being looked at
+// background refresh while the panel is being looked at (checked every 30 s)
 setInterval(() => {
   if (!ENABLED || Date.now() - agent.lastView > IDLE_STOP_MS) return;
-  const snap = readSnapshot();
-  if (!snap || Date.now() - Date.parse(snap.at) > EVERY_MIN * 60000) agentRun('timer');
-}, 60000).unref();
+  const snap = readSnapshot(), ev = everyMin();
+  if (ev > 0 && (!snap || Date.now() - Date.parse(snap.at) > ev * 60000)) agentRun('timer');
+}, 30000).unref();
 
-module.exports = { init, get, refresh, READ_TOOL };
+module.exports = { init, get, refresh, hide, unhideAll, setEvery, READ_TOOL };
