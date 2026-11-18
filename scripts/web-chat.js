@@ -467,4 +467,72 @@ async function stopByToken(token) {
 
 async function info() { await sdkReady; return { enabled: !!sdk, error: loadError }; }
 
+// ---------- resume /loop-style sessions after a restart ----------
+// A self-paced loop lives in the claude process: each tick ends with ScheduleWakeup(delay, prompt)
+// and that timer dies with the process (container restart, sidecar crash). On startup, look at the
+// chat sessions active in the last few hours: if a session's last ScheduleWakeup was not a stop,
+// re-send its prompt when the wakeup was due (or shortly after startup if it is overdue).
+const RESUME_LOOPS = process.env.WEB_RESUME_LOOPS !== '0';
+const RESUME_MAX_H = parseFloat(process.env.WEB_RESUME_LOOPS_MAX_HOURS || '12');
+const REGISTRY_FILE = process.env.CLAUDE_WEB_REGISTRY || path.join(HOME, '.claude', 'web-sessions.json');
+const TAIL_BYTES = 4 << 20;
+
+// last ScheduleWakeup tool call in a transcript: {prompt, delay, stop, at(ms)} or null
+function lastWakeup(file) {
+  let buf;
+  try {
+    const fd = fs.openSync(file, 'r'); const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, TAIL_BYTES); buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len); fs.closeSync(fd);
+  } catch (_) { return null; }
+  const lines = buf.toString('utf8').split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (!l.includes('"ScheduleWakeup"') || !l.startsWith('{"')) continue;
+    let e; try { e = JSON.parse(l); } catch (_) { continue; }
+    if (e.type !== 'assistant' || e.isSidechain) continue;              // skip api-request blobs, subagents
+    const c = e.message && Array.isArray(e.message.content) ? e.message.content : [];
+    for (let j = c.length - 1; j >= 0; j--) {
+      const b = c[j];
+      if (b.type === 'tool_use' && b.name === 'ScheduleWakeup') {
+        const inp = b.input || {};
+        return { prompt: String(inp.prompt || ''), delay: Number(inp.delaySeconds) || 0, stop: !!inp.stop, at: Date.parse(e.timestamp) || 0 };
+      }
+    }
+  }
+  return null;
+}
+
+async function resumeLoops() {
+  await sdkReady;
+  if (!sdk || !RESUME_LOOPS) return;
+  let reg = {};
+  try { reg = JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8')); } catch (_) { return; }
+  const now = Date.now(), maxAge = RESUME_MAX_H * 3600e3;
+  const seen = new Set();
+  const recs = Object.values(reg).filter((r) => r && r.claudeSessionId && r.mode === 'chat')
+    .sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  for (const r of recs) {
+    if (seen.has(r.claudeSessionId)) continue; seen.add(r.claudeSessionId);
+    if (r.lastActivity && now - r.lastActivity * 1000 > maxAge) continue;
+    const file = transcriptPath(r.claudeSessionId, r.cwd); if (!file) continue;
+    const w = lastWakeup(file);
+    if (!w || w.stop || !w.prompt || /^<<autonomous-loop/.test(w.prompt) || now - w.at > maxAge) continue;
+    const due = Math.max(w.at + w.delay * 1000, now + 20000);
+    log('loop resume:', r.token, path.basename(r.cwd || ''), 'in', Math.round((due - now) / 1000) + 's');
+    setTimeout(() => fireLoop(r, w.prompt).catch((e) => log('loop resume failed', r.token, e.message)), due - now);
+  }
+}
+async function fireLoop(r, prompt) {
+  let chat = BY_CID.get(r.claudeSessionId);
+  if (!chat) for (const c of CHATS) if (c.token === r.token) chat = c;
+  if (chat && chat.q) { log('loop resume skipped (session already running):', r.token); return; }
+  const name = r.tmuxSession || r.name || ('chat-' + r.token);
+  if (await tmuxAlive(name)) { log('loop resume skipped (open in console):', r.token); return; }
+  if (!chat) chat = new Chat({ cid: r.claudeSessionId, cwd: r.cwd, name, token: r.token });
+  await chat.send(prompt);
+  log('loop resumed:', r.token);
+}
+setTimeout(() => resumeLoops().catch((e) => log('resumeLoops', e.message)), 5000);
+
 module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename };
