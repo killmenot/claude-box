@@ -7,7 +7,7 @@
 //                                            (newest first; field 1 is the id, the rest is for display)
 //   claude-sessions --preview <cwd> <id>  -> short preview of a session (for fzf --preview)
 //
-// Sessions live in ~/.claude/projects/<cwd with '/'→'-'>/<session-id>.jsonl
+// Sessions live in ~/.claude/projects/<cwd with every non-alphanumeric char → '-'>/<session-id>.jsonl
 
 const fs = require('fs');
 const path = require('path');
@@ -16,7 +16,9 @@ const path = require('path');
 process.stdout.on('error', (e) => { if (e.code === 'EPIPE') process.exit(0); throw e; });
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
-const encode = (cwd) => cwd.split('/').join('-');           // how Claude Code encodes the path
+// How Claude Code encodes the path: EVERY character outside [A-Za-z0-9] becomes '-'
+// (not just the separator) — so "/workspace/api.develop" -> "-workspace-api-develop".
+const encode = (cwd) => cwd.replace(/[^a-zA-Z0-9]/g, '-');
 const projDir = (cwd) => path.join(HOME, '.claude', 'projects', encode(cwd));
 
 function relTime(ms) {

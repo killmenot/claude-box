@@ -5,6 +5,7 @@
 #   get <token>   -> JSON of the record (exit 1 if not found)
 #   list          -> JSON array, newest first, with a live field (tmux has-session)
 #   delete <token>-> kill the tmux session (if alive) + erase the record and preview cache
+#   owns <token>  -> print the token's live tmux session name (exit 1 if it has none)
 #   snapshot      -> save the tokens of the currently running sessions (web-live-sessions.json)
 #   restore       -> after a container restart, recreate those sessions with claude --resume
 set -uo pipefail
@@ -15,6 +16,21 @@ mkdir -p "$(dirname "$REG")"
 [ -f "$REG" ] || echo '{}' > "$REG"
 
 gen_token() { local u; u="$(cat /proc/sys/kernel/random/uuid)"; u="${u//-/}"; printf '%s' "${u:0:8}"; }
+
+# Does the live tmux session <1> belong to the record of token <2>? The stored name is NOT proof of
+# identity: web-N names are recycled (web-menu.sh:next_name) and rename-session moves them freely,
+# so after a restart a dead record's name is routinely taken by an unrelated session. Proof is the
+# @cbtoken stamp put on by claude-notify / the resume path. A session with no stamp predates
+# stamping: then the name is all we have, and we trust it only when a single record claims it.
+owns_session() {
+  local s="$1" t="$2" stamp claimants
+  [ -n "$s" ] || return 1
+  tmux has-session -t "$s" 2>/dev/null || return 1
+  stamp="$(tmux show-option -t "$s" -qv @cbtoken 2>/dev/null)"
+  if [ -n "$stamp" ]; then [ "$stamp" = "$t" ]; return; fi
+  claimants="$(jq -r --arg s "$s" '[.[] | select(.tmuxSession == $s)] | length' "$REG" 2>/dev/null)"
+  [ "${claimants:-0}" = "1" ]
+}
 
 cmd="${1:-}"; shift || true
 
@@ -57,7 +73,8 @@ case "$cmd" in
     # browser tab shows); for a dead one fall back to the last title stored at hook time.
     jq -c '[.[]] | sort_by(-.lastActivity) | .[]' "$REG" 2>/dev/null | while IFS= read -r rec; do
       sess="$(printf '%s' "$rec" | jq -r '.tmuxSession // ""')"
-      if [ -n "$sess" ] && tmux has-session -t "$sess" 2>/dev/null; then
+      tok="$(printf '%s' "$rec" | jq -r '.token // ""')"
+      if owns_session "$sess" "$tok"; then
         live=true; pt="$(tmux display-message -p -t "$sess" '#{pane_title}' 2>/dev/null || true)"
       else
         live=false; pt=""
@@ -73,11 +90,19 @@ case "$cmd" in
     [ -n "$tok" ] || { echo "delete: token required" >&2; exit 2; }
     exec 9>"$REG.lock"; flock 9
     sess="$(jq -r --arg t "$tok" '.[$t].tmuxSession // empty' "$REG" 2>/dev/null || true)"
-    [ -n "$sess" ] && tmux kill-session -t "$sess" 2>/dev/null || true
+    # Only if the session is still THIS record's — a recycled name would kill a stranger's work.
+    owns_session "$sess" "$tok" && tmux kill-session -t "$sess" 2>/dev/null || true
     tmp="$(mktemp)"
     jq --arg t "$tok" 'del(.[$t])' "$REG" > "$tmp" && mv "$tmp" "$REG"
     rm -f "$HOME/.claude/web-previews/$tok.ansi" 2>/dev/null || true
     printf 'ok'
+    ;;
+  owns)
+    tok="${1:-}"
+    [ -n "$tok" ] || { echo "owns: token required" >&2; exit 2; }
+    sess="$(jq -r --arg t "$tok" '.[$t].tmuxSession // empty' "$REG" 2>/dev/null || true)"
+    owns_session "$sess" "$tok" || exit 1
+    printf '%s' "$sess"
     ;;
   snapshot)
     # Remember which sessions are running RIGHT NOW (tokens -> $LIVE), so a container restart
@@ -111,6 +136,7 @@ case "$cmd" in
       fi
       tmux has-session -t "=$sess" 2>/dev/null && continue   # already running
       if tmux -u new-session -d -s "$sess" -c "$cwd" claude --resume "$cid" 2>/dev/null; then
+        tmux set-option -t "=$sess" @cbtoken "$tok" 2>/dev/null || true   # identity for owns_session
         echo "restore: $sess -> claude --resume $cid ($cwd)" >&2
       else
         echo "restore: failed to start $sess" >&2
@@ -119,5 +145,5 @@ case "$cmd" in
     done
     ;;
   *)
-    echo "usage: claude-web-registry upsert|get|list|delete|snapshot|restore" >&2; exit 2;;
+    echo "usage: claude-web-registry upsert|get|list|delete|owns|snapshot|restore" >&2; exit 2;;
 esac

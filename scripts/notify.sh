@@ -44,7 +44,13 @@ if [ ! -t 0 ]; then
     [ -n "$hcwd" ] || hcwd="$PWD"
     token="$(claude-web-registry upsert \
       --claude-id "$cid" --cwd "$hcwd" --name "$sess" --state "$state" --tmux "$sess" --title "$ptitle" 2>/dev/null)"
-    [ -n "$token" ] && printf '\033]5379;%s\007' "$token" > "${pane_tty:-/dev/tty}" 2>/dev/null || true
+    if [ -n "$token" ]; then
+      # Stamp the token ON the tmux session: its NAME is recycled (web-N is handed out to whoever
+      # comes first after a restart), so the stamp is what makes a deep link land on this exact
+      # session instead of a stranger that happens to hold the name now.
+      tmux set-option -t "$sess" @cbtoken "$token" 2>/dev/null || true
+      printf '\033]5379;%s\007' "$token" > "${pane_tty:-/dev/tty}" 2>/dev/null || true
+    fi
   fi
 fi
 

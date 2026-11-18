@@ -21,6 +21,34 @@ next_name() {
   printf 'web-%s' "$i"
 }
 
+# Identity of a session for the deep link is the @cbtoken stamp, NOT the tmux name: next_name()
+# hands out the lowest free web-N, so after a restart (or a rename) an old record's name can be
+# taken by an unrelated session. The stamp is put on by claude-notify (hook) and by the resume
+# path below; `claude-web-registry owns` is what checks it.
+stamp_token() { tmux set-option -t "$1" @cbtoken "$2" 2>/dev/null || true; }
+session_token() { tmux show-option -t "$1" -qv @cbtoken 2>/dev/null; }
+
+# Path -> ~/.claude/projects directory name, exactly the way Claude Code encodes it:
+# every character outside [A-Za-z0-9] becomes '-'.
+proj_encode() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+
+# Directory to run `claude --resume <id>` from. The registry keeps the cwd reported by the hook,
+# i.e. Claude's CURRENT directory — it drifts as soon as the session cd's into a subfolder, while
+# the session file stays in the project dir of the directory Claude was LAUNCHED in. So we walk up
+# from the recorded cwd and take the first level whose project dir actually holds <id>.jsonl.
+resume_cwd() {
+  local cid="$1" d="$2" enc
+  [ -n "$cid" ] || return 1
+  while [ -n "$d" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
+    enc="$(proj_encode "$d")"
+    if [ -f "$HOME/.claude/projects/$enc/$cid.jsonl" ] && [ -d "$d" ]; then
+      printf '%s' "$d"; return 0
+    fi
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+
 # existing sessions: "<name>  (N windows)", most recent on top
 list_sessions() {
   tmux list-sessions -F '#{session_activity}#{session_name}  (#{session_windows} windows)' 2>/dev/null \
@@ -29,12 +57,16 @@ list_sessions() {
 
 # Emit the private OSC 5379 with the session token to stdout (ttyd -> browser -> index.html
 # sets ?id=). More reliable than the claude-notify hook in the pane tty: stdout goes straight to xterm.
-# We look up the token in the registry by tmux session name (the most recently active one, if there are several).
+# The token comes from the session's own stamp. Only a session started before stamping existed has
+# none — then we fall back to the registry, but ONLY if a single record claims that name: guessing
+# among several would put someone else's ?id in the address bar, and the next visit to that link
+# would resume the wrong conversation.
 emit_token() {
   local sess="$1" token
   [ -n "$sess" ] || return 0
-  token="$(claude-web-registry list 2>/dev/null \
-    | jq -r --arg s "$sess" '[.[] | select(.tmuxSession==$s)] | sort_by(.lastActivity) | last | .token // empty' 2>/dev/null)"
+  token="$(session_token "$sess")"
+  [ -n "$token" ] || token="$(claude-web-registry list 2>/dev/null \
+    | jq -r --arg s "$sess" '[.[] | select(.tmuxSession==$s)] | if length == 1 then .[0].token else empty end' 2>/dev/null)"
   [ -n "$token" ] && printf '\033]5379;%s\007' "$token"
   return 0
 }
@@ -48,20 +80,27 @@ enter() {
 # enter via deep-link token through the registry (durable, survives a restart):
 # tmux session alive -> attach; dead (after a restart) -> recreate + claude --resume.
 enter_by_token() {
-  local token="$1" rec cid cwd name sess nm
+  local token="$1" rec cid cwd name sess nm rcwd state
   rec="$(claude-web-registry get "$token" 2>/dev/null)" || return 1
   cid="$(printf '%s'  "$rec" | jq -r '.claudeSessionId // empty')"
   cwd="$(printf '%s'  "$rec" | jq -r '.cwd // empty')"
   name="$(printf '%s' "$rec" | jq -r '.name // empty')"
-  sess="$(printf '%s' "$rec" | jq -r '.tmuxSession // empty')"
-  if [ -n "$sess" ] && tmux has-session -t "$sess" 2>/dev/null; then
+  state="$(printf '%s' "$rec" | jq -r '.state // empty')"
+  # Attach only to a session that PROVABLY belongs to this token (stamp, not name — see above).
+  sess="$(claude-web-registry owns "$token" 2>/dev/null || true)"
+  if [ -n "$sess" ]; then
     printf '\033]5379;%s\007' "$token"      # confirm ?id= in the browser
     exec tmux -u attach-session -t "$sess"
   fi
-  [ -n "$cid" ] && [ -d "$cwd" ] || return 1
+  rcwd="$(resume_cwd "$cid" "$cwd")" || return 1
   nm="${name:-resume}"
   tmux has-session -t "$nm" 2>/dev/null && nm="$nm-$token"
-  tmux -u new-session -d -s "$nm" -c "$cwd" "claude --resume '$cid'" 2>/dev/null || return 1
+  tmux -u new-session -d -s "$nm" -c "$rcwd" "claude --resume '$cid'" 2>/dev/null || return 1
+  stamp_token "$nm" "$token"
+  # The record still points at the name this session had before the restart; re-point it now so the
+  # launcher shows the card as live without waiting for the first hook of the resumed session.
+  claude-web-registry upsert --claude-id "$cid" --cwd "$cwd" --name "$name" \
+    --state "$state" --tmux "$nm" >/dev/null 2>&1 || true
   printf '\033]5379;%s\007' "$token"        # same token after resume
   exec tmux -u attach-session -t "$nm"
 }
@@ -86,6 +125,9 @@ new_and_enter() {
 }
 
 O=$'\033[38;5;208m'; R=$'\033[0m'
+
+# Sourced with CLAUDE_WEB_MENU_LIB=1 (tests) -> expose the helpers, don't start the picker.
+[ "${CLAUDE_WEB_MENU_LIB:-}" = "1" ] && return 0
 
 # Deep-link: $1 = token (via ttyd --url-arg from ?id=) or new:<name> from the launcher.
 if [ -n "${1:-}" ]; then

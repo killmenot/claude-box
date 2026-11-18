@@ -75,7 +75,7 @@ print_header() {
 # full terminal reset before launching claude (RIS — no dependency on ncurses/reset)
 run_claude() {
   printf '\033c'
-  exec claude "$@"
+  exec ~/.local/bin/claude "$@"
 }
 
 # Create a folder in $WS and start claude in it. Returns non-zero instead of exiting, so the

@@ -19,6 +19,10 @@ services:
       - ${PROJECT_DIR}:/workspace
       # the whole container home to the host: both ~/.claude (history) and ~/.claude.json (config/onboarding/resume)
       - ./home:/home/node
+      # the HOST's own ~/.claude, read-only, for browsing/grepping host sessions from inside the box.
+      # Kept out of /home/node so it never shadows the container's own state. Override with
+      # HOST_CLAUDE_DIR in .env (e.g. point it at just <host home>/.claude/projects).
+      - ${HOST_CLAUDE_DIR:-${HOME}/.claude}:/host-claude:ro
 
   web:
     build:
@@ -39,4 +43,5 @@ services:
     volumes:
       - ${PROJECT_DIR}:/workspace
       - ./home:/home/node
+      - ${HOST_CLAUDE_DIR:-${HOME}/.claude}:/host-claude:ro   # host's ~/.claude, read-only (see the claude service)
     entrypoint: ["/usr/local/bin/claude-web-serve"]   # instead of claude-launch
