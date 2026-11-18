@@ -190,7 +190,7 @@
   .chat .log{flex:1;min-height:0;overflow-y:auto}
   .chat .inner{max-width:820px;margin:0 auto;padding:24px 24px 32px}
   .msg{margin:14px 0;color:var(--body);word-wrap:break-word}
-  .msg.user{display:flex;justify-content:flex-end}
+  .msg.user{display:flex;flex-direction:column;align-items:flex-end}
   .msg.user .b{max-width:85%;background:var(--bubble);border-radius:16px;padding:10px 15px;white-space:pre-wrap}
   .msg.asst > :first-child{margin-top:0} .msg.asst > :last-child{margin-bottom:0}
   .msg.asst p{margin:.55em 0}
@@ -239,6 +239,20 @@
   body.tools-hidden .tgroup{display:none}
   .toolsbtn{border:0;background:transparent;color:var(--mute);font:600 11px var(--mono);cursor:pointer;padding:4px 2px;white-space:nowrap}
   .toolsbtn:hover{color:var(--ink)}
+  .attbtn{border:0;background:transparent;color:var(--mute);cursor:pointer;padding:4px;display:flex;border-radius:8px}
+  .attbtn:hover{color:var(--ink);background:var(--hover)} .attbtn svg{width:17px;height:17px}
+  .atts{display:flex;flex-wrap:wrap;gap:6px}
+  .box .atts:not(:empty){margin-bottom:8px}
+  .att{display:flex;align-items:center;gap:6px;max-width:220px;padding:4px 8px 4px 4px;border:1px solid var(--line);border-radius:10px;background:var(--paper);font-size:12.5px}
+  .att img{width:34px;height:34px;object-fit:cover;border-radius:7px;flex:0 0 auto}
+  .att .ic{width:34px;height:34px;border-radius:7px;background:var(--hover);display:flex;align-items:center;justify-content:center;flex:0 0 auto;font:600 10px var(--mono);color:var(--slate);text-transform:uppercase}
+  .att .an{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .att .an small{display:block;color:var(--mute)}
+  .att .x{border:0;background:transparent;color:var(--mute);cursor:pointer;font-size:14px;padding:0 2px}
+  .att .x:hover{color:var(--err)}
+  .msg.user .atts{justify-content:flex-end;margin-bottom:6px;max-width:85%}
+  .msg.user .att img{width:auto;height:auto;max-width:200px;max-height:160px;object-fit:contain}
+  .chat.drop .box{border-color:var(--iris);box-shadow:0 0 0 3px rgba(91,95,231,.18)}
   .diff{padding:0;overflow:auto} .diff div{padding:0 12px} .diff .a{background:var(--add);color:var(--addt)} .diff .d{background:var(--del);color:var(--delt)}
   .note{margin:10px 0;color:var(--mute);font-size:13px;text-align:center}
   .note.err{color:var(--err)}
@@ -541,8 +555,10 @@ function buildChat(p){
   c.innerHTML='<div class="log"><div class="inner"></div></div>'+
     '<div class="composer"><div class="wrap"><div class="banners"></div><div class="perms"></div>'+
     '<div class="box"><div class="voice"><span class="bars"><i></i><i></i><i></i><i></i></span><span class="txt">Listening…</span></div>'+
-    '<textarea rows="1" placeholder="Message Claude…"></textarea>'+
-    '<div class="bar"><select title="Permission mode"><option value="default">Ask before edits</option>'+
+    '<div class="atts"></div><textarea rows="1" placeholder="Message Claude…"></textarea>'+
+    '<div class="bar"><button class="attbtn" type="button" title="Attach files — or paste / drop them here"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button>'+
+    '<input type="file" multiple hidden>'+
+    '<select title="Permission mode"><option value="default">Ask before edits</option>'+
     '<option value="acceptEdits">Accept edits</option><option value="plan">Plan mode</option><option value="auto">Auto</option></select>'+
     '<button class="toolsbtn" type="button" title="How tool calls show in the chat: compact / all / hidden"></button>'+
     '<span class="stat"><i></i><span></span></span>'+
@@ -557,7 +573,18 @@ function buildChat(p){
   p.banners=c.querySelector('.banners'); p.permsEl=c.querySelector('.perms');
   p.r={tools:{}, live:[], seen:{}};
   function grow(){ p.ta.style.height='auto'; p.ta.style.height=Math.min(p.ta.scrollHeight, innerHeight*0.4)+'px';
-    p.go.disabled=!p.ta.value.trim(); }
+    canSend(p); }
+  p.files=[]; p.attsEl=c.querySelector('.box .atts'); p.fileIn=c.querySelector('input[type=file]');
+  c.querySelector('.attbtn').addEventListener('click', function(){ p.fileIn.click(); });
+  p.fileIn.addEventListener('change', function(){ addFiles(p, p.fileIn.files); p.fileIn.value=''; });
+  p.ta.addEventListener('paste', function(e){
+    var fl=e.clipboardData && e.clipboardData.files; if(fl && fl.length){ e.preventDefault(); addFiles(p, fl); } });
+  var dragN=0;
+  c.addEventListener('dragenter', function(e){ if(hasFiles(e)){ dragN++; c.classList.add('drop'); } });
+  c.addEventListener('dragleave', function(e){ if(hasFiles(e) && --dragN<=0){ dragN=0; c.classList.remove('drop'); } });
+  c.addEventListener('dragover', function(e){ if(hasFiles(e)) e.preventDefault(); });
+  c.addEventListener('drop', function(e){ if(!hasFiles(e)) return; e.preventDefault(); dragN=0; c.classList.remove('drop');
+    addFiles(p, e.dataTransfer.files); p.ta.focus(); });
   p.ta.addEventListener('input', grow);
   p.ta.addEventListener('keydown', function(e){
     if(e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); VOICE.stop(true); send(p); }
@@ -581,14 +608,46 @@ function openChat(p){
   var o={op:'open', key:p.wire}; if(p.token) o.token=p.token; else o.cwd=p.cwd;
   wsSend(o);
 }
+// ---- attachments: picked, pasted or dropped files are sent inline (base64) with the message ----
+var ATT_MAX=30*1024*1024;      // per message, raw bytes (the socket allows ~48 MB after base64)
+function hasFiles(e){ var t=e.dataTransfer&&e.dataTransfer.types; return !!t && [].indexOf.call(t,'Files')>=0; }
+function fmtSize(n){ return n<1024?n+' B':n<1048576?Math.round(n/1024)+' KB':(n/1048576).toFixed(1)+' MB'; }
+function canSend(p){ p.go.disabled=!p.ta.value.trim() && !(p.files&&p.files.length); }
+function addFiles(p, list){
+  [].forEach.call(list||[], function(f){
+    var used=p.files.reduce(function(a,x){ return a+x.size; },0);
+    if(p.files.length>=20 || used+f.size>ATT_MAX){ note(p, esc('Not attached: '+f.name+' — limit is 20 files / '+fmtSize(ATT_MAX)+' per message'), true); return; }
+    var a={name:f.name||('pasted.'+((f.type||'').split('/')[1]||'bin')), type:f.type||'', size:f.size, data:null};
+    p.files.push(a); renderAtts(p);
+    var r=new FileReader();
+    r.onload=function(){ var u=String(r.result); a.data=u.slice(u.indexOf(',')+1); if(/^image\//.test(a.type)) a.url=u; renderAtts(p); };
+    r.onerror=function(){ p.files.splice(p.files.indexOf(a),1); renderAtts(p); note(p, esc('Could not read '+a.name), true); };
+    r.readAsDataURL(f);
+  });
+}
+function attHtml(a, i){
+  var ext=(/\.([^.]{1,5})$/.exec(a.name)||[])[1]||'file';
+  return '<div class="att">'+(a.url?'<img src="'+esc(a.url)+'" alt="">':'<span class="ic">'+esc(ext)+'</span>')+
+    '<span class="an">'+esc(a.name)+(a.size!=null?'<small>'+(a.data===null?'reading…':fmtSize(a.size))+'</small>':'')+'</span>'+
+    (i!=null?'<button class="x" type="button" data-i="'+i+'" title="Remove">✕</button>':'')+'</div>';
+}
+function renderAtts(p){
+  p.attsEl.innerHTML=p.files.map(attHtml).join('');
+  [].forEach.call(p.attsEl.querySelectorAll('.x'), function(b){ b.onclick=function(){ p.files.splice(+b.dataset.i,1); renderAtts(p); }; });
+  canSend(p);
+}
 function send(p){
-  var t=p.ta.value; if(!t.trim()) return;
-  if(!p.ready){ (p.queue=p.queue||[]).push(t); p.ta.value=''; p.go.disabled=true; return; }
-  if(!wsSend({op:'send', key:p.wire, text:t})){ note(p,'Not connected to the server — retrying…',true); return; }
-  p.ta.value=''; p.ta.style.height='auto'; p.go.disabled=true;
+  var t=p.ta.value, files=p.files||[];
+  if(!t.trim() && !files.length) return;
+  if(files.some(function(a){ return a.data===null; })){ note(p,'Still reading the attached files — try again in a moment.'); return; }
+  function clear(){ p.ta.value=''; p.ta.style.height='auto'; p.files=[]; renderAtts(p); }
+  if(!p.ready){ (p.queue=p.queue||[]).push({t:t, files:files}); clear(); return; }
+  var wire=files.map(function(a){ return {name:a.name, type:a.type, data:a.data}; });
+  if(!wsSend({op:'send', key:p.wire, text:t, files:wire})){ note(p,'Not connected to the server — retrying…',true); return; }
+  clear();
   var hint=p.inner.querySelector('.note.hint'); if(hint) hint.remove();
-  if(!p.firstText) p.firstText=t.replace(/\s+/g,' ').trim().slice(0,80);
-  addUser(p, t, true); scrollEnd(p, true);
+  if(!p.firstText) p.firstText=(t.replace(/\s+/g,' ').trim()||(files[0]&&files[0].name)||'').slice(0,80);
+  addUser(p, t, true, files); scrollEnd(p, true);
   if(p.state==='stopped'||p.state==='idle') setState(p,'starting');
 }
 
@@ -696,8 +755,11 @@ function toChat(p){
 function nearEnd(p){ return p.log.scrollHeight-p.log.scrollTop-p.log.clientHeight < 80; }
 function scrollEnd(p, force){ if(force || p.stick) p.log.scrollTop=p.log.scrollHeight; }
 function before(p){ p.stick=nearEnd(p); }
-function addUser(p, text, local){
-  var d=el('div','msg user'); var b=el('div','b'); b.textContent=text; d.appendChild(b); p.inner.appendChild(d);
+function addUser(p, text, local, atts){
+  var d=el('div','msg user');
+  if(atts && atts.length) d.appendChild(el('div','atts', atts.map(function(a){ return attHtml(a); }).join('')));
+  if(text.trim() || !(atts && atts.length)){ var b=el('div','b'); b.textContent=text; d.appendChild(b); }
+  p.inner.appendChild(d);
   if(local) p.r.pendingEcho=(p.r.pendingEcho||[]).concat([text.trim()]);
 }
 function note(p, html, err){ before(p); p.inner.appendChild(el('div','note'+(err?' err':''), html)); scrollEnd(p); }
@@ -776,7 +838,17 @@ function addToolResult(p, b){
     esc(t.length>20000?t.slice(0,20000)+'\n… ('+t.length+' chars)':t)+'</pre>');
 }
 // user-side text: hide harness wrappers, show slash commands and local command output
-function userTextHtml(p, t){
+function userTextHtml(p, t, imgs){
+  // "[Attached files]" block appended by web-chat.js -> chips; inline images come in as imgs
+  var atts=(imgs||[]).slice(), am=/(?:^|\n\n)\[Attached files\]\n([\s\S]*)$/.exec(t);
+  if(am){
+    var named=am[1].split('\n').map(function(l){ var m=/^- (.+?) \((.+), ([\d.]+ [KM]?B)\)$/.exec(l); return m?{name:m[2]}:null; }).filter(Boolean);
+    // inline images are the listed image files, in list order; the rest become plain chips
+    var pics=named.filter(function(n){ return /\.(png|jpe?g|gif|webp)$/i.test(n.name); });
+    atts.forEach(function(a, i){ if(pics[i]){ a.name=pics[i].name; pics[i].used=1; } });
+    atts=atts.concat(named.filter(function(n){ return !n.used; }));
+    t=t.slice(0, am.index);
+  }
   var cmd=/<command-name>([\s\S]*?)<\/command-name>/.exec(t);
   if(cmd){ var args=/<command-args>([\s\S]*?)<\/command-args>/.exec(t); addUser(p, cmd[1].trim()+(args&&args[1].trim()?' '+args[1].trim():'')); return; }
   var out=/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/.exec(t);
@@ -785,7 +857,7 @@ function userTextHtml(p, t){
   // our own optimistic echo arrives back from the SDK — don't print it twice
   var pe=p.r.pendingEcho||[]; var ix=pe.indexOf(t.trim());
   if(ix>=0){ pe.splice(ix,1); return; }
-  addUser(p, t);
+  addUser(p, t, false, atts);
 }
 function renderItem(p, m){
   if(!m || m.parent_tool_use_id) return;              // subagent internals stay inside the Task row
@@ -793,11 +865,13 @@ function renderItem(p, m){
   var msg=m.message||{}, c=msg.content;
   if(m.type==='user'){
     if(typeof c==='string'){ userTextHtml(p,c); return; }
+    var imgs=[];
     (c||[]).forEach(function(b){
       if(b.type==='tool_result') addToolResult(p,b);
-      else if(b.type==='text') userTextHtml(p,b.text||'');
-      else if(b.type==='image') addUser(p,'[image]');
+      else if(b.type==='text'){ userTextHtml(p,b.text||'',imgs); imgs=[]; }
+      else if(b.type==='image') imgs.push({name:'image', url:(b.source&&b.source.type==='base64')?'data:'+b.source.media_type+';base64,'+b.source.data:''});
     });
+    if(imgs.length) addUser(p,'',false,imgs);
     return;
   }
   if(m.type==='assistant'){
@@ -904,7 +978,7 @@ function onEvent(p, o){
       if(o.token && o.token!==p.token) rekey(p,o.token);
       setState(p, o.state||'stopped');
       p.ready=true;
-      (p.queue||[]).splice(0).forEach(function(t){ p.ta.value=t; send(p); });
+      (p.queue||[]).splice(0).forEach(function(q){ p.ta.value=q.t; p.files=q.files; send(p); });
       requestAnimationFrame(function(){ scrollEnd(p,true); });
       break;
     case 'msg':

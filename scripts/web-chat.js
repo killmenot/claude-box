@@ -14,7 +14,7 @@
 //   client -> server:
 //     {op:'open', key, token?, cwd?}   subscribe (+ history); cwd for a brand-new session
 //     {op:'close', key}                unsubscribe
-//     {op:'send', key, text}           user message (starts/resumes the SDK process lazily)
+//     {op:'send', key, text, files?}   user message; files: [{name, type, data: base64}] (starts/resumes lazily)
 //     {op:'interrupt', key}            stop the current turn
 //     {op:'perm', key, id, allow, always?, answers?}   answer a permission / question request
 //     {op:'mode', key, mode}           permission mode (default|acceptEdits|plan|auto)
@@ -37,6 +37,12 @@ const { execFile } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const MODULES = process.env.WEB_CHAT_MODULES || '/opt/claude-web-chat/node_modules';
+// files attached in the chat composer are saved here (one folder per message) and the folder is
+// granted to every chat session via additionalDirectories, so Read works without a prompt
+const UPLOADS = process.env.WEB_CHAT_UPLOADS || path.join(require('os').homedir(), '.claude', 'web-uploads');
+const IMG_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const IMG_INLINE_MAX = 3.75 * 1024 * 1024;     // the API's 5 MB base64 limit per image
+const MAX_FILES = 20;
 const IDLE_MIN = parseInt(process.env.WEB_CHAT_IDLE_MINUTES || '60', 10);   // stop idle SDK processes
 const WS_ROOT = process.env.WORKSPACE_DIR || '/workspace';
 
@@ -90,6 +96,25 @@ const CHATS = new Set();            // all live Chat objects
 const BY_CID = new Map();           // claude session id -> Chat
 let permSeq = 0, newSeq = 0;
 
+function fmtSize(n) {
+  return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(0) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+}
+// files: [{name, type, data: base64}] from the composer -> UPLOADS/<stamp>/<safe name>
+function saveUploads(files) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+  const dir = path.join(UPLOADS, stamp + '-' + Math.random().toString(36).slice(2, 6));
+  fs.mkdirSync(dir, { recursive: true });
+  return files.map((f) => {
+    let name = path.basename(String(f.name || 'file')).replace(/[\x00-\x1f\/\\:*?"<>|]/g, '_').slice(0, 120) || 'file';
+    if (name.startsWith('.')) name = '_' + name;
+    let p = path.join(dir, name);
+    for (let i = 2; fs.existsSync(p); i++) p = path.join(dir, name.replace(/(\.[^.]*)?$/, `-${i}$1`));
+    const buf = Buffer.from(String(f.data || ''), 'base64');
+    fs.writeFileSync(p, buf);
+    return { path: p, name: path.basename(p), type: String(f.type || ''), size: buf.length, buf };
+  });
+}
+
 class Chat {
   constructor({ cid, cwd, name, token }) {
     this.cid = cid || null; this.cwd = cwd; this.name = name; this.token = token || null;
@@ -131,8 +156,10 @@ class Chat {
       // claude-notify (the tmux hook) must not touch the registry for chat-owned sessions —
       // this module keeps those records itself (see scripts/notify.sh).
       env: Object.assign({}, process.env, { CLAUDE_WEB_CHAT: '1' }),
+      additionalDirectories: [UPLOADS],
       stderr: (d) => log(this.name, String(d).trim()),
     };
+    try { fs.mkdirSync(UPLOADS, { recursive: true }); } catch (_) {}
     if (this.cid) options.resume = this.cid;
     if (this.desiredMode) options.permissionMode = this.desiredMode;   // picked before the first message
     this.setState('starting');
@@ -215,11 +242,23 @@ class Chat {
     }
     p.done();
   }
-  async send(text) {
-    if (!this.titled && !this.pendingTitle) this.pendingTitle = text.replace(/\s+/g, ' ').trim().slice(0, 80);
+  async send(text, files) {
+    const saved = files && files.length ? saveUploads(files) : [];
+    if (!this.titled && !this.pendingTitle) {
+      this.pendingTitle = (text.replace(/\s+/g, ' ').trim() || (saved[0] && saved[0].name) || '').slice(0, 80);
+    }
+    let content = text;
+    if (saved.length) {
+      // images also go inline so Claude sees them right away; every file is listed by path.
+      // The "[Attached files]" block is parsed back by the launcher to show attachment chips.
+      content = saved.filter((f) => IMG_TYPES.has(f.type) && f.size <= IMG_INLINE_MAX).map((f) =>
+        ({ type: 'image', source: { type: 'base64', media_type: f.type, data: f.buf.toString('base64') } }));
+      const list = '[Attached files]\n' + saved.map((f) => `- ${f.path} (${f.name}, ${fmtSize(f.size)})`).join('\n');
+      content.push({ type: 'text', text: (text.trim() ? text.replace(/\s+$/, '') + '\n\n' : '') + list });
+    }
     if (!this.q) await this.start();
     clearTimeout(this.idleTimer);
-    this.input.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
+    this.input.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
   }
   async interrupt() { if (this.q) { try { await this.q.interrupt(); } catch (e) { log('interrupt', e.message); } } }
   async setMode(mode) {
@@ -297,7 +336,11 @@ function onConnection(ws) {
           mine.delete(key);
           if (!chat.subs.size && !chat.q) CHATS.delete(chat);
           break;
-        case 'send': if (msg.text && String(msg.text).trim()) await chat.send(String(msg.text)); break;
+        case 'send': {
+          const files = Array.isArray(msg.files) ? msg.files.slice(0, MAX_FILES) : [];
+          if ((msg.text && String(msg.text).trim()) || files.length) await chat.send(String(msg.text || ''), files);
+          break;
+        }
         case 'interrupt': await chat.interrupt(); break;
         case 'perm': chat.answer(msg.id, msg); break;
         case 'mode': await chat.setMode(String(msg.mode)); break;
@@ -327,7 +370,7 @@ function onConnection(ws) {
 let wss = null;
 function handleUpgrade(req, socket, head) {
   if (!WebSocketServer) { socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n'); return; }
-  if (!wss) { wss = new WebSocketServer({ noServer: true, maxPayload: 8 << 20 }); wss.on('connection', onConnection); }
+  if (!wss) { wss = new WebSocketServer({ noServer: true, maxPayload: 48 << 20 }); wss.on('connection', onConnection); }
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
 }
 
