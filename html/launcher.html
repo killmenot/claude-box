@@ -488,7 +488,6 @@
       <div class="fcrumbs" id="fcrumbs"></div>
       <div class="ftools">
         <input id="ffilter" class="finput" type="search" placeholder="Filter" autocomplete="off">
-        <select id="fsort" title="Sort by"><option value="recent">Recently modified</option><option value="name">Name</option><option value="sessions">Most sessions</option></select>
         <button class="btn" type="button" id="fstart" title="Start a Claude session in this folder">▸ Start session here</button>
         <button class="btn ghost" type="button" id="fterm" title="bash in this folder (gh auth login, git, …)">&gt;_ Terminal</button>
         <button class="btn ghost" type="button" id="fnew">＋ Folder</button>
@@ -509,7 +508,7 @@
       <div id="fup"></div>
       <div id="fjobs"></div>
       <div class="ftable" id="dirs"><div class="empty">loading…</div></div>
-      <p class="fnote">Click a folder to open it; <b>Start session</b> (on hover) starts Claude there. Drop files from your computer onto the list or onto a folder to upload them; drag rows onto a folder to move them (hold ⌥/Alt to copy). ⌘/Ctrl-click or the checkboxes select several. · <button class="linkbtn" type="button" id="newconsole">Classic console menu ›</button></p>
+      <p class="fnote">Click a folder to open it; <b>Start session</b> (on hover) starts Claude there. Drop files from your computer onto the list or onto a folder to upload them; drag rows onto a folder to move them (hold ⌥/Alt to copy). ⌘/Ctrl-click or the checkboxes select several.</p>
     </div></div>
   </div>
 </main>
@@ -1604,7 +1603,6 @@ function renderDirs(){
     if(FSORT==='sessions' && a.dir) return (sessCount(b.path)-sessCount(a.path)) || (b.mtime-a.mtime);
     return b.mtime-a.mtime;
   });
-  $('fsort').value=FSORT;
   var h='<div class="fth"><span></span><span data-s="name"'+(FSORT==='name'?' class="on"':'')+'>Name</span>'+
         '<span data-s="sessions"'+(FSORT==='sessions'?' class="on"':'')+'>Sessions · size</span>'+
         '<span data-s="recent"'+(FSORT==='recent'?' class="on"':'')+'>Modified</span><span></span><span></span></div>';
@@ -1668,7 +1666,6 @@ $('dirs').addEventListener('click', function(e){
 });
 $('fcrumbs').addEventListener('click', function(e){ var b=e.target.closest('button[data-rel]'); if(b) fnav(b.getAttribute('data-rel')); });
 $('ffilter').addEventListener('input', renderDirs);
-$('fsort').addEventListener('change', function(){ FSORT=this.value; ls('cb.fsort',FSORT); renderDirs(); });
 $('fhidden').addEventListener('change', function(){ FHIDDEN=this.checked; ls('cb.fhidden', FHIDDEN?'1':'0'); loadDirs(); });
 $('fstart').addEventListener('click', function(){ startIn(fabs(FREL)); });
 
@@ -1839,7 +1836,6 @@ function renderJobs(){
   });
   clearTimeout(jobTimer); if(running) jobTimer=setTimeout(loadDirs, 1500);
 }
-$('newconsole').addEventListener('click', newConsole);
 $('termbtn').addEventListener('click', function(){ openShell('/workspace'); });
 $('fterm').addEventListener('click', function(){ openShell(fabs(FREL)); });
 $('fjobs').addEventListener('click', function(e){ var b=e.target.closest('[data-start]'); if(b) startIn(b.getAttribute('data-start')); });
