@@ -9,6 +9,7 @@
 //   /chat/ws     -> web chat over the Claude Agent SDK (web-chat.js), /chat/info, /dirs
 //   /categories  -> GET/POST the sidebar categories (~/.claude/web-categories.json)
 //   /workspace   -> folder page: GET list, POST /workspace/{mkdir,rename,clone} (web-workspace.js)
+//   /tasks       -> task workspaces: GET list, POST /tasks/{open,archive,reopen,refresh,forget,add-repos,repo-add}
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
 const http = require('http');
@@ -57,6 +58,9 @@ function writeCats(o) {
 let workspace = null;
 try { workspace = require(process.env.WEB_WORKSPACE_MODULE || './web-workspace.js'); }
 catch (e) { console.error('workspace manager disabled:', e.message); }
+let tasks = null;
+try { tasks = require(process.env.WEB_TASKS_MODULE || './web-tasks.js'); }
+catch (e) { console.error('tasks disabled:', e.message); }
 // small JSON request bodies only
 function readJson(req, limit, cb) {
   let body = '', big = false;
@@ -143,6 +147,28 @@ const handler = (req, res) => {
           if (!r) { json(res, 404, { error: 'unknown op' }); return; }
           json(res, 200, Object.assign({ ok: true }, r));
         } catch (e) { json(res, 400, { ok: false, error: String(e.message || e) }); }
+      });
+      return;
+    }
+    if (path === '/tasks' || path.startsWith('/tasks/')) {
+      if (!tasks) { json(res, 503, { error: 'tasks module not loaded' }); return; }
+      const ok = (p) => p.then((r) => json(res, 200, Object.assign({ ok: true }, r)),
+        (e) => json(res, 400, { ok: false, error: String(e.message || e) }));
+      if (req.method !== 'POST') { ok(tasks.list()); return; }
+      readJson(req, 64 << 10, (o) => {
+        if (!o) { json(res, 400, { ok: false, error: 'bad request' }); return; }
+        const op = path.slice('/tasks/'.length);
+        const run = {
+          open: () => tasks.open(o),
+          archive: () => tasks.archive(o.slug, !!o.force),
+          reopen: () => tasks.reopen(o.slug),
+          refresh: () => tasks.refresh(o.slug),
+          forget: () => tasks.forget(o.slug),
+          'add-repos': () => tasks.addRepos(o.slug, o.repos),
+          'repo-add': () => tasks.addRepo(o),
+        }[op];
+        if (!run) { json(res, 404, { ok: false, error: 'unknown op' }); return; }
+        ok(Promise.resolve().then(run));
       });
       return;
     }

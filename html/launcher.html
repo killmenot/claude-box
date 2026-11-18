@@ -175,6 +175,25 @@
   .frow .more:hover{background:var(--hover);color:var(--ink)}
   .frow.root b{color:var(--slate)}
   .fnote{color:var(--mute);font-size:13px;margin:12px 2px 0}
+  #tasksec{margin-bottom:26px}
+  .shead{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .shead h3,.fsub{font:700 15px var(--display);margin:0 6px 0 0}
+  .fsub{margin:0 0 10px}
+  .shead .finput{flex:0 1 220px;min-width:120px;padding:6px 10px;font-size:13.5px}
+  .tarch{display:flex;align-items:center;gap:5px;color:var(--slate);font-size:13px;margin-right:auto;cursor:pointer}
+  .trepos{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;color:var(--slate)}
+  .trepos label{display:flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);cursor:pointer}
+  .trepos label:has(input:checked){border-color:var(--iris);color:var(--ink)}
+  #repopanel{flex-direction:column;align-items:stretch}
+  .rlist{display:flex;flex-direction:column;gap:2px;font-size:13px}
+  .rlist div{display:flex;gap:10px} .rlist b{font-weight:600} .rlist span{color:var(--mute);font:12px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rrow{display:flex;gap:8px} .rrow select{flex:1;padding:8px;border:1px solid var(--line);border-radius:9px;font:13.5px var(--sans);background:var(--panel);color:var(--ink)}
+  .trow .st{width:10px;height:10px;border-radius:50%;background:var(--mute);margin:auto}
+  .trow .st.clean{background:var(--live)} .trow .st.dirty{background:var(--work)} .trow .st.unpushed{background:var(--wait)}
+  .trow .st.archived{background:transparent;border:1.5px solid var(--mute)}
+  .trow.archived .nm b{color:var(--slate)}
+  .trow .nm .k{font:600 11.5px var(--mono);color:var(--iris);margin-right:6px}
+  .trow .badge{font-size:11px;padding:1px 6px;border-radius:6px;background:var(--hover);color:var(--slate);margin-left:6px;font-family:var(--sans)}
   @media (hover:none){ .frow .go{visibility:visible} }
   @media (max-width:760px){
     #blank{padding:18px 12px}
@@ -351,6 +370,28 @@
   <div id="views">
     <div id="blank"><div class="inner">
       <div class="fhead"><h2>Workspace</h2><span class="root" id="wsroot"></span></div>
+      <section id="tasksec">
+        <div class="shead"><h3>Tasks</h3>
+          <input id="tfilter" class="finput" type="search" placeholder="Filter tasks" autocomplete="off">
+          <label class="tarch"><input type="checkbox" id="tshowarch"> archived</label>
+          <button class="btn ghost" type="button" id="trepobtn">Repos</button>
+          <button class="btn" type="button" id="tnew">＋ New task</button></div>
+        <form class="fform hidden" id="tnewform"><span class="lbl">New task</span>
+          <input class="finput" id="tkey" placeholder="Jira key (optional)" style="flex:0 1 150px" autocomplete="off">
+          <input class="finput" id="ttitle" placeholder="What is the task?" autocomplete="off">
+          <input class="finput" id="turl" placeholder="Link (optional)" style="flex:1 1 100%" autocomplete="off">
+          <div class="trepos" id="trepopick"></div>
+          <button class="btn" type="submit">Create &amp; open</button><button class="btn ghost" type="button" data-x>Cancel</button></form>
+        <div class="fform hidden" id="repopanel"><span class="lbl">Base repos</span>
+          <div class="rlist" id="rlist"></div>
+          <form id="raddurl" class="rrow"><input class="finput" id="rurl" placeholder="Clone into repos/: https://… or git@…" autocomplete="off"><button class="btn" type="submit">Clone</button></form>
+          <form id="raddfrom" class="rrow"><select id="rfrom"></select><button class="btn ghost" type="submit">Copy from folder</button></form>
+          <div id="rjobs"></div>
+          <p class="fnote" style="margin:0">Every task gets its own clone of the repos it needs, on a branch named after the task. Base repos live in <code>repos/</code> and are never edited directly.</p>
+        </div>
+        <div class="ftable" id="tlist"><div class="empty">loading…</div></div>
+      </section>
+      <h3 class="fsub">Folders</h3>
       <div class="ftools">
         <input id="ffilter" class="finput" type="search" placeholder="Filter folders" autocomplete="off">
         <select id="fsort" title="Sort by"><option value="recent">Recently modified</option><option value="name">Name</option><option value="sessions">Most sessions</option></select>
@@ -728,7 +769,7 @@ function openShell(dir){
 function showBlank(){
   ACTIVE=null; Object.keys(PANES).forEach(function(k){ var q=PANES[k];
     if(q.el) q.el.classList.remove('on'); if(q.iframe) q.iframe.classList.remove('on'); });
-  $('blank').classList.remove('hidden'); syncUrl(); renderList(true); renderTop(); loadDirs();
+  $('blank').classList.remove('hidden'); syncUrl(); renderList(true); renderTop(); loadDirs(); loadTasks();
   $('app').classList.remove('drawer');
 }
 
@@ -1187,6 +1228,7 @@ function closeMenu(){ menuEl.style.display='none'; }
 menuEl.addEventListener('click', function(e){
   var b=e.target.closest('button'); if(!b) return;
   if(menuEl.dataset.mode==='folder'){ var fa=b.getAttribute('data-fa'); closeMenu(); folderAction(fa, menuEl.dataset.name, menuEl.dataset.path); return; }
+  if(menuEl.dataset.mode==='task'){ var ta=b.getAttribute('data-ta'); closeMenu(); taskAction(ta, menuEl.dataset.slug); return; }
   var tok=menuEl.dataset.tok; closeMenu();
   if(b.getAttribute('data-act')==='rename'){ renameSession(tok); return; }
   assign(tok, b.getAttribute('data-cat'));
@@ -1395,6 +1437,155 @@ function folderAction(a, name, path){
   }
 }
 
+// ======================= tasks: one folder (with its own repo clones) per task =======================
+var TDATA={tasks:[], repos:[], candidates:[], jobs:[]}, TBYSLUG={}, rjobTimer=null;
+var TSTATE={clean:'nothing unsaved', dirty:'uncommitted changes', unpushed:'commits not pushed',
+            archived:'archived — folder removed, branch kept'};
+function tPost(op, body){
+  return fetch('tasks/'+op,{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body||{})})
+    .then(function(r){ return r.json(); }).then(function(o){ if(!o.ok) throw new Error(o.error||'failed'); return o; });
+}
+function loadTasks(){
+  return fetch('tasks').then(function(r){ return r.ok?r.json():Promise.reject(); }).then(function(o){
+    TDATA=o; TBYSLUG={}; (o.tasks||[]).forEach(function(t){ TBYSLUG[t.slug]=t; });
+    renderTasks(); renderRepos();
+  }).catch(function(){ $('tlist').innerHTML='<div class="empty">Tasks are not available.</div>'; });
+}
+function renderTasks(){
+  var q=$('tfilter').value.trim().toLowerCase(), arch=$('tshowarch').checked;
+  var ts=(TDATA.tasks||[]).filter(function(t){
+    if(t.archived && !arch && !q) return false;
+    return !q || (t.title+' '+t.key+' '+t.slug).toLowerCase().indexOf(q)>=0; });
+  if(!ts.length){
+    $('tlist').innerHTML='<div class="empty">'+((TDATA.tasks||[]).length?'No tasks match.':
+      'No tasks yet. “＋ New task” gives a task its own folder and branch'+(TDATA.repos.length?'':' — add a base repo under “Repos” first')+'.')+'</div>';
+    return;
+  }
+  $('tlist').innerHTML=ts.map(function(t){
+    var n=sessCount(t.path), rp=(t.repos||[]).map(function(r){ return r.name; }).join(', ');
+    var sub=(rp?esc(rp)+' · ':'')+esc(t.branch||'');
+    return '<div class="frow trow'+(t.archived?' archived':'')+'" data-slug="'+esc(t.slug)+'">'+
+      '<span class="st '+esc(t.state)+'" title="'+esc(TSTATE[t.state]||t.state)+'"></span>'+
+      '<span class="nm"><b>'+(t.key?'<span class="k">'+esc(t.key)+'</span>':'')+esc(t.title||t.slug)+
+        (t.state!=='clean'?'<span class="badge">'+esc(TSTATE[t.state]||t.state)+'</span>':'')+'</b><small>'+sub+'</small></span>'+
+      '<span class="ss">'+(n?n+' session'+(n>1?'s':''):'—')+'</span>'+
+      '<span class="wh">'+(t.touched?fmt(Math.floor(t.touched/1000)):'')+'</span>'+
+      '<button class="btn go" type="button" data-act="open">'+(t.archived?'Reopen':'Open')+'</button>'+
+      '<button class="more" type="button" data-act="menu" title="More">⋯</button></div>';
+  }).join('');
+}
+function renderRepos(){
+  var rs=TDATA.repos||[];
+  $('rlist').innerHTML=rs.length?rs.map(function(r){ return '<div><b>'+esc(r.name)+'</b><span>'+esc(r.remote||'')+'</span></div>'; }).join('')
+    :'<div><span>No base repos yet.</span></div>';
+  $('rfrom').innerHTML='<option value="">— an existing workspace folder —</option>'+(TDATA.candidates||[]).map(function(c){
+    return '<option value="'+esc(c)+'">'+esc(c)+'</option>'; }).join('');
+  var picked={}; [].forEach.call($('trepopick').querySelectorAll('input:checked'), function(i){ picked[i.value]=1; });
+  $('trepopick').innerHTML=rs.length?'Repos: '+rs.map(function(r){
+    return '<label><input type="checkbox" value="'+esc(r.name)+'"'+(picked[r.name]||rs.length===1?' checked':'')+'>'+esc(r.name)+'</label>'; }).join('')
+    :'No base repos — the task gets an empty folder (add repos under “Repos”).';
+  var h='', running=false;
+  (TDATA.jobs||[]).forEach(function(j){
+    if(j.state==='running'){ running=true; h+='<div class="job"><span class="spin"></span><span>Adding <b>'+esc(j.name)+'</b>…</span></div>'; }
+    else if(j.state==='error') h+='<div class="job err"><span><b>'+esc(j.name)+'</b>: '+esc(j.error)+'</span></div>';
+  });
+  $('rjobs').innerHTML=h;
+  clearTimeout(rjobTimer); if(running) rjobTimer=setTimeout(loadTasks, 1500);
+}
+// the newest session started in the task folder, or a new chat there with the task as a draft
+function taskPrompt(t){
+  var rp=(t.repos||[]).map(function(r){ return r.name+' (branch '+(r.branch||t.branch)+')'; }).join(', ');
+  return (t.key?'Task '+t.key+': ':'Task: ')+t.title+(t.url?'\nLink: '+t.url:'')+(t.text?'\n\n'+t.text:'')+
+    '\n\nThis folder is the task workspace'+(rp?' with its own clones: '+rp:'')+'. '+
+    'Read the task first'+(t.key?' (Jira tools for '+t.key+')':'')+', then propose a plan.';
+}
+function openTask(t){
+  if(!t) return;
+  if(t.archived){ tPost('reopen',{slug:t.slug}).then(function(o){ TBYSLUG[o.slug]=o; openTask(o); loadTasks(); })
+    .catch(function(e){ alert('Could not reopen the task: '+e.message); }); return; }
+  var ss=ROWS.filter(function(s){ return s.cwd===t.path; }).sort(function(a,b){ return (b.lastActivity||0)-(a.lastActivity||0); });
+  if(ss.length){ openSession(ss[0].token); return; }
+  if(!CHAT_ON){ newConsole(); return; }
+  newChat(t.path);
+  var p=PANES[ACTIVE]; if(p && p.ta && !p.ta.value){ p.ta.value=taskPrompt(t); p.ta.dispatchEvent(new Event('input')); p.ta.focus(); }
+}
+function openTaskMenu(slug, anchor){
+  var t=TBYSLUG[slug]; if(!t) return;
+  menuEl.innerHTML=(t.archived
+      ?'<button type="button" data-ta="reopen">↺ Reopen</button><button type="button" data-ta="forget">✕ Forget (remove folder)</button>'
+      :'<button type="button" data-ta="new">▸ New session here</button><button type="button" data-ta="term">&gt;_ Open terminal here</button>'+
+       '<button type="button" data-ta="repos">＋ Add repo…</button><button type="button" data-ta="refresh">⟳ Refresh git state</button>'+
+       '<button type="button" data-ta="archive">Archive (remove folder, keep branch)</button>')+
+    (t.url?'<button type="button" data-ta="link">↗ Open link</button>':'')+
+    '<button type="button" data-ta="copy">Copy path</button>';
+  menuEl.dataset.mode='task'; menuEl.dataset.slug=slug; menuEl.style.display='block';
+  var r=anchor.getBoundingClientRect(), w=menuEl.offsetWidth, hh=menuEl.offsetHeight;
+  menuEl.style.left=Math.max(8, Math.min(r.right-w, innerWidth-w-8))+'px';
+  menuEl.style.top=(r.bottom+hh+8<innerHeight ? r.bottom+4 : Math.max(8, r.top-hh-4))+'px';
+}
+function taskAction(a, slug){
+  var t=TBYSLUG[slug]; if(!t) return;
+  var fail=function(what){ return function(e){ alert(what+': '+e.message); loadTasks(); }; };
+  if(a==='new'){ if(CHAT_ON) newChat(t.path); else newConsole(); }
+  else if(a==='term') openShell(t.path);
+  else if(a==='copy'){ try{ navigator.clipboard.writeText(t.path); }catch(_){ prompt('Path:', t.path); } }
+  else if(a==='link') window.open(t.url, '_blank', 'noopener');
+  else if(a==='refresh') tPost('refresh',{slug:slug}).then(loadTasks, fail('Refresh failed'));
+  else if(a==='reopen') tPost('reopen',{slug:slug}).then(loadTasks, fail('Could not reopen'));
+  else if(a==='archive'){
+    if(!confirm('Archive “'+(t.title||slug)+'”?\n\nThe repo clones in its folder are removed; the branch '+t.branch+
+      ' is saved into the base repos, so “Reopen” brings everything back. Sessions stay in the sidebar.')) return;
+    tPost('archive',{slug:slug}).then(loadTasks, fail('Could not archive'));
+  } else if(a==='forget'){
+    if(!confirm('Remove the folder of “'+(t.title||slug)+'” for good? Its branch stays in the base repos.')) return;
+    tPost('forget',{slug:slug}).then(loadTasks, fail('Could not remove'));
+  } else if(a==='repos'){
+    var have={}; (t.repos||[]).forEach(function(r){ have[r.name]=1; });
+    var free=(TDATA.repos||[]).filter(function(r){ return !have[r.name]; }).map(function(r){ return r.name; });
+    if(!free.length){ alert('All base repos are already in this task. Add more under “Repos”.'); return; }
+    var n=(prompt('Add which repo? ('+free.join(', ')+')', free[0])||'').trim(); if(!n) return;
+    tPost('add-repos',{slug:slug, repos:[n]}).then(loadTasks, fail('Could not add the repo'));
+  }
+}
+$('tlist').addEventListener('click', function(e){
+  var row=e.target.closest('.trow'); if(!row) return;
+  var slug=row.getAttribute('data-slug'), act=e.target.closest('[data-act]');
+  if(act && act.getAttribute('data-act')==='menu'){ e.stopPropagation(); openTaskMenu(slug, act); return; }
+  openTask(TBYSLUG[slug]);
+});
+$('tfilter').addEventListener('input', renderTasks);
+$('tshowarch').addEventListener('change', renderTasks);
+$('tnew').addEventListener('click', function(){ $('repopanel').classList.add('hidden'); $('tnewform').classList.toggle('hidden');
+  if(!$('tnewform').classList.contains('hidden')) $('ttitle').focus(); });
+$('trepobtn').addEventListener('click', function(){ $('tnewform').classList.add('hidden'); $('repopanel').classList.toggle('hidden'); });
+$('tnewform').querySelector('[data-x]').addEventListener('click', function(){ $('tnewform').classList.add('hidden'); });
+$('tnewform').addEventListener('submit', function(e){
+  e.preventDefault();
+  var key=$('tkey').value.trim(), title=$('ttitle').value.trim(); if(!key && !title){ $('ttitle').focus(); return; }
+  var repos=[].map.call($('trepopick').querySelectorAll('input:checked'), function(i){ return i.value; });
+  var btn=$('tnewform').querySelector('button[type=submit]'); btn.disabled=true; btn.textContent='Creating…';
+  tPost('open',{key:key, title:title, url:$('turl').value.trim(), repos:repos}).then(function(t){
+    if(t.errors && t.errors.length) alert('Some repos could not be cloned:\n'+t.errors.join('\n'));
+    $('tkey').value=''; $('ttitle').value=''; $('turl').value=''; $('tnewform').classList.add('hidden');
+    loadTasks(); openTask(t);
+  }).catch(function(err){ alert('Could not create the task: '+err.message); })
+    .then(function(){ btn.disabled=false; btn.textContent='Create & open'; });
+});
+$('raddurl').addEventListener('submit', function(e){ e.preventDefault(); var u=$('rurl').value.trim(); if(!u) return;
+  tPost('repo-add',{url:u}).then(function(){ $('rurl').value=''; loadTasks(); }).catch(function(err){ alert('Could not add: '+err.message); }); });
+$('raddfrom').addEventListener('submit', function(e){ e.preventDefault(); var f=$('rfrom').value; if(!f) return;
+  tPost('repo-add',{from:f}).then(loadTasks).catch(function(err){ alert('Could not add: '+err.message); }); });
+// deep link: /?task=LAM-5161&title=…&url=…&repos=a,b&text=… (from DataBox, a bookmarklet, anything)
+function taskFromUrl(){
+  var q=new URLSearchParams(location.search), id=q.get('task'); if(!id && !q.get('title')) return false;
+  var key=/^[A-Za-z][A-Za-z0-9]+-\d+$/.test(id||'')?id.toUpperCase():'';
+  var body={id:key?'':(id||''), key:key, title:q.get('title')||'', url:q.get('url')||'', text:q.get('text')||'',
+    source:q.get('source')||'', repos:(q.get('repos')||'').split(',').map(function(x){ return x.trim(); }).filter(Boolean)};
+  tPost('open', body).then(function(t){ loadTasks(); openTask(t); })
+    .catch(function(e){ showBlank(); alert('Could not open the task: '+e.message); });
+  return true;
+}
+
 $('newbtn').addEventListener('click', function(){ if(CHAT_ON) showBlank(); else newConsole(); });
 
 // ======================= host metrics in the sidebar footer (same source as the console bar) =======================
@@ -1442,6 +1633,7 @@ fetch('chat/info').then(function(r){ return r.ok?r.json():{}; }).catch(function(
   fetch('sessions').then(function(r){ return r.ok?r.json():[]; }).catch(function(){ return []; }).then(function(rows){
     ROWS=visibleRows(rows||[]); BYTOK={}; ROWS.forEach(function(x){ BYTOK[x.token]=x; });
     renderList(true);
+    if(taskFromUrl()) return;
     if(s) openSession(s); else { showBlank(); if(innerWidth<=760) $('app').classList.add('drawer'); }
   });
 });
