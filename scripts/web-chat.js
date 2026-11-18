@@ -612,4 +612,42 @@ async function fireLoop(r, prompt) {
 setTimeout(() => resumeLoops().catch((e) => log('resumeLoops', e.message)), 5000);
 setTimeout(() => { if (!CMD.last.length) warmCommands(WS_ROOT); }, 8000);
 
-module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename };
+// ---------- headless API (cb-session) ----------
+// Lets an agent start chat sessions that run on their own (e.g. one review per PR) and poll
+// them. They are ordinary chat sessions: listed in the sidebar, open and continue like any other.
+async function apiNew(o) {
+  await sdkReady;
+  if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
+  const prompt = String((o && o.prompt) || '').trim();
+  if (!prompt) throw new Error('prompt is required');
+  const chat = await chatFor({ cwd: o.cwd });
+  if (o.mode) await chat.setMode(String(o.mode));
+  if (o.title) chat.pendingTitle = String(o.title).slice(0, 80);
+  await chat.send(prompt);
+  for (let i = 0; i < 300 && !chat.token; i++) await new Promise((r) => setTimeout(r, 100));   // init -> registry
+  if (!chat.token) throw new Error('session did not start in 30s');
+  return { token: chat.token, cid: chat.cid, cwd: chat.cwd };
+}
+// state: running | requires_action | idle | starting | stopped | unknown (+ the last answer text)
+async function apiStatus(token) {
+  const rec = await registry.get(token);
+  let chat = rec && BY_CID.get(rec.claudeSessionId);
+  if (!chat) for (const c of CHATS) if (c.token === token) chat = c;
+  if (!rec && !chat) throw new Error('unknown session');
+  const out = { token, cid: (chat && chat.cid) || rec.claudeSessionId, cwd: (chat && chat.cwd) || rec.cwd,
+    live: !!(chat && chat.q), state: chat ? chat.state : 'stopped', cost: chat ? chat.info.cost : null,
+    pending: chat ? [...chat.perms.values()].map((p) => p.tool) : [] };
+  if (out.cid && sdk) {
+    try {
+      const items = await sdk.getSessionMessages(out.cid, { dir: out.cwd });
+      for (let i = items.length - 1; i >= 0; i--) {
+        const m = items[i], c = m.type === 'assistant' && m.message && m.message.content;
+        const t = Array.isArray(c) ? c.filter((b) => b.type === 'text').map((b) => b.text).join('\n') : '';
+        if (t && !m.parent_tool_use_id) { out.last = t.slice(-4000); break; }
+      }
+    } catch (_) {}
+  }
+  return out;
+}
+
+module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus };

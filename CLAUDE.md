@@ -18,6 +18,7 @@ Guidance for Claude Code (and other agents) working in this repository.
 - `scripts/` — the in-container web server in Node (`web-serve.js` entrypoint, `web-sidecar.js`, session registry,
   metrics, search, preview) plus two shell pieces: `web-menu.sh` (ttyd console picker) and `notify.sh` (Claude hook).
   `scripts/web-chat.js` — web chat mode: Claude Agent SDK sessions streamed to the launcher over `/chat/ws`.
+  `scripts/cb-session.js` — CLI for agents: start / poll chat sessions through `/chat/api/*`.
   `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with per-task repo clones from `/workspace/repos`), served at `/tasks`.
 - `site/` — the static marketing landing for **claude-box.dev** (Tailwind, self-hosted
   fonts, no CDN; deploy with `./site/deploy.sh`).
