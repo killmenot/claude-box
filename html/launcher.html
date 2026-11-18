@@ -256,6 +256,13 @@
   body.tools-compact .tgroup:not(.open) .titems{display:none}
   body.tools-compact .tgroup.open .titems{border-left:2px solid var(--line);padding-left:10px;margin-left:3px}
   body.tools-hidden .tgroup{display:none}
+  .tgroup.skill .tsum,body.tools-hidden .tgroup.skill{display:flex}
+  body.tools-hidden .tgroup.skill{flex-direction:column}
+  .tgroup.skill .tsum{justify-content:flex-start;margin:8px 0;max-width:none;opacity:1;font-size:13px}
+  .tgroup.skill .tsum .tl{order:0}
+  .tgroup.skill .tsum .tc{color:var(--ink)}
+  .tgroup.skill:not(.open) .titems{display:none}
+  .tgroup.skill.open .titems{border-left:2px solid var(--line);padding-left:10px;margin-left:3px}
   .toolsbtn{border:0;background:transparent;color:var(--mute);font:600 11px var(--mono);cursor:pointer;padding:4px 2px;white-space:nowrap}
   .toolsbtn:hover{color:var(--ink)}
   .attbtn{border:0;background:transparent;color:var(--mute);cursor:pointer;padding:4px;display:flex;border-radius:8px}
@@ -834,13 +841,14 @@ function toolBody(name, inp){
 // can fold a whole run into a single line and "hidden" can drop it entirely.
 function toolGroup(p){
   var last=p.inner.lastElementChild;
-  if(last && last.classList.contains('tgroup')) return last;
+  if(last && last.classList.contains('tgroup') && !last.classList.contains('skill')) return last;
   var g=el('div','tgroup','<div class="tsum"><span class="tc"></span><span class="tl"></span></div><div class="titems"></div>');
   g.firstChild.addEventListener('click', function(){ g.classList.toggle('open'); });
   p.inner.appendChild(g); return g;
 }
 function updGroup(g){
   if(!g || !g.classList.contains('tgroup')) return;
+  if(g.classList.contains('skill')){ updSkill(g); return; }
   var ts=g.querySelectorAll('.titems > .tool'), names=[];
   [].forEach.call(ts, function(t){ var n=t.dataset.name.replace(/^mcp__(?:claude_ai_)?([^_]+(?:_[^_]+)*?)__(.+)$/, '$1: $2');
     if(names.indexOf(n)<0) names.push(n); });
@@ -900,8 +908,51 @@ function userTextHtml(p, t, imgs){
   if(ix>=0){ pe.splice(ix,1); return; }
   addUser(p, t, false, atts);
 }
+// ---- skills (/code-review …) run as a forked sub-agent: task_* frames + messages whose
+// parent_tool_use_id points at no visible Task row. They collect into one "skill" block.
+function skillBlock(p, id, name){
+  var g=el('div','tgroup skill pending','<div class="tsum"><span class="tc"></span><span class="tl"></span></div><div class="titems"></div>');
+  g.firstChild.addEventListener('click', function(){ g.classList.toggle('open'); });
+  g._name=name||'task'; g._desc=''; p.inner.appendChild(g);
+  p.r.skills=p.r.skills||{}; p.r.skills[id]=g; p.r.openSkill=g; updSkill(g); return g;
+}
+function updSkill(g){
+  var n=g.querySelectorAll('.titems > .tool').length, run=g.classList.contains('pending');
+  g.querySelector('.tc').textContent=g._name+(run?' — running…':g.classList.contains('err')?' — failed':'');
+  g.querySelector('.tl').textContent=(g._desc?g._desc+' · ':'')+n+(n===1?' tool call':' tool calls');
+}
+function renderSystem(p, m){
+  var st=m.subtype;
+  if(st==='local_command_output' && m.content){ p.inner.appendChild(el('div','msg asst', md(m.content))); return; }
+  if(st==='compact_boundary'){ p.inner.appendChild(el('div','note','— context compacted —')); return; }
+  if(st==='task_started' && !(m.tool_use_id && p.r.tools[m.tool_use_id])){
+    skillBlock(p, m.task_id, String(m.description||'task').split('\n')[0].slice(0,80)); return; }
+  var g=p.r.skills && p.r.skills[m.task_id]; if(!g) return;
+  if(st==='task_progress' && m.description){ g._desc=String(m.description).split('\n')[0].slice(0,120); updSkill(g); }
+  if(st==='task_notification'){ g.classList.remove('pending'); if(m.status && m.status!=='completed') g.classList.add('err');
+    if(p.r.openSkill===g) p.r.openSkill=null; updSkill(g); }
+}
+// a sub-agent message of a skill block: only its tool calls / results are shown
+function renderSub(p, m){
+  var pid=m.parent_tool_use_id; p.r.subOf=p.r.subOf||{};
+  var g=p.r.subOf[pid] || (p.r.tools[pid] ? null : p.r.openSkill);
+  if(!g) return;
+  p.r.subOf[pid]=g;
+  var c=(m.message||{}).content; if(!Array.isArray(c)) return;
+  c.forEach(function(b){
+    if(m.type==='assistant' && b.type==='tool_use'){
+      var d=el('details','tool pending'); d.dataset.name=b.name||'tool';
+      d.innerHTML='<summary><span class="tn">'+esc(b.name)+'</span><span class="ts">'+esc(toolSummary(b.name,b.input))+'</span></summary>'+
+                  '<div class="body">'+toolBody(b.name,b.input)+'</div>';
+      g.lastChild.appendChild(d); p.r.tools[b.id]=d;
+    } else if(m.type==='user' && b.type==='tool_result') addToolResult(p,b);
+  });
+  updSkill(g);
+}
 function renderItem(p, m){
-  if(!m || m.parent_tool_use_id) return;              // subagent internals stay inside the Task row
+  if(!m) return;
+  if(m.type==='system'){ renderSystem(p,m); return; }
+  if(m.parent_tool_use_id){ renderSub(p,m); return; }     // Task-row internals stay hidden; skill runs collect
   if(m.uuid){ if(p.r.seen[m.uuid]) return; p.r.seen[m.uuid]=1; }
   var msg=m.message||{}, c=msg.content;
   if(m.type==='user'){
@@ -924,7 +975,7 @@ function renderItem(p, m){
       } else if(b.type==='tool_use') addTool(p,b);
       else if(b.type==='thinking' && b.thinking){
         var tl=p.inner.lastElementChild, th=el('div','thinking', esc(b.thinking));
-        if(tl && tl.classList.contains('tgroup')) tl.lastChild.appendChild(th); else p.inner.appendChild(th);
+        if(tl && tl.classList.contains('tgroup') && !tl.classList.contains('skill')) tl.lastChild.appendChild(th); else p.inner.appendChild(th);
       }
     });
     if(m.error) p.inner.appendChild(el('div','note err', esc('API error: '+m.error)));
@@ -1029,9 +1080,6 @@ function onEvent(p, o){
       else if(m.type==='result'){
         finishLive(p);
         if(m.subtype && m.subtype!=='success') note(p, esc('Turn ended: '+m.subtype.replace(/_/g,' ')), true);
-      } else if(m.type==='system'){
-        if(m.subtype==='local_command_output' && m.content) p.inner.appendChild(el('div','note','<pre>'+esc(m.content)+'</pre>'));
-        if(m.subtype==='compact_boundary') p.inner.appendChild(el('div','note','— context compacted —'));
       } else renderItem(p,m);
       scrollEnd(p);
       break;
