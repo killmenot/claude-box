@@ -36,7 +36,9 @@ function list() {
   let ents = [];
   try { ents = fs.readdirSync(ROOT, { withFileTypes: true }); } catch (_) {}
   const cloning = new Set([...JOBS.values()].filter((j) => j.state === 'running').map((j) => j.name));
-  const out = ents.filter((d) => d.isDirectory() && !d.name.startsWith('.') && !cloning.has(d.name)).map((d) => {
+  // tasks/ and repos/ belong to the task manager (web-tasks.js) and have their own section
+  const out = ents.filter((d) => d.isDirectory() && !d.name.startsWith('.') && !cloning.has(d.name) &&
+    d.name !== 'tasks' && d.name !== 'repos').map((d) => {
     const p = path.join(ROOT, d.name); let mtime = 0;
     try { mtime = fs.statSync(p).mtimeMs; } catch (_) {}
     return { name: d.name, path: p, mtime, git: gitInfo(p) };
