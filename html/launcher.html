@@ -175,6 +175,26 @@
   .frow .more:hover{background:var(--hover);color:var(--ink)}
   .frow.root b{color:var(--slate)}
   .fnote{color:var(--mute);font-size:13px;margin:12px 2px 0}
+  .fcrumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin:0 0 10px;font:700 15px var(--display)}
+  .fcrumbs button{border:0;background:transparent;font:inherit;color:var(--slate);cursor:pointer;padding:3px 6px;border-radius:7px}
+  .fcrumbs button:hover{background:var(--hover);color:var(--ink)}
+  .fcrumbs button:last-child{color:var(--ink);cursor:default} .fcrumbs button:last-child:hover{background:transparent}
+  .fcrumbs .sep{color:var(--mute);font-weight:400}
+  .fcrumbs button.dropin{background:#e9e9fb;outline:2px dashed var(--iris)}
+  .fbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 10px;padding:8px 12px;border-radius:10px;background:#eef0fd;font-size:13.5px}
+  .fbar.clip{background:var(--paper);border:1px dashed var(--line)}
+  .fbar b{margin-right:4px} .fbar .btn{padding:5px 10px;font-size:12.5px} .fbar .sp{flex:1}
+  .frow .ic .fck{display:none;margin:0;width:15px;height:15px;cursor:pointer;accent-color:var(--iris)}
+  .frow:not(.up):hover .ic .fck,.ftable.selecting .frow:not(.up) .ic .fck{display:block}
+  .frow:not(.up):hover .ic svg,.ftable.selecting .frow:not(.up) .ic svg{display:none}
+  .frow.sel{background:#eef0fd}
+  .frow.dropin,.ftable.dropin{outline:2px dashed var(--iris);outline-offset:-2px;background:#f3f3fe}
+  .frow.file .nm b{font-weight:500}
+  .frow.up b{color:var(--slate)}
+  .frow.cut{opacity:.5}
+  .upl{display:flex;flex-direction:column;gap:6px;margin:0 0 8px;padding:9px 12px;border-radius:10px;background:var(--paper);font-size:13.5px}
+  .upl .bar{height:4px;border-radius:2px;background:var(--line);overflow:hidden} .upl .bar i{display:block;height:100%;background:var(--iris);width:0}
+  .upl.err{background:var(--del);color:var(--delt)}
   #tasksec{margin-bottom:26px}
   .shead{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
   .shead h3,.fsub{font:700 15px var(--display);margin:0 6px 0 0}
@@ -454,14 +474,20 @@
         </div>
         <div class="ftable" id="tlist"><div class="empty">loading…</div></div>
       </section>
-      <h3 class="fsub">Folders</h3>
+      <div class="fcrumbs" id="fcrumbs"></div>
       <div class="ftools">
-        <input id="ffilter" class="finput" type="search" placeholder="Filter folders" autocomplete="off">
+        <input id="ffilter" class="finput" type="search" placeholder="Filter" autocomplete="off">
         <select id="fsort" title="Sort by"><option value="recent">Recently modified</option><option value="name">Name</option><option value="sessions">Most sessions</option></select>
-        <button class="btn ghost" type="button" id="fterm" title="bash in the container (gh auth login, git, …)">&gt;_ Terminal</button>
-        <button class="btn ghost" type="button" id="fnew">＋ New folder</button>
-        <button class="btn" type="button" id="fclone">Clone from Git</button>
+        <button class="btn" type="button" id="fstart" title="Start a Claude session in this folder">▸ Start session here</button>
+        <button class="btn ghost" type="button" id="fterm" title="bash in this folder (gh auth login, git, …)">&gt;_ Terminal</button>
+        <button class="btn ghost" type="button" id="fnew">＋ Folder</button>
+        <button class="btn ghost" type="button" id="fupbtn" title="Upload files here (or drop them on the list)">⇪ Upload</button>
+        <button class="btn ghost" type="button" id="fclone">Clone from Git</button>
+        <label class="tarch" title="Show files and folders whose name starts with a dot"><input type="checkbox" id="fhidden"> hidden</label>
+        <input type="file" id="fupload" multiple hidden>
       </div>
+      <div class="fbar hidden" id="fsel"></div>
+      <div class="fbar clip hidden" id="fclip"></div>
       <form class="fform hidden" id="fnewform"><span class="lbl">New folder</span>
         <input class="finput" id="fnewname" placeholder="folder-name" autocomplete="off">
         <button class="btn" type="submit">Create</button><button class="btn ghost" type="button" data-x>Cancel</button></form>
@@ -469,9 +495,10 @@
         <input class="finput" id="fcloneurl" placeholder="https://github.com/org/repo.git  or  git@github.com:org/repo.git" autocomplete="off">
         <input class="finput" id="fclonename" placeholder="folder (optional)" style="flex:0 1 200px" autocomplete="off">
         <button class="btn" type="submit">Clone</button><button class="btn ghost" type="button" data-x>Cancel</button></form>
+      <div id="fup"></div>
       <div id="fjobs"></div>
       <div class="ftable" id="dirs"><div class="empty">loading…</div></div>
-      <p class="fnote">Click a folder to start a new Claude session in it. · <button class="linkbtn" type="button" id="newconsole">Classic console menu ›</button></p>
+      <p class="fnote">Click a folder to open it; <b>Start session</b> (on hover) starts Claude there. Drop files from your computer onto the list or onto a folder to upload them; drag rows onto a folder to move them (hold ⌥/Alt to copy). ⌘/Ctrl-click or the checkboxes select several. · <button class="linkbtn" type="button" id="newconsole">Classic console menu ›</button></p>
     </div></div>
   </div>
 </main>
@@ -1260,7 +1287,7 @@ $('modeseg').addEventListener('click', function(e){
   if(b.dataset.m==='console') toConsole(p); else toChat(p);
 });
 function syncUrl(){
-  var q = (ACTIVE && !/^new-/.test(ACTIVE)) ? ('?s='+encodeURIComponent(ACTIVE)) : '';
+  var q = (ACTIVE && !/^new-/.test(ACTIVE)) ? ('?s='+encodeURIComponent(ACTIVE)) : (!ACTIVE && FREL ? '?d='+encodeURIComponent(FREL) : '');
   try{ history.replaceState(null,'',location.pathname+q); }catch(e){}
 }
 
@@ -1500,57 +1527,259 @@ function delSession(tok){
     }).catch(function(){ alert('Failed to delete session'); });
 }
 
-// ======================= workspace page: folders, new folder, git clone =======================
-var WSDATA={root:'', dirs:[], jobs:[]}, FSORT=ls('cb.fsort')||'recent', JOBSEEN={}, AUTOSTART={}, jobTimer=null;
+// ======================= workspace page: a file manager over /workspace =======================
+// FREL is the open folder relative to the workspace root ('' = the root). Folders open on click;
+// "Start session" (on hover) starts Claude there. Upload by drop / button, move by dragging rows.
+var WSDATA={root:'', dirs:[], jobs:[], entries:[]}, FSORT=ls('cb.fsort')||'recent', JOBSEEN={}, AUTOSTART={}, jobTimer=null;
+var FREL=new URLSearchParams(location.search).get('d')||'', FSEL={}, FLAST=null, FCLIP=null, FHIDDEN=ls('cb.fhidden')==='1';
 var IC_FOLDER='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2.2h8.4A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/></svg>';
 var IC_GIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M6 8.2v7.6M18 11.2c0 3.5-4 3.3-10.2 5.3"/></svg>';
+var IC_FILE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>';
+var IC_UP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 11l6-6 6 6"/></svg>';
 // sessions in a folder (and its subfolders); for the workspace root only the ones started at the root itself
 function sessCount(p){ var root=(p===WSDATA.root);
   return ROWS.filter(function(s){ return s.cwd===p || (!root && (s.cwd||'').indexOf(p+'/')===0); }).length; }
+function fjoin(a,b){ return a?a+'/'+b:b; }
+function fparent(r){ var i=r.lastIndexOf('/'); return i<0?'':r.slice(0,i); }
+function fabs(r){ return r?WSDATA.root+'/'+r:WSDATA.root; }
+function wsGet(u){ return fetch(u).then(function(r){ return r.json().then(function(o){ if(!r.ok) throw new Error(o.error||'failed'); return o; }); }); }
 function loadDirs(){
-  return fetch('workspace').then(function(r){ return r.ok?r.json():Promise.reject(); }).then(function(o){
-    WSDATA=o; $('wsroot').textContent=o.root||''; renderDirs(); renderJobs();
-  }).catch(function(){ $('dirs').innerHTML='<div class="empty">Failed to list folders.</div>'; });
+  return wsGet('workspace/ls?p='+encodeURIComponent(FREL)+(FHIDDEN?'&hidden=1':'')).then(function(o){
+    WSDATA={root:o.root, rel:o.rel, path:o.path, entries:o.entries, jobs:o.jobs, dirs:o.entries.filter(function(e){ return e.dir; })};
+    $('wsroot').textContent=o.root||'';
+    Object.keys(FSEL).forEach(function(k){ if(!o.entries.some(function(e){ return fjoin(FREL,e.name)===k; })) delete FSEL[k]; });
+    renderDirs(); renderJobs();
+  }).catch(function(e){
+    if(FREL){ FREL=fparent(FREL); syncUrl(); return loadDirs(); }       // the folder is gone: go up
+    $('dirs').innerHTML='<div class="empty">Failed to list the folder: '+esc(e.message)+'</div>';
+  });
 }
+function fnav(rel){
+  if(rel===FREL) return;
+  FREL=rel; FSEL={}; FLAST=null; $('ffilter').value='';
+  try{ history.pushState(null,'',location.pathname+(rel?'?d='+encodeURIComponent(rel):'')); }catch(e){}
+  loadDirs(); fchrome();
+}
+window.addEventListener('popstate', function(){
+  var q=new URLSearchParams(location.search); if(q.get('s')) return;
+  var d=q.get('d')||''; if(d!==FREL){ FREL=d; FSEL={}; if(!ACTIVE) { loadDirs(); fchrome(); } }
+});
+// breadcrumbs + what only makes sense at the root (the Tasks section)
+function fchrome(){
+  var parts=FREL?FREL.split('/'):[], h='<button type="button" data-rel="">Workspace</button>', acc='';
+  parts.forEach(function(p){ acc=fjoin(acc,p); h+='<span class="sep">›</span><button type="button" data-rel="'+esc(acc)+'">'+esc(p)+'</button>'; });
+  $('fcrumbs').innerHTML=h;
+  $('tasksec').classList.toggle('hidden', !!FREL);
+  $('fhidden').checked=FHIDDEN;
+}
+function fselected(){ return Object.keys(FSEL); }
 function renderDirs(){
+  fchrome();
   var q=$('ffilter').value.trim().toLowerCase();
-  var ds=WSDATA.dirs.filter(function(d){ return !q || d.name.toLowerCase().indexOf(q)>=0; });
-  ds.sort(function(a,b){
+  var es=(WSDATA.entries||[]).filter(function(d){ return !q || d.name.toLowerCase().indexOf(q)>=0; });
+  es.sort(function(a,b){
+    if(a.dir!==b.dir) return a.dir?-1:1;
     if(FSORT==='name') return a.name.localeCompare(b.name, undefined, {numeric:true, sensitivity:'base'});
-    if(FSORT==='sessions') return (sessCount(b.path)-sessCount(a.path)) || (b.mtime-a.mtime);
+    if(FSORT==='sessions' && a.dir) return (sessCount(b.path)-sessCount(a.path)) || (b.mtime-a.mtime);
     return b.mtime-a.mtime;
   });
   $('fsort').value=FSORT;
   var h='<div class="fth"><span></span><span data-s="name"'+(FSORT==='name'?' class="on"':'')+'>Name</span>'+
-        '<span data-s="sessions"'+(FSORT==='sessions'?' class="on"':'')+'>Sessions</span>'+
+        '<span data-s="sessions"'+(FSORT==='sessions'?' class="on"':'')+'>Sessions · size</span>'+
         '<span data-s="recent"'+(FSORT==='recent'?' class="on"':'')+'>Modified</span><span></span><span></span></div>';
-  if(!q && WSDATA.root) h+=rowHtml({name:'(workspace root)', path:WSDATA.root, mtime:0, git:null}, true);
-  ds.forEach(function(d){ h+=rowHtml(d,false); });
-  if(!ds.length && q) h+='<div class="empty">No folders match “'+esc(q)+'”.</div>';
+  if(FREL) h+='<div class="frow up dir" data-rel="'+esc(fparent(FREL))+'" data-up="1"><span class="ic">'+IC_UP+'</span><span class="nm"><b>..</b></span><span></span><span></span><span></span><span></span></div>';
+  es.forEach(function(d){ h+=rowHtml(d); });
+  if(!es.length) h+='<div class="empty">'+(q?'Nothing matches “'+esc(q)+'”.':'Empty folder — drop files here to upload them.')+'</div>';
   $('dirs').innerHTML=h;
+  $('dirs').classList.toggle('selecting', fselected().length>0);
+  renderSelBar();
 }
-function rowHtml(d, isRoot){
-  var n=sessCount(d.path), g=d.git, sub='';
+function rowHtml(d){
+  var rel=fjoin(FREL,d.name), g=d.git, sub='', cut=FCLIP&&FCLIP.op==='cut'&&FCLIP.items.indexOf(rel)>=0;
   if(g) sub=esc(g.branch||'')+(g.remote?' · '+esc(g.remote.replace(/^(https?:\/\/|ssh:\/\/|git@)/,'').replace(/\.git$/,'')):'');
-  return '<div class="frow'+(isRoot?' root':'')+'" data-path="'+esc(d.path)+'" data-name="'+esc(isRoot?'':d.name)+'">'+
-    '<span class="ic">'+(g?IC_GIT:IC_FOLDER)+'</span>'+
-    '<span class="nm"><b>'+esc(d.name)+'</b>'+(sub?'<small>'+sub+'</small>':'')+'</span>'+
-    '<span class="ss">'+(n?n+' session'+(n>1?'s':''):'—')+'</span>'+
+  var n=d.dir?sessCount(d.path):0;
+  return '<div class="frow '+(d.dir?'dir':'file')+(FSEL[rel]?' sel':'')+(cut?' cut':'')+'" draggable="true" data-rel="'+esc(rel)+'" data-path="'+esc(d.path)+'">'+
+    '<span class="ic"><input type="checkbox" class="fck"'+(FSEL[rel]?' checked':'')+' tabindex="-1">'+(d.dir?(g?IC_GIT:IC_FOLDER):IC_FILE)+'</span>'+
+    '<span class="nm"><b>'+esc(d.name)+(d.link?' ↪':'')+'</b>'+(sub?'<small>'+sub+'</small>':'')+'</span>'+
+    '<span class="ss">'+(d.dir?(n?n+' session'+(n>1?'s':''):'—'):fmtBytes(d.size))+'</span>'+
     '<span class="wh">'+(d.mtime?fmt(Math.floor(d.mtime/1000)):'')+'</span>'+
-    '<button class="btn go" type="button" data-act="start">Start session</button>'+
-    (isRoot?'<span></span>':'<button class="more" type="button" data-act="menu" title="More">⋯</button>')+'</div>';
+    (d.dir?'<button class="btn go" type="button" data-act="start">Start session</button>':'<span></span>')+
+    '<button class="more" type="button" data-act="menu" title="More">⋯</button></div>';
+}
+function renderSelBar(){
+  var sel=fselected(), b=$('fsel');
+  b.classList.toggle('hidden', !sel.length);
+  if(sel.length){
+    var one=sel.length===1, ent=one&&(WSDATA.entries||[]).filter(function(e){ return fjoin(FREL,e.name)===sel[0]; })[0];
+    b.innerHTML='<b>'+sel.length+' selected</b>'+
+      '<button class="btn ghost" type="button" data-sa="copy">Copy</button><button class="btn ghost" type="button" data-sa="cut">Cut</button>'+
+      (one?'<button class="btn ghost" type="button" data-sa="rename">Rename</button>':'')+
+      (one&&ent&&!ent.dir?'<button class="btn ghost" type="button" data-sa="download">Download</button>':'')+
+      '<button class="btn ghost" type="button" data-sa="trash">Delete</button><span class="sp"></span>'+
+      '<button class="btn ghost" type="button" data-sa="clear">✕ Clear</button>';
+  }
+  var c=$('fclip'); c.classList.toggle('hidden', !FCLIP);
+  if(FCLIP) c.innerHTML='<span>'+FCLIP.items.length+' item'+(FCLIP.items.length>1?'s':'')+' '+(FCLIP.op==='cut'?'to move':'to copy')+
+    ' <span style="color:var(--mute)">('+esc(FCLIP.items.map(function(r){ return r.split('/').pop(); }).slice(0,3).join(', ')+(FCLIP.items.length>3?', …':''))+')</span></span><span class="sp"></span>'+
+    '<button class="btn" type="button" data-ca="paste">'+(FCLIP.op==='cut'?'Move here':'Paste here')+'</button><button class="btn ghost" type="button" data-ca="cancel">Cancel</button>';
 }
 function startIn(path){ if(CHAT_ON) newChat(path); else newConsole(); }
+function fopen(rel){ window.open('workspace/file?p='+encodeURIComponent(rel), '_blank', 'noopener'); }
+function fdownload(rel){ var a=document.createElement('a'); a.href='workspace/file?dl=1&p='+encodeURIComponent(rel); a.download=''; document.body.appendChild(a); a.click(); a.remove(); }
+function ftoggle(rel, on){ if(on===undefined) on=!FSEL[rel]; if(on) FSEL[rel]=1; else delete FSEL[rel]; FLAST=rel; renderDirs(); }
+function frange(rel){
+  var rows=[].map.call($('dirs').querySelectorAll('.frow:not(.up)'), function(r){ return r.getAttribute('data-rel'); });
+  var a=rows.indexOf(FLAST), b=rows.indexOf(rel); if(a<0){ ftoggle(rel,true); return; }
+  rows.slice(Math.min(a,b), Math.max(a,b)+1).forEach(function(r){ FSEL[r]=1; }); renderDirs();
+}
 $('dirs').addEventListener('click', function(e){
   var th=e.target.closest('.fth span[data-s]');
   if(th){ FSORT=th.getAttribute('data-s'); ls('cb.fsort',FSORT); renderDirs(); return; }
   var row=e.target.closest('.frow'); if(!row) return;
-  var act=e.target.closest('[data-act]'), path=row.getAttribute('data-path');
-  if(act && act.getAttribute('data-act')==='menu'){ e.stopPropagation(); openFolderMenu(row.getAttribute('data-name'), path, act); return; }
-  startIn(path);
+  var rel=row.getAttribute('data-rel'), act=e.target.closest('[data-act]');
+  if(row.getAttribute('data-up')){ fnav(rel); return; }
+  if(e.target.classList.contains('fck')){ ftoggle(rel, e.target.checked); return; }
+  if(act && act.getAttribute('data-act')==='menu'){ e.stopPropagation(); openFolderMenu(rel, act); return; }
+  if(act && act.getAttribute('data-act')==='start'){ startIn(row.getAttribute('data-path')); return; }
+  if(e.shiftKey){ frange(rel); return; }
+  if(e.metaKey||e.ctrlKey||fselected().length){ ftoggle(rel); return; }
+  if(row.classList.contains('dir')) fnav(rel); else fopen(rel);
 });
+$('fcrumbs').addEventListener('click', function(e){ var b=e.target.closest('button[data-rel]'); if(b) fnav(b.getAttribute('data-rel')); });
 $('ffilter').addEventListener('input', renderDirs);
 $('fsort').addEventListener('change', function(){ FSORT=this.value; ls('cb.fsort',FSORT); renderDirs(); });
+$('fhidden').addEventListener('change', function(){ FHIDDEN=this.checked; ls('cb.fhidden', FHIDDEN?'1':'0'); loadDirs(); });
+$('fstart').addEventListener('click', function(){ startIn(fabs(FREL)); });
+
+// ---- operations
+function wsPost(op, body){
+  return fetch('workspace/'+op,{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)})
+    .then(function(r){ return r.json(); }).then(function(o){ if(!o.ok) throw new Error(o.error||'failed'); return o; });
+}
+function fsessWarn(items){
+  var n=0; items.forEach(function(r){ var p=fabs(r); n+=ROWS.filter(function(s){ return s.cwd===p || (s.cwd||'').indexOf(p+'/')===0; }).length; });
+  return n?'\n\n'+n+' session'+(n>1?'s were':' was')+' started inside; '+(n>1?'they':'it')+' will not resume in the new place.':'';
+}
+function fdo(op, items, dest){
+  var body=op==='trash'?{items:items}:{items:items, dest:dest};
+  return wsPost(op, body).then(function(){ FSEL={}; return loadDirs(); }).catch(function(e){ alert('Could not '+(op==='trash'?'delete':op)+': '+e.message); loadDirs(); });
+}
+function fmove(items, dest, copy){
+  items=items.filter(function(r){ return r!==dest && fparent(r)!==dest || copy; });
+  if(!items.length) return;
+  if(!copy){ var w=fsessWarn(items); if(w && !confirm('Move '+items.length+' item'+(items.length>1?'s':'')+' to “'+(dest||'Workspace')+'”?'+w)) return; }
+  fdo(copy?'copy':'move', items, dest);
+}
+function ftrash(items){
+  if(!items.length) return;
+  if(!confirm('Delete '+(items.length===1?'“'+items[0].split('/').pop()+'”':items.length+' items')+'?\n\nThey go to '+WSDATA.root+'/.trash/ and can be restored from there.'+fsessWarn(items))) return;
+  fdo('trash', items);
+}
+function frename(rel){
+  var name=rel.split('/').pop();
+  var to=(prompt('Rename “'+name+'” to:'+fsessWarn([rel]), name)||'').trim(); if(!to || to===name) return;
+  wsPost('rename',{path:rel, to:to}).then(function(){ FSEL={}; return loadDirs(); }).catch(function(err){ alert('Could not rename: '+err.message); });
+}
+$('fsel').addEventListener('click', function(e){
+  var b=e.target.closest('[data-sa]'); if(!b) return; var a=b.getAttribute('data-sa'), sel=fselected();
+  if(a==='clear'){ FSEL={}; renderDirs(); }
+  else if(a==='copy'||a==='cut'){ FCLIP={op:a, items:sel}; FSEL={}; renderDirs(); }
+  else if(a==='rename') frename(sel[0]);
+  else if(a==='download') fdownload(sel[0]);
+  else if(a==='trash') ftrash(sel);
+});
+$('fclip').addEventListener('click', function(e){
+  var b=e.target.closest('[data-ca]'); if(!b) return;
+  if(b.getAttribute('data-ca')==='paste'){ var c=FCLIP; FCLIP=null;
+    if(c.op==='cut') fmove(c.items, FREL, false); else fdo('copy', c.items, FREL); }
+  else { FCLIP=null; renderDirs(); }
+});
+document.addEventListener('keydown', function(e){
+  if(ACTIVE || $('blank').classList.contains('hidden')) return;
+  if(/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement||{}).tagName||'')) return;
+  var sel=fselected();
+  if(e.key==='Escape' && sel.length){ FSEL={}; renderDirs(); }
+  else if((e.key==='Delete'||(e.key==='Backspace'&&(e.metaKey||e.ctrlKey))) && sel.length){ e.preventDefault(); ftrash(sel); }
+  else if((e.metaKey||e.ctrlKey) && e.key==='a'){ e.preventDefault(); (WSDATA.entries||[]).forEach(function(en){ FSEL[fjoin(FREL,en.name)]=1; }); renderDirs(); }
+});
+
+// ---- drag and drop: rows onto folders (move, Alt = copy); files from the computer (upload)
+var FDRAG=null;
+function isInternal(e){ var t=e.dataTransfer&&e.dataTransfer.types; return !!t && [].indexOf.call(t,'application/x-cb-items')>=0; }
+function dropTarget(e){
+  var c=e.target.closest('.fcrumbs button[data-rel]'); if(c) return {el:c, rel:c.getAttribute('data-rel')};
+  var r=e.target.closest('.frow.dir'); if(r && !(FDRAG && FDRAG.indexOf(r.getAttribute('data-rel'))>=0)) return {el:r, rel:r.getAttribute('data-rel')};
+  if(hasFiles(e) && e.target.closest('#dirs')) return {el:$('dirs'), rel:FREL};
+  return null;
+}
+function clearDrop(){ [].forEach.call(document.querySelectorAll('.dropin'), function(x){ x.classList.remove('dropin'); }); }
+$('dirs').addEventListener('dragstart', function(e){
+  var row=e.target.closest('.frow:not(.up)'); if(!row) return;
+  var rel=row.getAttribute('data-rel'); if(!FSEL[rel]){ FSEL={}; FSEL[rel]=1; renderDirs(); }
+  FDRAG=fselected();
+  e.dataTransfer.setData('application/x-cb-items', JSON.stringify(FDRAG)); e.dataTransfer.effectAllowed='copyMove';
+});
+document.addEventListener('dragend', function(){ FDRAG=null; clearDrop(); });
+['dirs','fcrumbs'].forEach(function(id){
+  $(id).addEventListener('dragover', function(e){
+    if(!isInternal(e) && !hasFiles(e)) return;
+    var t=dropTarget(e); clearDrop(); if(!t) return;
+    e.preventDefault(); t.el.classList.add('dropin');
+    e.dataTransfer.dropEffect=hasFiles(e)?'copy':(e.altKey||e.ctrlKey?'copy':'move');
+  });
+  $(id).addEventListener('dragleave', function(e){ if(!e.relatedTarget || !$(id).contains(e.relatedTarget)) clearDrop(); });
+  $(id).addEventListener('drop', function(e){
+    var t=dropTarget(e); clearDrop(); if(!t) return; e.preventDefault();
+    if(isInternal(e)){ var items=[]; try{ items=JSON.parse(e.dataTransfer.getData('application/x-cb-items')); }catch(_){}
+      FDRAG=null; fmove(items, t.rel, e.altKey||e.ctrlKey); return; }
+    if(hasFiles(e)) dropEntries(e.dataTransfer).then(function(list){ fupload(list, t.rel); });
+  });
+});
+// files (and whole folders) dropped from the computer -> [{file, name: "sub/dir/file.ext"}]
+function dropEntries(dt){
+  var roots=[], i;
+  if(dt.items) for(i=0;i<dt.items.length;i++){ var en=dt.items[i].webkitGetAsEntry && dt.items[i].webkitGetAsEntry(); if(en) roots.push(en); }
+  if(!roots.length) return Promise.resolve([].map.call(dt.files||[], function(f){ return {file:f, name:f.name}; }));
+  var out=[];
+  function walk(en, pre){
+    if(en.isFile) return new Promise(function(res){ en.file(function(f){ out.push({file:f, name:pre+f.name}); res(); }, function(){ res(); }); });
+    var rd=en.createReader(), all=[];
+    return new Promise(function(res){ (function read(){ rd.readEntries(function(b){
+      if(!b.length){ Promise.all(all.map(function(x){ return walk(x, pre+en.name+'/'); })).then(res); return; }
+      all=all.concat([].slice.call(b)); read(); }, function(){ res(); }); })(); });
+  }
+  return Promise.all(roots.map(function(r){ return walk(r, ''); })).then(function(){ return out; });
+}
+$('fupbtn').addEventListener('click', function(){ $('fupload').click(); });
+$('fupload').addEventListener('change', function(){
+  var l=[].map.call(this.files, function(f){ return {file:f, name:f.name}; }); this.value=''; fupload(l, FREL); });
+// one upload at a time (sequential), with a progress line; existing names are asked about once
+function fupload(list, dir, overwrite){
+  if(!list.length) return;
+  var box=el('div','upl'), total=list.reduce(function(a,x){ return a+x.file.size; },0), doneBytes=0, i=0, conflicts=[], errors=[];
+  box.innerHTML='<span class="t"></span><div class="bar"><i></i></div>'; $('fup').appendChild(box);
+  var where=dir||'Workspace';
+  function show(cur){ box.querySelector('.t').textContent='Uploading '+(i+1)+'/'+list.length+' to '+where+' · '+list[i].name;
+    box.querySelector('i').style.width=(total?Math.round((doneBytes+cur)/total*100):100)+'%'; }
+  function next(){
+    if(i>=list.length) return finish();
+    var it=list[i], x=new XMLHttpRequest(); show(0);
+    x.open('POST','workspace/upload?dir='+encodeURIComponent(dir)+'&name='+encodeURIComponent(it.name)+(overwrite?'&overwrite=1':''));
+    x.upload.onprogress=function(ev){ show(ev.loaded); };
+    x.onload=function(){ var o={}; try{ o=JSON.parse(x.responseText); }catch(_){}
+      if(x.status===409) conflicts.push(it); else if(!o.ok) errors.push(it.name+': '+(o.error||x.status));
+      doneBytes+=it.file.size; i++; next(); };
+    x.onerror=function(){ errors.push(it.name+': network error'); doneBytes+=it.file.size; i++; next(); };
+    x.send(it.file);
+  }
+  function finish(){
+    box.remove(); loadDirs();
+    if(errors.length) alert('Some files were not uploaded:\n'+errors.slice(0,10).join('\n'));
+    if(conflicts.length && confirm(conflicts.length+' file'+(conflicts.length>1?'s already exist':' already exists')+' in '+where+':\n'+
+      conflicts.slice(0,8).map(function(c){ return c.name; }).join('\n')+(conflicts.length>8?'\n…':'')+'\n\nReplace '+(conflicts.length>1?'them':'it')+'?')) fupload(conflicts, dir, true);
+  }
+  next();
+}
 
 // forms
 function showForm(id){ ['fnewform','fcloneform'].forEach(function(f){ $(f).classList.toggle('hidden', f!==id || !$(f).classList.contains('hidden')); });
@@ -1558,18 +1787,14 @@ function showForm(id){ ['fnewform','fcloneform'].forEach(function(f){ $(f).class
 $('fnew').addEventListener('click', function(){ showForm('fnewform'); });
 $('fclone').addEventListener('click', function(){ showForm('fcloneform'); });
 [].forEach.call(document.querySelectorAll('.fform [data-x]'), function(b){ b.addEventListener('click', function(){ b.closest('form').classList.add('hidden'); }); });
-function wsPost(op, body){
-  return fetch('workspace/'+op,{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)})
-    .then(function(r){ return r.json(); }).then(function(o){ if(!o.ok) throw new Error(o.error||'failed'); return o; });
-}
 $('fnewform').addEventListener('submit', function(e){
   e.preventDefault(); var name=$('fnewname').value.trim(); if(!name) return;
-  wsPost('mkdir',{name:name}).then(function(){ $('fnewname').value=''; $('fnewform').classList.add('hidden'); return loadDirs(); })
+  wsPost('mkdir',{name:name, dir:FREL}).then(function(){ $('fnewname').value=''; $('fnewform').classList.add('hidden'); return loadDirs(); })
     .catch(function(err){ alert('Could not create the folder: '+err.message); });
 });
 $('fcloneform').addEventListener('submit', function(e){
   e.preventDefault(); var url=$('fcloneurl').value.trim(); if(!url) return;
-  wsPost('clone',{url:url, name:$('fclonename').value.trim()}).then(function(o){
+  wsPost('clone',{url:url, name:$('fclonename').value.trim(), dir:FREL}).then(function(o){
     AUTOSTART[o.id]=1;                                   // start a session there once the clone is done
     $('fcloneurl').value=''; $('fclonename').value=''; $('fcloneform').classList.add('hidden');
     return loadDirs();
@@ -1595,28 +1820,33 @@ function renderJobs(){
 }
 $('newconsole').addEventListener('click', newConsole);
 $('termbtn').addEventListener('click', function(){ openShell('/workspace'); });
-$('fterm').addEventListener('click', function(){ openShell('/workspace'); });
+$('fterm').addEventListener('click', function(){ openShell(fabs(FREL)); });
 $('fjobs').addEventListener('click', function(e){ var b=e.target.closest('[data-start]'); if(b) startIn(b.getAttribute('data-start')); });
 
-// folder "⋯" menu (shares the floating #menu with the session rows)
-function openFolderMenu(name, path, anchor){
-  menuEl.innerHTML='<button type="button" data-fa="start">▸ Start session</button>'+
-    '<button type="button" data-fa="term">&gt;_ Open terminal here</button>'+
-    '<button type="button" data-fa="rename">✎ Rename…</button><button type="button" data-fa="copy">Copy path</button>';
-  menuEl.dataset.mode='folder'; menuEl.dataset.name=name; menuEl.dataset.path=path;
+// entry "⋯" menu (shares the floating #menu with the session rows)
+function openFolderMenu(rel, anchor){
+  var ent=(WSDATA.entries||[]).filter(function(e){ return fjoin(FREL,e.name)===rel; })[0]; if(!ent) return;
+  menuEl.innerHTML=(ent.dir
+      ?'<button type="button" data-fa="open">Open</button><button type="button" data-fa="start">▸ Start session</button>'+
+       '<button type="button" data-fa="term">&gt;_ Open terminal here</button>'
+      :'<button type="button" data-fa="open">Open</button><button type="button" data-fa="download">⇩ Download</button>')+
+    '<button type="button" data-fa="rename">✎ Rename…</button><button type="button" data-fa="copyto">Copy</button><button type="button" data-fa="cut">Cut (move)</button>'+
+    '<button type="button" data-fa="copy">Copy path</button><button type="button" data-fa="trash">Delete</button>';
+  menuEl.dataset.mode='folder'; menuEl.dataset.name=rel; menuEl.dataset.path=ent.path;
   menuEl.style.display='block';
-  var r=anchor.getBoundingClientRect(), w=menuEl.offsetWidth;
-  menuEl.style.left=Math.max(8, Math.min(r.right-w, innerWidth-w-8))+'px'; menuEl.style.top=(r.bottom+4)+'px';
+  var r=anchor.getBoundingClientRect(), w=menuEl.offsetWidth, hh=menuEl.offsetHeight;
+  menuEl.style.left=Math.max(8, Math.min(r.right-w, innerWidth-w-8))+'px';
+  menuEl.style.top=(r.bottom+hh+8<innerHeight ? r.bottom+4 : Math.max(8, r.top-hh-4))+'px';
 }
-function folderAction(a, name, path){
-  if(a==='start') startIn(path);
+function folderAction(a, rel, path){
+  if(a==='open'){ var ent=(WSDATA.entries||[]).filter(function(e){ return e.path===path; })[0]; if(ent&&ent.dir) fnav(rel); else fopen(rel); }
+  else if(a==='start') startIn(path);
   else if(a==='term') openShell(path);
+  else if(a==='download') fdownload(rel);
   else if(a==='copy'){ try{ navigator.clipboard.writeText(path); }catch(_){ prompt('Path:', path); } }
-  else if(a==='rename'){
-    var to=(prompt('Rename folder "'+name+'" to:\n(sessions started in it keep the old path and will not resume there)', name)||'').trim();
-    if(!to || to===name) return;
-    wsPost('rename',{from:name, to:to}).then(loadDirs).catch(function(err){ alert('Could not rename: '+err.message); });
-  }
+  else if(a==='rename') frename(rel);
+  else if(a==='copyto'||a==='cut'){ FCLIP={op:a==='cut'?'cut':'copy', items:[rel]}; renderDirs(); }
+  else if(a==='trash') ftrash([rel]);
 }
 
 // ======================= tasks: one folder (with its own repo clones) per task =======================

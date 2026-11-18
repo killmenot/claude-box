@@ -8,7 +8,7 @@
 //   /search      -> search through session history (web-search.js)
 //   /chat/ws     -> web chat over the Claude Agent SDK (web-chat.js), /chat/info, /dirs
 //   /categories  -> GET/POST the sidebar categories (~/.claude/web-categories.json)
-//   /workspace   -> folder page: GET list, POST /workspace/{mkdir,rename,clone} (web-workspace.js)
+//   /workspace   -> file manager: GET ls|file, POST /workspace/{mkdir,rename,copy,move,trash,clone,upload} (web-workspace.js)
 //   /tasks       -> task workspaces: GET list, POST /tasks/{open,archive,reopen,refresh,forget,add-repos,repo-add}
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
@@ -138,18 +138,34 @@ const handler = (req, res) => {
     }
     if (path === '/workspace' || path.startsWith('/workspace/')) {
       if (!workspace) { json(res, 503, { error: 'workspace manager not loaded' }); return; }
-      if (req.method !== 'POST') { json(res, 200, workspace.list()); return; }
-      readJson(req, 8192, (o) => {
+      const qs = new URLSearchParams(req.url.split('?')[1] || '');
+      const op = path.slice('/workspace/'.length);
+      const fail = (e) => json(res, e && e.code === 409 ? 409 : 400, { ok: false, error: String((e && e.message) || e) });
+      try {
+        if (req.method !== 'POST') {
+          if (op === 'ls') { json(res, 200, workspace.ls(qs.get('p') || '', qs.get('hidden') === '1')); return; }
+          if (op === 'file') { workspace.serveFile(res, qs.get('p') || '', qs.get('dl') === '1'); return; }
+          json(res, 200, workspace.list()); return;
+        }
+        if (op === 'upload') {      // raw body = the file; ?dir=<rel>&name=<name or sub/path>&overwrite=1
+          workspace.upload(req, qs.get('dir') || '', qs.get('name') || '', qs.get('overwrite') === '1')
+            .then((r) => json(res, 200, Object.assign({ ok: true }, r)), fail);
+          return;
+        }
+      } catch (e) { fail(e); return; }
+      readJson(req, 256 << 10, (o) => {
         try {
           if (!o) throw new Error('bad request');
-          const op = path.slice('/workspace/'.length);
-          const r = op === 'mkdir' ? workspace.mkdir(o.name)
-            : op === 'rename' ? workspace.rename(o.from, o.to)
-            : op === 'clone' ? workspace.clone(o.url, o.name)
+          const r = op === 'mkdir' ? workspace.mkdir(o.name, o.dir)
+            : op === 'rename' ? workspace.rename(o.path || o.from, o.to)
+            : op === 'clone' ? workspace.clone(o.url, o.name, o.dir)
+            : op === 'copy' ? workspace.copy(o.items, o.dest)
+            : op === 'move' ? workspace.move(o.items, o.dest)
+            : op === 'trash' ? workspace.trash(o.items)
             : null;
           if (!r) { json(res, 404, { error: 'unknown op' }); return; }
           json(res, 200, Object.assign({ ok: true }, r));
-        } catch (e) { json(res, 400, { ok: false, error: String(e.message || e) }); }
+        } catch (e) { fail(e); }
       });
       return;
     }
@@ -307,12 +323,13 @@ function onUpgrade(req, socket, head) {
 // No redirect: each port serves the terminal on its own scheme, the user chooses.
 function start() {
   const servers = [];
-  const httpServer = http.createServer(handler);
+  // requestTimeout 0: large uploads to the Workspace file manager may take longer than Node's 5 min default
+  const httpServer = http.createServer({ requestTimeout: 0 }, handler);
   httpServer.on('upgrade', onUpgrade);
   httpServer.listen(PORT, IFACE, () => console.error(`sidecar http://${IFACE}:${PORT} -> ttyd ${TTYD}`));
   servers.push(httpServer);
   if (tls) {
-    const httpsServer = https.createServer(tls, handler);
+    const httpsServer = https.createServer(Object.assign({ requestTimeout: 0 }, tls), handler);
     httpsServer.on('upgrade', onUpgrade);
     httpsServer.listen(TLS_PORT, IFACE, () => console.error(`sidecar https://${IFACE}:${TLS_PORT} -> ttyd ${TTYD}`));
     servers.push(httpsServer);
