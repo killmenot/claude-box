@@ -122,7 +122,7 @@ function agentPrompt(ghData) {
     my_prs: ghData.mine.map((p) => ({ ref: p.repo + '#' + p.number, title: p.title, url: p.url, ci: p.ci, decision: p.decision, lastReview: p.lastReview })) }) : 'unavailable';
   return `Collect my work dashboard for today. Now is ${now.toISOString()}. Use ONLY read/search tools; never send, create or change anything.
 
-1. calendar: my Google Calendar events from now until the end of my working day today (if the day is almost over, include tomorrow morning). Skip events I declined and "Out of office"/working-location blocks. Times as ISO 8601 with offset. url: the video call link if there is one.
+1. calendar: my Google Calendar events from now (including the ones already in progress) until the end of my working day today (if the day is almost over, include tomorrow morning). Skip events I declined and "Out of office"/working-location blocks. Times as ISO 8601 with offset. url: the video call link if there is one.
 2. jira: Jira issues assigned to me that are in work: not done and not in the backlog (JQL: assignee = currentUser() AND statusCategory != Done AND status not in (Backlog)), most recently updated first, at most 15. url: the browse link.
 3. slack: what needs my attention in Slack from the last 24 hours: messages that mention me, new replies in threads I took part in, direct messages to me. At most 10, newest first, each with its permalink; text is a one-line summary.
 4. gmail: unread emails from the last 48 hours in my inbox that a person wrote to me and that may need a reply or action. Leave out newsletters, notifications and automated mail (GitHub, Jira, Slack, calendar, CI, marketing). At most 8, newest first. url: https://mail.google.com/mail/u/0/#inbox/<thread id>.
@@ -253,4 +253,18 @@ setInterval(() => {
   if (ev > 0 && (!snap || Date.now() - Date.parse(snap.at) > ev * 60000)) agentRun('timer');
 }, 30000).unref();
 
-module.exports = { init, get, refresh, hide, unhideAll, setEvery, READ_TOOL, isReadTool };
+// The calendar event going on right now (from the last snapshot), or null. Voice alerts stay
+// quiet during it: spoken phrases would go straight into the call's microphone.
+// All-day and declined events don't count; an event without an end is taken as 30 minutes.
+function inMeeting(now = Date.now()) {
+  const snap = readSnapshot();
+  for (const e of (snap && snap.calendar) || []) {
+    if (!e || e.allDay || e.declined) continue;
+    const start = Date.parse(e.start); if (!start) continue;
+    const end = Date.parse(e.end) || start + 30 * 60000;
+    if (start - 60000 <= now && now < end) return { title: e.title || '', end: new Date(end).toISOString() };
+  }
+  return null;
+}
+
+module.exports = { init, get, refresh, hide, unhideAll, setEvery, inMeeting, READ_TOOL, isReadTool };
