@@ -123,7 +123,7 @@ function agentPrompt(ghData) {
   return `Collect my work dashboard for today. Now is ${now.toISOString()}. Use ONLY read/search tools; never send, create or change anything.
 
 1. calendar: my Google Calendar events from now until the end of my working day today (if the day is almost over, include tomorrow morning). Skip events I declined and "Out of office"/working-location blocks. Times as ISO 8601 with offset. url: the video call link if there is one.
-2. jira: Jira issues assigned to me that are not done (statusCategory != Done), most recently updated first, at most 15. url: the browse link.
+2. jira: Jira issues assigned to me that are in work: not done and not in the backlog (JQL: assignee = currentUser() AND statusCategory != Done AND status not in (Backlog)), most recently updated first, at most 15. url: the browse link.
 3. slack: what needs my attention in Slack from the last 24 hours: messages that mention me, new replies in threads I took part in, direct messages to me. At most 10, newest first, each with its permalink; text is a one-line summary.
 4. gmail: unread emails from the last 48 hours in my inbox that a person wrote to me and that may need a reply or action. Leave out newsletters, notifications and automated mail (GitHub, Jira, Slack, calendar, CI, marketing). At most 8, newest first. url: https://mail.google.com/mail/u/0/#inbox/<thread id>.
 5. needs: the 3–5 items across ALL sources (including the GitHub data below) where I personally have to act soon: a question to me, a review requested from me, my PR with failing CI or changes requested, a meeting starting within the next hour, a blocking Jira issue. Most urgent first. Leave out anything that only informs.
@@ -194,6 +194,12 @@ function agentRun(reason) {
     if (out) {
       const snap = Object.assign({ at: new Date().toISOString(), took: Math.round((Date.now() - t0) / 1000), cost, model: MODEL }, out,
         sources ? { sources } : {});
+      // backlog issues are not today's work, even if the model let some through
+      if (Array.isArray(snap.jira)) {
+        const backlog = new Set(snap.jira.filter((i) => /backlog/i.test(String(i.status || ''))).map((i) => i.key));
+        snap.jira = snap.jira.filter((i) => !backlog.has(i.key));
+        if (backlog.size && Array.isArray(snap.needs)) snap.needs = snap.needs.filter((i) => !(i.source === 'jira' && backlog.has(i.ref)));
+      }
       // a block that came back with items is connected, whatever init said
       if (snap.sources) for (const k of ['calendar', 'jira', 'slack', 'gmail']) if ((snap[k] || []).length) snap.sources[k] = true;
       try { fs.writeFileSync(FILE + '.tmp', JSON.stringify(snap)); fs.renameSync(FILE + '.tmp', FILE); } catch (e) { err = e.message; }
