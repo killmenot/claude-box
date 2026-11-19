@@ -153,9 +153,13 @@ function agentRun(reason) {
       if (!gh.data && !gh.busy) await ghRun(); else if (gh.busy) await gh.busy;
       const q = sdk.query({ prompt: agentPrompt(gh.data), options: {
         cwd: HOME, model: MODEL, persistSession: false, maxTurns: 30, permissionMode: 'default',
-        // no built-in tools at all, and no settings files: an "allow" rule in the user's settings
-        // must not let a write tool skip canUseTool. MCP connectors are what this run is for.
-        tools: [], settingSources: [],
+        // Settings files stay on: without them the SDK does not load the claude.ai connectors
+        // (calendar, Jira, Slack, Gmail), which are what this run is for. An "allow" rule in the
+        // user's settings could let a tool skip canUseTool, so the same read-only check also runs
+        // as a PreToolUse hook: a hook "deny" wins over any allow rule.
+        hooks: { PreToolUse: [{ hooks: [async (h) => isReadTool(h && h.tool_name) ? { continue: true } : {
+          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'This run is read-only.' },
+        }] }] },
         disallowedTools: ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task', 'WebFetch', 'WebSearch', 'Workflow',
           'CronCreate', 'CronDelete', 'RemoteTrigger', 'PushNotification', 'SendMessage', 'ScheduleWakeup', 'Skill'],
         // no local tools at all (it reads untrusted mail/chat, and $HOME holds the credentials);
