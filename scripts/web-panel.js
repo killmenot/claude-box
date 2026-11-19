@@ -156,9 +156,13 @@ function agentRun(reason) {
         // Settings files stay on: without them the SDK does not load the claude.ai connectors
         // (calendar, Jira, Slack, Gmail), which are what this run is for. An "allow" rule in the
         // user's settings could let a tool skip canUseTool, so the same read-only check also runs
-        // as a PreToolUse hook: a hook "deny" wins over any allow rule.
-        hooks: { PreToolUse: [{ hooks: [async (h) => isReadTool(h && h.tool_name) ? { continue: true } : {
-          hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'This run is read-only.' },
+        // as a PreToolUse hook: a hook "deny" wins over any allow rule. The hook judges MCP tools
+        // only: the SDK's own structured-output tool must pass, built-ins are cut by disallowedTools.
+        hooks: { PreToolUse: [{ hooks: [async (h) => {
+          const n = String((h && h.tool_name) || '');
+          return !n.startsWith('mcp__') || isReadTool(n) ? { continue: true } : {
+            hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'This run is read-only.' },
+          };
         }] }] },
         disallowedTools: ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task', 'WebFetch', 'WebSearch', 'Workflow',
           'CronCreate', 'CronDelete', 'RemoteTrigger', 'PushNotification', 'SendMessage', 'ScheduleWakeup', 'Skill'],
@@ -180,7 +184,7 @@ function agentRun(reason) {
           cost = m.total_cost_usd;
           if (m.structured_output) out = m.structured_output;
           else if (m.subtype !== 'success') err = m.subtype;
-          else { try { out = JSON.parse(String(m.result).replace(/^[^{]*/, '').replace(/[^}]*$/, '')); } catch (_) { err = 'no structured output'; } }
+          else { try { out = JSON.parse(String(m.result).replace(/^[^{]*/, '').replace(/[^}]*$/, '')); } catch (_) { err = 'no structured output: ' + String(m.result || '').replace(/\s+/g, ' ').slice(0, 160); } }
         }
       } finally { clearTimeout(timer); }
     } catch (e) { err = String(e.message || e); }
