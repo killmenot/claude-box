@@ -167,6 +167,9 @@ dc() { docker compose "${compose_files[@]}" "$@"; }
 
 port="$(env_get WEB_TERMINAL_PORT)"; port="${port:-7681}"
 tls_port="$(env_get WEB_TLS_PORT)"; tls_port="${tls_port:-8443}"
+# the address to open: https (secure context: clipboard + notifications); plain http only when TLS is off
+if [ "$(env_get WEB_TLS)" = 0 ]; then url="http://localhost:${port}"; url_note=""
+else url="https://localhost:${tls_port}"; url_note="   (self-signed; enables clipboard and notifications)"; fi
 login="$(env_get WEB_TERMINAL_USER)"; login="${login:-claude}"
 
 case "$action" in
@@ -178,7 +181,7 @@ case "$action" in
   status)
     cid="$(docker ps -q --filter label=claude-box.role=web | head -n1)"
     if [ -z "$cid" ]; then echo "claude-box is not running."; exit 0; fi
-    echo "claude-box is running: http://localhost:${port}  ·  https://localhost:${tls_port}"
+    echo "claude-box is running: ${url}"
     url="$(head -n1 ./home/.claude/web-tunnel-url 2>/dev/null || true)"
     [ -n "$url" ] && echo "Public tunnel: ${url}"
     echo "Console sessions (tmux):"
@@ -212,8 +215,7 @@ WEB_TUNNEL="$([ "$tunnel" = 1 ] && echo 1 || true)" dc up -d web
 
 echo
 echo "claude-box is up:"
-echo "  http://localhost:${port}"
-echo "  https://localhost:${tls_port}   (self-signed; enables clipboard and notifications)"
+echo "  ${url}${url_note}"
 [ -n "$(env_get WEB_TERMINAL_PASSWORD)" ] && echo "  login: ${login}"
 
 if [ "$tunnel" = 1 ]; then

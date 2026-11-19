@@ -198,7 +198,7 @@ function serveFile(res, rel, download) {
   if (ext === '.svg') type = 'text/plain; charset=utf-8';          // never run a workspace SVG's scripts on our origin
   const inline = !download && type !== 'application/octet-stream';
   res.writeHead(200, { 'content-type': type, 'content-length': st.size, 'x-content-type-options': 'nosniff',
-    'content-security-policy': "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'",
+    'content-security-policy': "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'",
     'content-disposition': (inline ? 'inline' : 'attachment') + "; filename*=UTF-8''" + encodeURIComponent(name) });
   fs.createReadStream(p).on('error', () => res.destroy()).pipe(res);
 }

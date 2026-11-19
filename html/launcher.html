@@ -379,6 +379,7 @@
   .rpsec[open]>summary:before{content:"▾"}
   .rpsec>summary .n{margin-left:auto;font:500 11px var(--mono);color:var(--mute);text-transform:none;letter-spacing:0}
   .rpsec>summary .n.hot{color:var(--work)}
+  .rpsec>summary .via{font:500 9px var(--mono);color:var(--mute);border:1px solid var(--line);border-radius:4px;padding:0 4px;letter-spacing:.02em}
   .rpsec .rpsub{padding:2px 14px 4px 28px;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
   .rpsec .rpsub2{margin:0}.rpsec .rpsub2>summary{padding:4px 14px 4px 28px;font-size:11px;color:var(--mute);cursor:pointer}
   .rpi{display:block;padding:6px 14px 6px 28px;cursor:pointer;border-left:2px solid transparent}
@@ -529,18 +530,28 @@ function fmt(ts){ if(!ts) return ''; var d=Math.floor(Date.now()/1000)-ts;
   if(d<86400) return Math.floor(d/3600)+'h'; return Math.floor(d/86400)+'d'; }
 function base(p){ p=(p||'').replace(/\/+$/,''); return p.slice(p.lastIndexOf('/')+1) || p || '(no folder)'; }
 function ls(k,v){ try{ if(v===undefined) return localStorage.getItem(k); localStorage.setItem(k,v); }catch(e){ return null; } }
+// external links (panel items from Gmail/Slack/Jira, task links) are untrusted: http(s) only
+function openExt(url){ if(/^https?:\/\//i.test(String(url||''))) window.open(url, '_blank', 'noopener'); }
 function el(tag, cls, html){ var e=document.createElement(tag); if(cls) e.className=cls; if(html!=null) e.innerHTML=html; return e; }
 
 // ======================= markdown (small, safe: everything is escaped first) =======================
+// Code spans and links are cut out of the RAW text first and parked as \u0000N\u0000 placeholders
+// holding finished, escaped HTML. Links are found in ONE pass, so a URL is never re-scanned
+// inside an href that was already built (that re-scan used to break out of the attribute).
 function mdInline(s){
-  var codes=[];
-  s=s.replace(/`([^`\n]+)`/g,function(_,c){ codes.push(c); return '\u0000'+(codes.length-1)+'\u0000'; });
+  var keep=[];
+  function hold(html){ keep.push(html); return '\u0000'+(keep.length-1)+'\u0000'; }
+  function link(href, text){ return hold('<a href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(text)+'</a>'); }
+  s=String(s==null?'':s).replace(/\u0000/g,'');
+  s=s.replace(/`([^`\n]+)`/g,function(_,c){ return hold('<code>'+esc(c)+'</code>'); });
+  s=s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+)\)|(^|[\s(])(https?:\/\/[^\s<>")\u0000]+)/g,
+    function(_,t,u,pre,bare){ return u ? link(u,t) : pre+link(bare,bare); });
   s=esc(s)
     .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
-    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g,'$1<em>$2</em>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g,'$1<a href="$2" target="_blank" rel="noopener">$2</a>');
-  return s.replace(/\u0000(\d+)\u0000/g,function(_,i){ return '<code>'+esc(codes[+i])+'</code>'; });
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g,'$1<em>$2</em>');
+  // two rounds: a link's text may itself hold a code placeholder
+  for(var r=0;r<2;r++) s=s.replace(/\u0000(\d+)\u0000/g,function(_,i){ return keep[+i]; });
+  return s;
 }
 function md(src){
   var out=[], lines=String(src||'').replace(/\r/g,'').split('\n'), i=0;
@@ -1951,7 +1962,7 @@ function taskAction(a, slug){
   if(a==='new'){ if(CHAT_ON) newChat(t.path); else newConsole(); }
   else if(a==='term') openShell(t.path);
   else if(a==='copy'){ try{ navigator.clipboard.writeText(t.path); }catch(_){ prompt('Path:', t.path); } }
-  else if(a==='link') window.open(t.url, '_blank', 'noopener');
+  else if(a==='link') openExt(t.url);
   else if(a==='refresh') tPost('refresh',{slug:slug}).then(loadTasks, fail('Refresh failed'));
   else if(a==='reopen') tPost('reopen',{slug:slug}).then(loadTasks, fail('Could not reopen'));
   else if(a==='archive'){
@@ -1999,11 +2010,23 @@ $('raddurl').addEventListener('submit', function(e){ e.preventDefault(); var u=$
   tPost('repo-add',{url:u}).then(function(){ $('rurl').value=''; loadTasks(); }).catch(function(err){ alert('Could not add: '+err.message); }); });
 $('raddfrom').addEventListener('submit', function(e){ e.preventDefault(); var f=$('rfrom').value; if(!f) return;
   tPost('repo-add',{from:f}).then(loadTasks).catch(function(err){ alert('Could not add: '+err.message); }); });
-// deep link: /?task=LAM-5161&title=…&url=…&repos=a,b&text=… (from DataBox, a bookmarklet, anything)
+// deep link: /?task=PROJ-123&title=…&url=…&repos=a,b&text=… (from a task tracker, a bookmarklet, anything)
+// Such a link can come from any site, so it never acts on its own: the user sees what it would
+// do (create a task folder, clone repos, put text into the chat box) and confirms it first.
 function taskFromUrl(){
   var q=new URLSearchParams(location.search), id=q.get('task'); if(!id && !q.get('title')) return false;
-  taskLink({id:id||'', title:q.get('title')||'', url:q.get('url')||'', text:q.get('text')||'', source:q.get('source')||'',
-    repos:(q.get('repos')||'').split(',').map(function(x){ return x.trim(); }).filter(Boolean)});
+  var b={id:id||'', title:q.get('title')||'', url:q.get('url')||'', text:q.get('text')||'', source:q.get('source')||'',
+    repos:(q.get('repos')||'').split(',').map(function(x){ return x.trim(); }).filter(Boolean)};
+  try{ history.replaceState(null,'',location.pathname); }catch(e){}       // a reload must not ask again
+  var lines=b.text?b.text.split('\n').length:0, cut=function(v,n){ v=String(v); return v.length>n?v.slice(0,n)+'…':v; };
+  var msg='A link wants to open a task here:\n\n'+
+    (b.id?'Task: '+cut(b.id,80)+'\n':'')+(b.title?'Title: '+cut(b.title,120)+'\n':'')+
+    (b.repos.length?'Clone repos: '+cut(b.repos.join(', '),200)+'\n':'')+
+    (b.url?'Link: '+cut(b.url,200)+'\n':'')+
+    (b.text?'\nText for the chat ('+lines+' line'+(lines>1?'s':'')+', '+b.text.length+' chars) — check it before you send it:\n'+cut(b.text,300)+'\n':'')+
+    '\nOpen it?';
+  if(!confirm(msg)) return false;
+  taskLink(b);
   return true;
 }
 // open a task by id/key: an existing one (or one with repos given) right away, otherwise the prefilled form
@@ -2105,9 +2128,10 @@ function rpItem(o){
   return '<div class="rpi'+(o.cls?' '+o.cls:'')+(o.isHidden?' hid':'')+'"'+a+' title="'+esc(o.tip||o.title)+'">'+btn+'<span class="t">'+(o.pre||'')+esc(o.title)+'</span>'+
     (o.sub?'<span class="s">'+o.sub+'</span>':'')+'</div>';
 }
-function rpSec(id, title, n, body, hot, dflt){
+// via: where a block comes from, shown as a small tag next to its title (e.g. "MCP")
+function rpSec(id, title, n, body, hot, dflt, via){
   var open=RP.open[id]!==undefined?RP.open[id]:!!dflt;
-  return '<details class="rpsec" data-sec="'+id+'"'+(open?' open':'')+'><summary>'+esc(title)+
+  return '<details class="rpsec" data-sec="'+id+'"'+(open?' open':'')+'><summary>'+esc(title)+(via?'<span class="via" title="from the '+esc(title)+' MCP connector">'+esc(via)+'</span>':'')+
     '<span class="n'+(hot?' hot':'')+'">'+(n==null?'':n)+'</span></summary>'+(body||'<div class="rpempty">nothing</div>')+'</details>';
 }
 function ciTag(c){ return c==='SUCCESS'?'<span class="tag ok">CI ✓</span>':(c==='FAILURE'||c==='ERROR')?'<span class="tag bad">CI ✗</span>':c?'<span class="tag pend">CI …</span>':''; }
@@ -2142,7 +2166,7 @@ function rpRender(){
   var jiraH=list((a.jira||[]).map(function(j){
     return {title:j.title, pre:'<span class="tag">'+esc(j.key)+'</span>', jira:j.key, jtitle:j.title, url:j.url, tip:'Open a task workspace for '+j.key,
       hk:'jira:'+j.key, hs:(j.status||'')+'|'+(j.priority||''),
-      sub:esc([j.status,j.priority].filter(Boolean).join(' · '))+(j.url?' · <a href="'+esc(j.url)+'" target="_blank" rel="noopener" data-ext>Jira ↗</a>':'')}; }));
+      sub:esc([j.status,j.priority].filter(Boolean).join(' · '))+(/^https?:\/\//i.test(j.url||'')?' · <a href="'+esc(j.url)+'" target="_blank" rel="noopener" data-ext>Jira ↗</a>':'')}; }));
   var gmailH=list((a.gmail||[]).map(function(m){
     return {title:m.subject||'(no subject)', url:m.url, hk:'mail:'+(m.url||m.subject), hs:m.at||'',
       sub:esc([m.from, m.snippet, m.at?ago(m.at):''].filter(Boolean).join(' · '))}; }));
@@ -2164,7 +2188,7 @@ function rpRender(){
   h+=rpSec('needs','Needs me', needs.length||'', needs.join(''), needs.length, true);
   // a block shows only when its connector is there (a.sources from the last agent run; old snapshots: all)
   var on=function(k){ return !a.sources || a.sources[k]!==false; };
-  if(on('calendar')) h+=rpSec('cal','Calendar', calH.length, calH.join(''));
+  if(on('calendar')) h+=rpSec('cal','Calendar', calH.length, calH.join(''), 0, 0, 'MCP');
   var gb='';
   if(d.githubError) gb+='<div class="rpempty" style="color:var(--err)">'+esc(d.githubError)+'</div>';
   gb+='<div class="rpsub">Waiting for me</div>'+(rvH.length?rvH.join(''):'<div class="rpempty">no personal review requests</div>');
@@ -2172,9 +2196,9 @@ function rpRender(){
   gb+='<div class="rpsub">My PRs</div>'+(mineH.length?mineH.join(''):'<div class="rpempty">no open PRs</div>');
   var hotGh=rvH.length+mine.filter(function(p){ return (p.ci==='FAILURE'||p.decision==='CHANGES_REQUESTED') && !(HID['pr:'+p.url] && HID['pr:'+p.url].sig===sigPr(p)); }).length;
   if(d.github) h+=rpSec('gh','GitHub', rvH.length+' · '+mineH.length+(newMine?' · '+newMine+' new':''), gb, hotGh);   // only when gh is logged in
-  if(on('jira')) h+=rpSec('jira','Jira', jiraH.length, jiraH.join(''));
-  if(on('slack')) h+=rpSec('slack','Slack', slackH.length, slackH.join(''));
-  if(on('gmail') && (a.gmail || a.sources)) h+=rpSec('gmail','Gmail', gmailH.length, gmailH.join(''));
+  if(on('jira')) h+=rpSec('jira','Jira', jiraH.length, jiraH.join(''), 0, 0, 'MCP');
+  if(on('slack')) h+=rpSec('slack','Slack', slackH.length, slackH.join(''), 0, 0, 'MCP');
+  if(on('gmail') && (a.gmail || a.sources)) h+=rpSec('gmail','Gmail', gmailH.length, gmailH.join(''), 0, 0, 'MCP');
   if(h!==RP.html){ RP.html=h; $('rpbody').innerHTML=h; }    // the 2s session tick must not rebuild it under the pointer
   var f=[];
   if(d.agentRunning) f.push('<span class="rpspin"></span> collecting…');
@@ -2216,7 +2240,7 @@ $('rpbody').addEventListener('click', function(e){
   if(seen){ RP.seen[seen]=Date.now(); var k=Object.keys(RP.seen); if(k.length>300) delete RP.seen[k[0]]; ls('cb.rpseen', JSON.stringify(RP.seen)); it.classList.remove('new'); }
   if(ses){ openSession(ses); return; }
   if(jira && !(e.metaKey||e.ctrlKey)){ taskLink({key:jira, title:it.getAttribute('data-title')||'', url:url}); if(innerWidth<=1100) rpToggle(false); return; }
-  if(url) window.open(url, '_blank', 'noopener');
+  openExt(url);
 });
 // "My PRs" seen-marks start from the first time the panel shows them, so nothing is "new" on day one
 function rpSeedSeen(){ var g=RP.data&&RP.data.github; if(!g) return; var ch=false;

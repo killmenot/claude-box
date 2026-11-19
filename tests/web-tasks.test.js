@@ -28,7 +28,7 @@ const tasks = require('../scripts/web-tasks.js');
 const until = async (f) => { for (let i = 0; i < 100; i++) { if (await f()) return; await new Promise((r) => setTimeout(r, 50)); } throw new Error('timeout'); };
 
 test('slugify: key + title, unicode, no leading dots', () => {
-  assert.strictEqual(tasks.slugify('LAM-5161', 'Paging for /v1/deposits!'), 'LAM-5161-paging-for-v1-deposits');
+  assert.strictEqual(tasks.slugify('PROJ-123', 'Paging for /v1/deposits!'), 'PROJ-123-paging-for-v1-deposits');
   assert.strictEqual(tasks.slugify('', 'Починить алерты Grafana'), 'починить-алерты-grafana');
   assert.strictEqual(tasks.slugify('', '...'), 'task');
 });
@@ -43,15 +43,15 @@ test('lifecycle: base repo, open, commit, archive, reopen, forget', async () => 
   const base = path.join(tasks.REPOS, 'api');
   assert.strictEqual(G(['remote', 'get-url', 'origin'], base), remote);   // real remote, not the folder
 
-  const t = await tasks.open({ key: 'lam-5161', title: 'Paging', url: 'https://jira/LAM-5161', repos: ['api'] });
+  const t = await tasks.open({ key: 'proj-123', title: 'Paging', url: 'https://jira/PROJ-123', repos: ['api'] });
   assert.strictEqual(t.created, true); assert.deepStrictEqual(t.errors, []);
-  assert.strictEqual(t.slug, 'LAM-5161-paging'); assert.strictEqual(t.id, 'LAM-5161');
+  assert.strictEqual(t.slug, 'PROJ-123-paging'); assert.strictEqual(t.id, 'PROJ-123');
   const clone = path.join(t.path, 'api');
-  assert.strictEqual(G(['rev-parse', '--abbrev-ref', 'HEAD'], clone), 'LAM-5161-paging');
+  assert.strictEqual(G(['rev-parse', '--abbrev-ref', 'HEAD'], clone), 'PROJ-123-paging');
   assert.strictEqual(G(['remote', 'get-url', 'origin'], clone), remote);
   assert.strictEqual(t.state, 'clean');                                  // nothing new yet
 
-  const again = await tasks.open({ key: 'LAM-5161', title: 'whatever' });     // same id -> same task
+  const again = await tasks.open({ key: 'PROJ-123', title: 'whatever' });     // same id -> same task
   assert.strictEqual(again.created, false); assert.strictEqual(again.slug, t.slug);
 
   fs.writeFileSync(path.join(clone, 'a.txt'), 'x');
@@ -65,12 +65,12 @@ test('lifecycle: base repo, open, commit, archive, reopen, forget', async () => 
   const a = await tasks.archive(t.slug);
   assert.strictEqual(a.state, 'archived');
   assert.ok(!fs.existsSync(clone)); assert.ok(fs.existsSync(path.join(t.path, '.task.json')));
-  assert.strictEqual(G(['log', '-1', '--format=%s', 'LAM-5161-paging'], base), 'work');   // branch kept in base
+  assert.strictEqual(G(['log', '-1', '--format=%s', 'PROJ-123-paging'], base), 'work');   // branch kept in base
 
   const r = await tasks.reopen(t.slug);
   assert.strictEqual(r.archived, false);
   assert.strictEqual(G(['log', '-1', '--format=%s'], clone), 'work');
-  assert.strictEqual(G(['rev-parse', '--abbrev-ref', 'HEAD'], clone), 'LAM-5161-paging');
+  assert.strictEqual(G(['rev-parse', '--abbrev-ref', 'HEAD'], clone), 'PROJ-123-paging');
 
   assert.throws(() => tasks.forget(t.slug), /archive the task first/);
   await tasks.archive(t.slug);
@@ -79,8 +79,8 @@ test('lifecycle: base repo, open, commit, archive, reopen, forget', async () => 
 });
 
 test('a title equal to the key does not repeat in the folder name', async () => {
-  const t = await tasks.open({ key: 'LAM-5251', title: 'LAM-5251' });
-  assert.strictEqual(t.slug, 'LAM-5251');
+  const t = await tasks.open({ key: 'PROJ-456', title: 'PROJ-456' });
+  assert.strictEqual(t.slug, 'PROJ-456');
 });
 
 test('tasks without a Jira key get a local id; unknown repos are reported, not fatal', async () => {

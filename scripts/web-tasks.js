@@ -40,7 +40,7 @@ function safeName(n) {
   if (!n || n.length > 120 || n === '.' || n === '..' || /[\/\\\0]/.test(n) || n.startsWith('.')) throw new Error('invalid name: ' + n);
   return n;
 }
-// "LAM-5161", "Fix grafana alerts!" -> "LAM-5161-fix-grafana-alerts"
+// "PROJ-123", "Fix grafana alerts!" -> "PROJ-123-fix-grafana-alerts"
 function slugify(key, title) {
   const t = String(title || '').toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '').split('-').slice(0, 6).join('-').slice(0, 48)
@@ -157,7 +157,7 @@ async function open(o) {
   const title = String(o.title || '').trim().slice(0, 200);
   if (!title && !key) throw new Error('a task needs a title or a key');
   fs.mkdirSync(TASKS, { recursive: true });
-  // a title that is just the key again ("LAM-5251") adds nothing to the folder name
+  // a title that is just the key again ("PROJ-456") adds nothing to the folder name
   let slug = slugify(key, title.toUpperCase() === key ? '' : title), dir = path.join(TASKS, slug);
   for (let i = 2; fs.existsSync(dir); i++) dir = path.join(TASKS, slug + '-' + i);
   slug = path.basename(dir);

@@ -7,11 +7,17 @@
 //   cb-session new --cwd DIR --prompt TEXT [--title T] [--mode auto|default|acceptEdits|plan] [--category NAME]
 //   cb-session status TOKEN      -> JSON: state (running|requires_action|idle|stopped…), last answer, cost
 //
-// Talks to the local sidecar (http://127.0.0.1:$WEB_TERMINAL_PORT) with the web login from the env.
+// Talks to the local sidecar (http://127.0.0.1:$WEB_TERMINAL_PORT) with the per-start API token
+// that web-serve.js writes to ~/.claude/.cb-api-token (the web password is not in the sessions'
+// environment). Outside the box, WEB_TERMINAL_PASSWORD from the env still works.
+const fs = require('fs');
 const http = require('http');
+const path = require('path');
 
 const PORT = parseInt(process.env.WEB_TERMINAL_PORT || '7681', 10);
-const auth = process.env.WEB_TERMINAL_PASSWORD
+let apiToken = '';
+try { apiToken = fs.readFileSync(path.join(process.env.HOME || '/home/node', '.claude', '.cb-api-token'), 'utf8').trim(); } catch (_) {}
+const auth = !apiToken && process.env.WEB_TERMINAL_PASSWORD
   ? 'Basic ' + Buffer.from((process.env.WEB_TERMINAL_USER || 'claude') + ':' + process.env.WEB_TERMINAL_PASSWORD).toString('base64')
   : null;
 
@@ -19,7 +25,8 @@ function call(method, path, body) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const headers = { 'content-type': 'application/json' };
-    if (auth) headers.authorization = auth;
+    if (apiToken) headers['x-cb-api-token'] = apiToken;
+    else if (auth) headers.authorization = auth;
     const req = http.request({ host: '127.0.0.1', port: PORT, method, path, headers }, (res) => {
       let out = ''; res.on('data', (d) => { out += d; });
       res.on('end', () => {

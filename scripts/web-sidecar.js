@@ -20,6 +20,9 @@ const registry = require('./web-registry.js');
 const { metrics } = require('./web-metrics.js');
 const { preview } = require('./web-preview.js');
 const { search } = require('./web-search.js');
+// CSRF / cross-site WebSocket / DNS-rebinding guard + the login check (see web-guard.js)
+const webGuard = require('./web-guard.js');
+const guard = webGuard.makeGuard();
 
 const IFACE = process.env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
 const PORT  = parseInt(process.env.WEB_TERMINAL_PORT || '7681', 10);
@@ -84,15 +87,20 @@ function safeDecode(s) { try { return decodeURIComponent(s); } catch (_) { retur
 
 // basic-auth: the sidecar serves /sessions (session names/paths) and the launcher — when a
 // password is set they MUST sit behind the same barrier as the terminal. Login: WEB_TERMINAL_USER.
-function authed(req) {
-  if (!PW) return true;
-  const m = /^Basic (.+)$/.exec(req.headers['authorization'] || '');
-  if (!m) return false;
-  try { return Buffer.from(m[1], 'base64').toString() === USER + ':' + PW; } catch (_) { return false; }
+// Failed logins are rate-limited; cb-session may use the per-start API token (start(opts)).
+let auth = webGuard.makeAuth({ user: USER, password: PW });
+
+// ttyd always runs with its own random login (web-serve.js), so a page that reaches its loopback
+// port directly gets nowhere; the sidecar, which has already checked the user, swaps that login in.
+let TTYD_AUTH = '';
+function ttydHeaders(h) {
+  const o = Object.assign({}, h);
+  if (TTYD_AUTH) o.authorization = 'Basic ' + Buffer.from(TTYD_AUTH).toString('base64');
+  return o;
 }
 
 function proxy(req, res) {
-  const opts = { host: '127.0.0.1', port: TTYD, method: req.method, path: req.url, headers: req.headers };
+  const opts = { host: '127.0.0.1', port: TTYD, method: req.method, path: req.url, headers: ttydHeaders(req.headers) };
   const up = http.request(opts, r => {
     if (!res.headersSent) res.writeHead(r.statusCode, r.headers);
     r.pipe(res);
@@ -107,7 +115,17 @@ function proxy(req, res) {
 
 const handler = (req, res) => {
   try {
-    if (!authed(req)) {
+    const denied = guard(req);
+    if (denied) { res.writeHead(403, { 'content-type': 'text/plain' }); res.end('forbidden: ' + denied); return; }
+    // nothing served here may be framed by another site (the proxied terminal included)
+    res.setHeader('x-frame-options', 'SAMEORIGIN');
+    res.setHeader('content-security-policy', "frame-ancestors 'self'");
+    const a = auth(req);
+    if (!a.ok) {
+      if (a.status === 429) {
+        res.writeHead(429, { 'retry-after': String(a.retry), 'content-type': 'text/plain' });
+        res.end('too many failed logins, try again in ' + Math.ceil(a.retry / 60) + ' min'); return;
+      }
       res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="claude-box"' });
       res.end('auth required'); return;
     }
@@ -254,7 +272,8 @@ const handler = (req, res) => {
       fs.readFile(LAUNCHER, (e, buf) => {
         try {
           if (e) { res.writeHead(500); res.end('no launcher'); return; }
-          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(buf);
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'referrer-policy': 'no-referrer' });
+          res.end(buf);
         } catch (_) {}
       });
       return;
@@ -308,22 +327,26 @@ const handler = (req, res) => {
 };
 
 // TLS: if web-serve passed a cert+key and they are readable -> https, otherwise http (as before).
-let tls = null;
-if (process.env.WEB_TLS_CERT && process.env.WEB_TLS_KEY) {
-  try { tls = { cert: fs.readFileSync(process.env.WEB_TLS_CERT), key: fs.readFileSync(process.env.WEB_TLS_KEY) }; }
-  catch (e) { console.error('tls read failed, fallback http:', e.message); }
+// Read at start(), not at load: web-serve.js loads this module before it has made the cert.
+function loadTls() {
+  if (!process.env.WEB_TLS_CERT || !process.env.WEB_TLS_KEY) return null;
+  try { return { cert: fs.readFileSync(process.env.WEB_TLS_CERT), key: fs.readFileSync(process.env.WEB_TLS_KEY) }; }
+  catch (e) { console.error('tls read failed, fallback http:', e.message); return null; }
 }
 // WebSocket upgrade (/ws) -> ttyd. Shared by the http and https servers.
 function onUpgrade(req, socket, head) {
   try {
-    if (!authed(req)) { socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
+    const denied = guard(req);
+    if (denied) { socket.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
+    const a = auth(req);
+    if (!a.ok) { socket.end(a.status === 429 ? 'HTTP/1.1 429 Too Many Requests\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
     if (req.url.split('?')[0] === '/chat/ws') {
       if (!chat) { socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n'); return; }
       chat.handleUpgrade(req, socket, head); return;
     }
     const up = net.connect(TTYD, '127.0.0.1', () => {
       up.write(`${req.method} ${req.url} HTTP/1.1\r\n` +
-        Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n\r\n');
+        Object.entries(ttydHeaders(req.headers)).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n\r\n');
       if (head && head.length) up.write(head);
       socket.pipe(up); up.pipe(socket);
     });
@@ -337,7 +360,12 @@ function onUpgrade(req, socket, head) {
 //          so the browser has NO clipboard or notifications, but the terminal works.
 //   https on WEB_TLS_PORT      — secure context: clipboard + notifications (needs a cert).
 // No redirect: each port serves the terminal on its own scheme, the user chooses.
-function start() {
+// opts.ttydAuth: "user:pass" ttyd was started with; opts.apiToken: the token cb-session sends
+function start(opts) {
+  opts = opts || {};
+  TTYD_AUTH = opts.ttydAuth || '';
+  if (opts.apiToken) auth = webGuard.makeAuth({ user: USER, password: PW, apiToken: opts.apiToken });
+  const tls = loadTls();
   const servers = [];
   // requestTimeout 0: large uploads to the Workspace file manager may take longer than Node's 5 min default
   const httpServer = http.createServer({ requestTimeout: 0 }, handler);
@@ -353,5 +381,6 @@ function start() {
   return servers;
 }
 
-module.exports = { start };
-if (require.main === module) start();
+module.exports = { start, handler, onUpgrade };
+// standalone (tests, debugging): the same options from the environment
+if (require.main === module) start({ ttydAuth: process.env.CB_TTYD_AUTH, apiToken: process.env.CB_API_TOKEN });
