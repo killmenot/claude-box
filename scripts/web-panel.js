@@ -176,10 +176,13 @@ function agentRun(reason) {
       const timer = setTimeout(() => { try { q.close(); } catch (_) {} }, 5 * 60000);
       try {
         for await (const m of q) if (m.type === 'system' && m.subtype === 'init') {
-          // which connectors this account has: a block is shown only when its tools exist
-          const t = (m.tools || []).filter((n) => n.startsWith('mcp__'));
-          sources = { calendar: t.some((n) => /calendar/i.test(n)), jira: t.some((n) => /atlassian|jira/i.test(n)),
-            slack: t.some((n) => /slack/i.test(n)), gmail: t.some((n) => /gmail/i.test(n)) };
+          // which connectors this account has: a block is shown only when its connector exists.
+          // claude.ai connectors are often still "pending" at init (their tools not listed yet),
+          // so a server counts unless it failed or needs a login; its tools count too.
+          const names = (m.tools || []).filter((n) => n.startsWith('mcp__'))
+            .concat((m.mcp_servers || []).filter((s) => !/fail|auth|disabled/i.test(String(s.status || ''))).map((s) => String(s.name || '')));
+          sources = { calendar: names.some((n) => /calendar/i.test(n)), jira: names.some((n) => /atlassian|jira/i.test(n)),
+            slack: names.some((n) => /slack/i.test(n)), gmail: names.some((n) => /gmail/i.test(n)) };
         } else if (m.type === 'result') {
           cost = m.total_cost_usd;
           if (m.structured_output) out = m.structured_output;
@@ -191,6 +194,8 @@ function agentRun(reason) {
     if (out) {
       const snap = Object.assign({ at: new Date().toISOString(), took: Math.round((Date.now() - t0) / 1000), cost, model: MODEL }, out,
         sources ? { sources } : {});
+      // a block that came back with items is connected, whatever init said
+      if (snap.sources) for (const k of ['calendar', 'jira', 'slack', 'gmail']) if ((snap[k] || []).length) snap.sources[k] = true;
       try { fs.writeFileSync(FILE + '.tmp', JSON.stringify(snap)); fs.renameSync(FILE + '.tmp', FILE); } catch (e) { err = e.message; }
     }
     agent.error = err; log('agent run', reason, err ? 'failed: ' + err : 'ok', Math.round((Date.now() - t0) / 1000) + 's', cost != null ? '$' + cost.toFixed(4) : '');
