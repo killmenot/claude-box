@@ -87,5 +87,21 @@ claude-web-registry delete tok-new >/dev/null
 tmux has-session -t web-1 2>/dev/null && rc=0 || rc=1
 check "delete: the owning record does kill its session" 1 "$rc"
 
+# ---------------------------------------------------------------- resume: no shell injection
+# The registry file is writable from inside the box, so a session id is untrusted: one with a quote
+# in it must not become a command (it used to be spliced into "claude --resume '$cid'").
+printf '#!/bin/sh\nexit 0\n' > "$bin/claude"; chmod +x "$bin/claude"   # a claude that returns at once
+evil="x'; touch pwned; '"                   # runs in the session folder: no "/" (a file name)
+mkdir -p "$tmp/ws/evil"; seed "$tmp/ws/evil" "$evil"
+jq --arg cid "$evil" --arg cwd "$tmp/ws/evil" \
+  '. + {"tok-evil":{"token":"tok-evil","claudeSessionId":$cid,"cwd":$cwd,"name":"evil","state":"done","tmuxSession":"evil","lastActivity":9}}' \
+  "$reg" > "$reg.tmp" && mv "$reg.tmp" "$reg"
+( enter_by_token tok-evil ) </dev/null >/dev/null 2>&1; rc=$?
+sleep 1
+check "resume: a session id with a quote is refused"      1 "$rc"
+check "resume: ...and nothing it smuggled in ran"          no "$([ -e "$tmp/ws/evil/pwned" ] && echo yes || echo no)"
+tmux has-session -t evil 2>/dev/null && rc=0 || rc=1
+check "resume: ...and no tmux session was started for it" 1 "$rc"
+
 [ "$fail" -eq 0 ] && echo "PASS" || echo "FAILURES"
 exit "$fail"

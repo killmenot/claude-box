@@ -132,7 +132,15 @@ GitHub (already collected, use it only for "needs"): ${gh}
 
 If a source is not available, return an empty list for it. Answer with the structured output only.`;
 }
-const READ_TOOL = /^mcp__.+__(?:slack_)?(?:list|search|get|read|fetch|query|lookup|atlassianUserInfo)/i;
+// An MCP tool the read-only run may call: mcp__<server>__<tool>, where <server> has no "__" in it
+// and <tool> starts with a read verb and has no write verb anywhere in its name.
+const READ_TOOL = /^mcp__(?:[^_]|_(?!_))+__(?:slack_)?(?:list|search|get|read|fetch|query|lookup|atlassianUserInfo)(?:[A-Za-z0-9-]|_(?!_))*$/i;
+const WRITE_WORD = /send|create|update|delete|remove|post|put|patch|add|set|write|edit|move|share|upload|reply|draft|comment|transition|archive|mark|react|invite|schedule|cancel|join|leave|pin|publish|approve|merge|assign|label|close|open|submit|forward|trash|modify/i;
+function isReadTool(name) {
+  const n = String(name || '');
+  if (!READ_TOOL.test(n)) return false;
+  return !WRITE_WORD.test(n.slice(n.lastIndexOf('__') + 2).replace(/^(?:slack_)?(?:list|search|get|read|fetch|query|lookup)/i, ''));
+}
 let agent = { running: null, lastRun: 0, lastView: 0, error: null };
 function readSnapshot() { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch (_) { return null; } }
 function agentRun(reason) {
@@ -145,10 +153,14 @@ function agentRun(reason) {
       if (!gh.data && !gh.busy) await ghRun(); else if (gh.busy) await gh.busy;
       const q = sdk.query({ prompt: agentPrompt(gh.data), options: {
         cwd: HOME, model: MODEL, persistSession: false, maxTurns: 30, permissionMode: 'default',
-        disallowedTools: ['Bash', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task', 'WebFetch', 'WebSearch', 'Workflow',
+        // no built-in tools at all, and no settings files: an "allow" rule in the user's settings
+        // must not let a write tool skip canUseTool. MCP connectors are what this run is for.
+        tools: [], settingSources: [],
+        disallowedTools: ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task', 'WebFetch', 'WebSearch', 'Workflow',
           'CronCreate', 'CronDelete', 'RemoteTrigger', 'PushNotification', 'SendMessage', 'ScheduleWakeup', 'Skill'],
+        // no local tools at all (it reads untrusted mail/chat, and $HOME holds the credentials);
         // MCP calls are the only thing that reaches the outside: anything that is not a read is refused
-        canUseTool: async (name, input) => READ_TOOL.test(name) ? { behavior: 'allow', updatedInput: input }
+        canUseTool: async (name, input) => isReadTool(name) ? { behavior: 'allow', updatedInput: input }
           : { behavior: 'deny', message: 'This run is read-only.' },
         outputFormat: { type: 'json_schema', schema: SCHEMA },
         stderr: () => {},
@@ -222,4 +234,4 @@ setInterval(() => {
   if (ev > 0 && (!snap || Date.now() - Date.parse(snap.at) > ev * 60000)) agentRun('timer');
 }, 30000).unref();
 
-module.exports = { init, get, refresh, hide, unhideAll, setEvery, READ_TOOL };
+module.exports = { init, get, refresh, hide, unhideAll, setEvery, READ_TOOL, isReadTool };

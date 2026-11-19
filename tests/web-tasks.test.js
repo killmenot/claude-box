@@ -79,8 +79,8 @@ test('lifecycle: base repo, open, commit, archive, reopen, forget', async () => 
 });
 
 test('a title equal to the key does not repeat in the folder name', async () => {
-  const t = await tasks.open({ key: 'PROJ-124', title: 'PROJ-124' });
-  assert.strictEqual(t.slug, 'PROJ-124');
+  const t = await tasks.open({ key: 'PROJ-456', title: 'PROJ-456' });
+  assert.strictEqual(t.slug, 'PROJ-456');
 });
 
 test('tasks without a Jira key get a local id; unknown repos are reported, not fatal', async () => {

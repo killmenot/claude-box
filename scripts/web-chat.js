@@ -34,6 +34,14 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
+// The environment for Claude sessions: never the web login or the tunnel token (web-serve.js
+// already drops them; this keeps a standalone sidecar safe too). CLAUDE_WEB_CHAT tells the
+// tmux hook (notify.sh) that this module keeps the session's registry record itself.
+function sessionEnv() {
+  const e = Object.assign({}, process.env, { CLAUDE_WEB_CHAT: '1' });
+  delete e.WEB_TERMINAL_PASSWORD; delete e.NGROK_AUTHTOKEN;
+  return e;
+}
 const { pathToFileURL } = require('url');
 
 const MODULES = process.env.WEB_CHAT_MODULES || '/opt/claude-web-chat/node_modules';
@@ -144,7 +152,7 @@ async function warmCommands(cwd) {
   try {
     await sdkReady; if (!sdk) return;
     q = sdk.query({ prompt: never, options: { cwd, systemPrompt: { type: 'preset', preset: 'claude_code' },
-      env: Object.assign({}, process.env, { CLAUDE_WEB_CHAT: '1' }) } });
+      env: sessionEnv() } });
     if (!q.supportedCommands) return;
     const list = rememberCommands(cwd, await q.supportedCommands());
     for (const c of CHATS) if (c.cwd === cwd && !c.q) { c.info.commandList = list; c.emit({ ev: 'info', info: c.info }); }
@@ -197,7 +205,7 @@ class Chat {
       canUseTool: (tool, input, o) => this.askPermission(tool, input, o),
       // claude-notify (the tmux hook) must not touch the registry for chat-owned sessions —
       // this module keeps those records itself (see scripts/notify.sh).
-      env: Object.assign({}, process.env, { CLAUDE_WEB_CHAT: '1' }),
+      env: sessionEnv(),
       additionalDirectories: [UPLOADS],
       stderr: (d) => log(this.name, String(d).trim()),
     };

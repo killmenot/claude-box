@@ -56,3 +56,40 @@ test('metrics: host numbers without a token, nulls for the session part', async 
   assert.strictEqual(m.ctx, null);
   assert.strictEqual(m.git, null);
 });
+
+test('secrets leave the environment before anything is spawned', () => {
+  const { dropSecrets, SECRET_ENV } = require('../scripts/web-serve.js');
+  const e = { WEB_TERMINAL_PASSWORD: 'pw', NGROK_AUTHTOKEN: 'ng', WEB_TERMINAL_USER: 'claude', PATH: '/bin' };
+  dropSecrets(e);
+  assert.deepStrictEqual(e, { WEB_TERMINAL_USER: 'claude', PATH: '/bin' });
+  assert.ok(SECRET_ENV.includes('WEB_TERMINAL_PASSWORD') && SECRET_ENV.includes('NGROK_AUTHTOKEN'));
+});
+
+// web-serve.js loads the sidecar BEFORE it makes the self-signed cert (so the secrets can leave
+// the environment early); the https listener must still come up.
+test('sidecar: the https listener starts even when the cert appears after the module loaded', async (t) => {
+  const { spawn, execFileSync } = require('child_process');
+  const net = require('net');
+  const dir = fs.mkdtempSync(path.join(tmp, 'tls-'));
+  const crt = path.join(dir, 'c.crt'), key = path.join(dir, 'c.key');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', crt, '-days', '1', '-subj', '/CN=t'], { stdio: 'ignore' });
+  const free = () => new Promise((res) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
+  const [port, tlsPort] = [await free(), await free()];
+  const script = `
+    const sc = require(${JSON.stringify(path.join(__dirname, '..', 'scripts', 'web-sidecar.js'))});
+    process.env.WEB_TLS_CERT = ${JSON.stringify(crt)}; process.env.WEB_TLS_KEY = ${JSON.stringify(key)};
+    sc.start({});`;
+  const child = spawn(process.execPath, ['-e', script], {
+    env: Object.assign({}, process.env, { HOME: tmp, WEB_TERMINAL_PORT: String(port), WEB_TLS_PORT: String(tlsPort),
+      WEB_TERMINAL_INTERFACE: '127.0.0.1', WEB_TLS_CERT: '', WEB_TLS_KEY: '', WEB_CHAT_MODULE: '/nonexistent',
+      WEB_TASKS_MODULE: '/nonexistent', WEB_PANEL_MODULE: '/nonexistent', WEB_WORKSPACE_MODULE: '/nonexistent' }),
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  t.after(() => child.kill());
+  const out = await new Promise((res) => {
+    let err = ''; const timer = setTimeout(() => res(err), 8000);
+    child.stderr.on('data', (d) => { err += d; if (/sidecar https/.test(err)) { clearTimeout(timer); res(err); } });
+    child.on('exit', () => { clearTimeout(timer); res(err); });
+  });
+  assert.match(out, /sidecar https:\/\/127\.0\.0\.1:\d+/, out);
+});

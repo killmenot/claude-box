@@ -157,7 +157,7 @@ async function open(o) {
   const title = String(o.title || '').trim().slice(0, 200);
   if (!title && !key) throw new Error('a task needs a title or a key');
   fs.mkdirSync(TASKS, { recursive: true });
-  // a title that is just the key again ("PROJ-124") adds nothing to the folder name
+  // a title that is just the key again ("PROJ-456") adds nothing to the folder name
   let slug = slugify(key, title.toUpperCase() === key ? '' : title), dir = path.join(TASKS, slug);
   for (let i = 2; fs.existsSync(dir); i++) dir = path.join(TASKS, slug + '-' + i);
   slug = path.basename(dir);

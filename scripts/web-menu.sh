@@ -95,7 +95,10 @@ enter_by_token() {
   rcwd="$(resume_cwd "$cid" "$cwd")" || return 1
   nm="${name:-resume}"
   tmux has-session -t "$nm" 2>/dev/null && nm="$nm-$token"
-  tmux -u new-session -d -s "$nm" -c "$rcwd" "claude --resume '$cid'" 2>/dev/null || return 1
+  # cid comes from the registry file: only a session id shape is accepted, and it is passed as its
+  # own argument (tmux runs a multi-word command without a shell), never spliced into a string
+  [[ "$cid" =~ ^[A-Za-z0-9-]{1,64}$ ]] || return 1
+  tmux -u new-session -d -s "$nm" -c "$rcwd" claude --resume "$cid" 2>/dev/null || return 1
   stamp_token "$nm" "$token"
   # The record still points at the name this session had before the restart; re-point it now so the
   # launcher shows the card as live without waiting for the first hook of the resumed session.

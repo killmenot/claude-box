@@ -9,6 +9,7 @@
 //   6. on SIGTERM: final session snapshot, tmux kill-server (Claude flushes), stop children
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
 const HOME = process.env.HOME || '/home/node';
@@ -23,11 +24,29 @@ const TTYD_PORT = env.TTYD_PORT || '7682';
 const TLS_PORT = env.WEB_TLS_PORT || '8443';
 const USER = env.WEB_TERMINAL_USER || 'claude';
 const PW = env.WEB_TERMINAL_PASSWORD || '';
+const NGROK_TOKEN = env.NGROK_AUTHTOKEN || '';
 const RESTORE = (env.WEB_RESTORE_SESSIONS || '1') !== '0';
 Object.assign(env, { WEB_TERMINAL_PORT: PORT, WEB_TERMINAL_INTERFACE: IFACE, TTYD_PORT, WEB_TLS_PORT: TLS_PORT });
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return null; } };
 function writeJson(f, o) { const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(o, null, 2)); fs.renameSync(t, f); }
+
+// Secrets that only this process needs. They are removed from the environment before anything
+// is spawned, so ttyd shells, tmux, Claude sessions and their tools never inherit them (a
+// prompt-injected session could otherwise read the web login that also guards the tunnel).
+const SECRET_ENV = ['WEB_TERMINAL_PASSWORD', 'NGROK_AUTHTOKEN'];
+function dropSecrets(e) { for (const k of SECRET_ENV) delete e[k]; return e; }
+
+// cb-session (inside the box) talks to the sidecar with this per-start token instead of the web
+// password; the sidecar accepts it only for /chat/api/* straight from loopback.
+const API_TOKEN_FILE = path.join(CLAUDE_DIR, '.cb-api-token');
+function writeApiToken() {
+  const tok = crypto.randomBytes(24).toString('hex');
+  fs.mkdirSync(CLAUDE_DIR, { recursive: true });
+  fs.writeFileSync(API_TOKEN_FILE + '.tmp', tok + '\n', { mode: 0o600 });
+  fs.renameSync(API_TOKEN_FILE + '.tmp', API_TOKEN_FILE);
+  return tok;
+}
 
 // ---------- 1. defaults ----------
 // settings.json is copied once (the user may change it later); MCP servers are re-synced from the
@@ -93,11 +112,13 @@ function startTunnel() {
   if (env.WEB_TUNNEL !== '1') return null;
   if (!PW) { warn('✗ Tunnel not started: WEB_TERMINAL_PASSWORD is not set — a public shell without a password is not allowed.'); return null; }
   const target = `http://127.0.0.1:${PORT}`;
-  if (env.NGROK_AUTHTOKEN) {
-    const args = ['http', PORT, '--log=stdout'];
+  if (NGROK_TOKEN) {
+    // --inspect=false: the local inspector (127.0.0.1:4040 on the HOST network) would otherwise
+    // record every request, Authorization header included; its API still serves the tunnel URL
+    const args = ['http', PORT, '--log=stdout', '--inspect=false'];
     if (env.NGROK_DOMAIN) args.push('--domain=' + env.NGROK_DOMAIN);
     log(`starting ngrok -> ${target}`);
-    const p = spawn('ngrok', args, { stdio: ['ignore', 'ignore', 'inherit'] });
+    const p = spawn('ngrok', args, { stdio: ['ignore', 'ignore', 'inherit'], env: Object.assign({}, env, { NGROK_AUTHTOKEN: NGROK_TOKEN }) });
     pollUrl(async () => {
       const r = await fetch('http://localhost:4040/api/tunnels');
       const j = await r.json();
@@ -122,6 +143,12 @@ function main() {
     warn(`WARNING: listening on ${IFACE} WITHOUT a password — an open writable shell exposed to the outside!`);
     warn('         Set WEB_TERMINAL_PASSWORD in .env.');
   }
+  // load the sidecar while the web login is still in the environment (it reads it at load),
+  // then take the secrets out of the environment for everything spawned from here on
+  const sidecar = require('./web-sidecar.js');
+  dropSecrets(env);
+  let apiToken = '';
+  try { apiToken = writeApiToken(); } catch (e) { warn('api token:', e.message); }
   try { seedDefaults(); } catch (e) { warn('seeding defaults failed:', e.message); }
   setupTls();
   const tunnel = startTunnel();
@@ -129,9 +156,12 @@ function main() {
   const registry = require('./web-registry.js');
   if (RESTORE) { try { registry.restore((s) => log(s)); } catch (e) { warn('restore failed:', e.message); } }
 
-  // ttyd: loopback only, under /term; the sidecar proxies it and gates it with the same login
-  const ttydArgs = ['--interface', '127.0.0.1', '--port', TTYD_PORT, '--writable', '--url-arg', '--base-path', '/term'];
-  if (PW) ttydArgs.push('-c', `${USER}:${PW}`);                     // defense in depth
+  // ttyd: loopback only, under /term. With network_mode: host its port is on the HOST's loopback,
+  // where any web page could open a WebSocket to it — so it ALWAYS has its own random login,
+  // known only to the sidecar, which checks the user and swaps that login in when proxying.
+  const ttydAuth = 'cb:' + crypto.randomBytes(24).toString('hex');
+  const ttydArgs = ['--interface', '127.0.0.1', '--port', TTYD_PORT, '--writable', '--url-arg', '--base-path', '/term',
+    '-c', ttydAuth];
   if (env.WEB_TERMINAL_FONT_SIZE) ttydArgs.push('-t', 'fontSize=' + env.WEB_TERMINAL_FONT_SIZE);
   const index = env.WEB_TERMINAL_INDEX || '/usr/local/share/claude-web/index.html';
   if (fs.existsSync(index)) ttydArgs.push('--index', index);
@@ -139,7 +169,7 @@ function main() {
 
   log(`http://${IFACE}:${PORT}  (launcher; auth: ${PW ? 'on' : 'off'}; ttyd@127.0.0.1:${TTYD_PORT})`);
   if (env.WEB_TLS_CERT) log(`https://${IFACE}:${TLS_PORT}  (secure: clipboard + notifications)`);
-  require('./web-sidecar.js').start();
+  sidecar.start({ ttydAuth, apiToken });
 
   // keep the list of running sessions fresh on disk: covers a hard kill where no handler runs
   const snap = RESTORE ? setInterval(() => { try { registry.snapshot(); } catch (_) {} }, 15000) : null;
@@ -167,5 +197,5 @@ function main() {
   }
 }
 
-module.exports = { seedDefaults };
+module.exports = { seedDefaults, dropSecrets, SECRET_ENV };
 if (require.main === module) main();
