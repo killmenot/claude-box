@@ -20,10 +20,12 @@
 //     {op:'mode', key, mode}           permission mode (default|acceptEdits|plan|auto)
 //     {op:'release', key}              stop the chat process (before switching to console)
 //     {op:'takeover', key}             kill the console tmux session (before switching to chat)
+//     {op:'draft', key, text}          the unsent composer text (kept per session, sent to other viewers)
 //     {op:'older', key, before}        an older page of history, ending before message uuid `before`
 //   server -> client:
 //     {ev:'history', key, items, state, console, info, more}   more = older items not sent yet
 //     {ev:'older', key, items, more}
+//     {ev:'draft', key, text, at}      another viewer changed the unsent text; history carries draft too
 //     {ev:'msg', key, m}               raw SDK message (assistant/user/stream_event/result/system)
 //     {ev:'state', key, state}         idle | running | requires_action | starting | stopped
 //     {ev:'token', key, token}         the session now has a registry token (new or after /clear)
@@ -123,6 +125,36 @@ function saveUploads(files) {
     fs.writeFileSync(p, buf);
     return { path: p, name: path.basename(p), type: String(f.type || ''), size: buf.length, buf };
   });
+}
+
+// ---------- unsent drafts ----------
+// What is typed in a chat's composer but not sent yet, per registry token, so it survives a
+// reload or restart and shows on other devices. A sent message leaves an empty entry with its
+// time, so an older copy kept in a browser can't bring the sent text back.
+const DRAFT_FILE = process.env.WEB_CHAT_DRAFTS || path.join(require('os').homedir(), '.claude', 'web-drafts.json');
+const DRAFT_MAX = 100000, DRAFT_KEEP_MS = 30 * 86400000;
+let DRAFTS = {};
+try { DRAFTS = JSON.parse(fs.readFileSync(DRAFT_FILE, 'utf8')) || {}; } catch (_) {}
+let draftTimer = null;
+function saveDrafts() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    const now = Date.now();
+    for (const k of Object.keys(DRAFTS)) if (!DRAFTS[k] || now - (DRAFTS[k].at || 0) > DRAFT_KEEP_MS) delete DRAFTS[k];
+    const tmp = DRAFT_FILE + '.tmp';
+    try { fs.writeFileSync(tmp, JSON.stringify(DRAFTS)); fs.renameSync(tmp, DRAFT_FILE); }
+    catch (e) { log('drafts: save failed', e.message); }
+  }, 1000);
+}
+// Store a draft and pass it to the session's other viewers (not the one that typed it).
+function setDraft(chat, text, from) {
+  if (!chat.token) return;
+  const d = { text: String(text || '').slice(0, DRAFT_MAX), at: Date.now() };
+  DRAFTS[chat.token] = d; saveDrafts();
+  for (const s of chat.subs) {
+    if (from && s.ws === from.ws && s.key === from.key) continue;
+    try { s.ws.send(JSON.stringify({ ev: 'draft', key: s.key, text: d.text, at: d.at })); } catch (_) {}
+  }
 }
 
 // ---------- slash command list for the composer's "/" autocomplete ----------
@@ -427,7 +459,8 @@ function onConnection(ws) {
         const all = await history(chat), start = pageStart(all, all.length), items = all.slice(start);
         const pend = [...chat.perms].map(([id, p]) => ({ id, tool: p.tool, input: p.input, reason: p.reason, suggestions: p.suggestions.length > 0 }));
         reply({ ev: 'history', key, items, state: chat.state, console: !chat.q && await tmuxAlive(chat.name),
-                info: chat.info, perms: pend, token: chat.token, more: start });
+                info: chat.info, perms: pend, token: chat.token, more: start,
+                draft: (chat.token && DRAFTS[chat.token]) || null });
         return;
       }
       if (msg.op === 'older') {
@@ -449,9 +482,13 @@ function onConnection(ws) {
           break;
         case 'send': {
           const files = Array.isArray(msg.files) ? msg.files.slice(0, MAX_FILES) : [];
-          if ((msg.text && String(msg.text).trim()) || files.length) await chat.send(String(msg.text || ''), files);
+          if ((msg.text && String(msg.text).trim()) || files.length) {
+            setDraft(chat, '', { ws, key });
+            await chat.send(String(msg.text || ''), files);
+          }
           break;
         }
+        case 'draft': setDraft(chat, msg.text, { ws, key }); break;
         case 'interrupt': await chat.interrupt(); break;
         case 'perm': chat.answer(msg.id, msg); break;
         case 'mode': await chat.setMode(String(msg.mode)); break;

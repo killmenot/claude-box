@@ -930,6 +930,7 @@ function buildChat(p){
   p.ta.addEventListener('input', grow);
   p.cmdEl=c.querySelector('.cmdpop'); p.cmdHint=c.querySelector('.cmdhint');
   p.ta.addEventListener('input', function(){ cmdUpdate(p); });
+  p.ta.addEventListener('input', function(){ if(!p.draftRemote) draftLater(p); });
   p.ta.addEventListener('blur', function(){ setTimeout(function(){ cmdClose(p); }, 120); });
   p.cmdEl.addEventListener('mousedown', function(e){ var it=e.target.closest('.ci'); if(!it) return;
     e.preventDefault(); cmdAccept(p, +it.dataset.i); });
@@ -1038,12 +1039,44 @@ function cmdKey(p, e){
   if(e.key==='Escape'){ e.preventDefault(); cmdClose(p); return true; }
   return false;
 }
+// ---------- unsent drafts ----------
+// The composer text is kept in this browser right away and on the server (per session, shared
+// with other devices) a moment after typing stops; the newest copy wins when a chat opens.
+function draftKey(p){ return 'cb.draft.'+(p.token || 'new:'+(p.cwd||'')); }
+function draftLocal(p){ try{ return JSON.parse(ls(draftKey(p))||'null'); }catch(e){ return null; } }
+function draftStore(p, text, at){
+  try{ if(text) localStorage.setItem(draftKey(p), JSON.stringify({text:text, at:at})); else localStorage.removeItem(draftKey(p)); }catch(e){}
+}
+function draftLater(p){
+  var at=Date.now(); p.draftAt=at; draftStore(p, p.ta.value, at);
+  clearTimeout(p.draftT); p.draftT=setTimeout(function(){ draftPush(p); }, 600);
+}
+function draftPush(p){ clearTimeout(p.draftT); if(p.token && p.ready) wsSend({op:'draft', key:p.wire, text:p.ta.value}); }
+// Put text into the composer without echoing it back as a new draft.
+function draftShow(p, text){
+  p.draftRemote=true; p.ta.value=text; p.ta.dispatchEvent(new Event('input')); p.draftRemote=false;
+}
+// On open: the server copy (o.draft) or this browser's copy, whichever is newer.
+function draftRestore(p, srv){
+  if(p.ta.value || (p.queue&&p.queue.length)) return;
+  var loc=draftLocal(p), best=srv||null;
+  if(loc && (!best || (loc.at||0)>(best.at||0))) best=loc;
+  if(!best || !best.text) { if(loc && srv && (srv.at||0)>=(loc.at||0)) draftStore(p,'',0); return; }
+  draftShow(p, best.text); p.draftAt=best.at||0; draftStore(p, best.text, p.draftAt);
+  if(best===loc && p.token && (!srv || srv.text!==loc.text)) draftPush(p);   // typed offline: share it
+}
+function draftRemote(p, o){
+  if(document.activeElement===p.ta && p.ta.value && p.ta.value!==o.text) return;   // typing here wins
+  p.draftAt=o.at||Date.now(); draftStore(p, o.text, p.draftAt);
+  if(p.ta.value!==o.text && !(VOICE.active===p)) draftShow(p, o.text||'');
+}
 function send(p){
   cmdClose(p); if(p.cmdHint) p.cmdHint.classList.add('hidden');
   var t=p.ta.value, files=p.files||[];
   if(!t.trim() && !files.length) return;
   if(files.some(function(a){ return a.data===null; })){ note(p,'Still reading the attached files — try again in a moment.'); return; }
-  function clear(){ p.ta.value=''; p.ta.style.height='auto'; p.files=[]; renderAtts(p); }
+  function clear(){ p.ta.value=''; p.ta.style.height='auto'; p.files=[]; renderAtts(p);
+    clearTimeout(p.draftT); p.draftAt=Date.now(); draftStore(p,''); }
   if(!p.ready){ (p.queue=p.queue||[]).push({t:t, files:files}); clear(); return; }
   var wire=files.map(function(a){ return {name:a.name, type:a.type, data:a.data}; });
   if(!wsSend({op:'send', key:p.wire, text:t, files:wire})){ note(p,'Not connected to the server — retrying…',true); return; }
@@ -1099,7 +1132,9 @@ function rekey(p, tok){
   if(PANES[tok] && PANES[tok]!==p) dropPane(PANES[tok]);
   delete PANES[p.key]; if(ACTIVE===p.key) ACTIVE=tok;
   if(p.token) moveCat(p.token, tok);
+  var newKey=!p.token && p.ta && p.ta.value; if(newKey) draftStore(p,'');
   p.key=tok; p.token=tok; PANES[tok]=p;
+  if(newKey){ draftStore(p, p.ta.value, Date.now()); draftPush(p); }
   syncUrl(); renderList(true); renderTop();
 }
 // Console frames keep ?id= in sync with their session (index.html): follow /clear and new sessions.
@@ -1618,6 +1653,7 @@ function onEvent(p, o){
       renderAgBar(p);
       p.ready=true;
       (p.queue||[]).splice(0).forEach(function(q){ p.ta.value=q.t; p.files=q.files; send(p); });
+      draftRestore(p, o.draft);
       requestAnimationFrame(function(){ scrollEnd(p,true); checkOlder(p); });
       break;
     case 'msg':
@@ -1631,6 +1667,7 @@ function onEvent(p, o){
       scrollEnd(p);
       break;
     case 'older': olderIn(p,o); break;
+    case 'draft': draftRemote(p,o); break;
     case 'state': setState(p, o.state); if(o.state==='stopped'||o.state==='idle') finishLive(p); break;
     case 'info': p.info=o.info||{}; renderStatus(p); if(p.cmdEl && !p.cmdEl.classList.contains('hidden')) cmdUpdate(p); break;
     case 'token': rekey(p, o.token); break;
