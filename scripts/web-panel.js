@@ -38,21 +38,27 @@ let getSdk = async () => null;
 function init(o) { if (o && o.getSdk) getSdk = o.getSdk; }
 
 // ---------------------------------------------------------------- GitHub (direct)
-const GQL = `query {
+// team review requests count only in repos I work in: where I opened or reviewed a PR lately
+const ACTIVE_DAYS = 90;
+const gql = (since) => `query {
   viewer { login pullRequests(first: 40, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes {
     number title url isDraft updatedAt reviewDecision repository { nameWithOwner }
     comments { totalCount } reviews(last: 1) { nodes { author { login } submittedAt state } }
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } }
   direct: search(query: "is:pr is:open user-review-requested:@me archived:false -is:draft", type: ISSUE, first: 40) { ...prs }
-  team: search(query: "is:pr is:open review-requested:@me archived:false -is:draft", type: ISSUE, first: 50) { ...prs }
+  team: search(query: "is:pr is:open review-requested:@me archived:false -is:draft", type: ISSUE, first: 100) { ...prs }
+  authored: search(query: "is:pr author:@me updated:>=${since}", type: ISSUE, first: 100) { ...repos }
+  reviewed: search(query: "is:pr reviewed-by:@me updated:>=${since}", type: ISSUE, first: 100) { ...repos }
 }
+fragment repos on SearchResultItemConnection { nodes { ... on PullRequest { repository { nameWithOwner } } } }
 fragment prs on SearchResultItemConnection { nodes { ... on PullRequest {
   number title url isDraft updatedAt author { login } repository { nameWithOwner } } } }`;
 let gh = { at: 0, data: null, error: null, busy: null };
 function ghRun() {
   if (gh.busy) return gh.busy;
   gh.busy = new Promise((resolve) => {
-    execFile('gh', ['api', 'graphql', '-f', 'query=' + GQL], { maxBuffer: 8 << 20, timeout: 30000 }, (e, out, err) => {
+    const since = new Date(Date.now() - ACTIVE_DAYS * 86400000).toISOString().slice(0, 10);
+    execFile('gh', ['api', 'graphql', '-f', 'query=' + gql(since)], { maxBuffer: 8 << 20, timeout: 30000 }, (e, out, err) => {
       gh.busy = null; gh.at = Date.now();
       if (e) { gh.error = String(err || e.message).trim().slice(0, 300); resolve(); return; }
       try {
@@ -60,11 +66,17 @@ function ghRun() {
         const reviewState = reviewerState();
         const pr = (p) => ({ repo: p.repository.nameWithOwner, number: p.number, title: p.title, url: p.url,
           updated: p.updatedAt, author: p.author && p.author.login, bot: reviewState(p.repository.nameWithOwner, p.number) });
+        // a repo is mine with an open PR of mine, or at least 2 PRs I opened or reviewed lately
+        const hits = {};
+        for (const p of d.authored.nodes.concat(d.reviewed.nodes)) if (p && p.repository) hits[p.repository.nameWithOwner] = (hits[p.repository.nameWithOwner] || 0) + 1;
+        const active = new Set(Object.keys(hits).filter((r) => hits[r] >= 2)
+          .concat(d.viewer.pullRequests.nodes.map((p) => p.repository.nameWithOwner)));
         gh.data = {
-          login: me,
+          login: me, activeRepos: [...active].sort(),
           // review requested from me personally; "team" = only through a team I am in
           review: d.direct.nodes.filter((p) => p && p.number).map(pr),
-          team: d.team.nodes.filter((p) => p && p.number && !d.direct.nodes.some((x) => x && x.url === p.url)).map(pr),
+          team: d.team.nodes.filter((p) => p && p.number && active.has(p.repository.nameWithOwner)
+            && !d.direct.nodes.some((x) => x && x.url === p.url)).map(pr),
           mine: d.viewer.pullRequests.nodes.map((p) => {
             const roll = p.commits.nodes[0] && p.commits.nodes[0].commit.statusCheckRollup;
             const last = p.reviews.nodes[0];
@@ -142,6 +154,80 @@ function isReadTool(name) {
   return !WRITE_WORD.test(n.slice(n.lastIndexOf('__') + 2).replace(/^(?:slack_)?(?:list|search|get|read|fetch|query|lookup)/i, ''));
 }
 let agent = { running: null, lastRun: 0, lastView: 0, error: null };
+const SOURCES = ['calendar', 'jira', 'slack', 'gmail'];
+const KEEP_MS = 3 * 3600 * 1000; // how long a silent source may show its last good items
+function sourceOf(tool) {
+  const n = String(tool || '');
+  if (!n.startsWith('mcp__')) return null;
+  return /calendar/i.test(n) ? 'calendar' : /atlassian|jira/i.test(n) ? 'jira' : /slack/i.test(n) ? 'slack' : /gmail/i.test(n) ? 'gmail' : null;
+}
+// Polls the run's MCP servers until the ones the panel reads are no longer "pending" (max CONNECT_MS).
+// Returns a short "name status" summary for the log.
+const CONNECT_MS = 45000;
+async function waitConnectors(q) {
+  const t0 = Date.now(); let last = [];
+  while (Date.now() - t0 < CONNECT_MS) {
+    try { last = (await q.mcpServerStatus()).filter((x) => sourceOf('mcp__' + x.name + '__')); } catch (_) { return null; }
+    // the claude.ai connectors are added to the list some seconds after start: wait for them too
+    if (last.some((x) => /^claude\.ai /.test(x.name)) && !last.some((x) => x.status === 'pending')) break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  const list = last.map((x) => ({ name: x.name, status: x.status, error: x.error || undefined }));
+  return { list, text: list.map((x) => x.name.replace(/^claude\.ai /, '') + ' ' + x.status).join(', ') + ' (' + Math.round((Date.now() - t0) / 1000) + 's)' };
+}
+
+// ---------------------------------------------------------------- run log
+// Every agent run is recorded (what it waited for, each tool call and its answer, the result) in
+// RUNS_DIR, newest RUNS_KEEP kept, so the panel can show what its agent did. The current run is live.
+const RUNS_DIR = process.env.WEB_PANEL_RUNS || path.join(HOME, '.claude', 'web-panel-runs');
+const RUNS_KEEP = 20;
+function clip(t, n) { t = String(t == null ? '' : t); return t.length > n ? t.slice(0, n) + '\n… (' + t.length + ' chars)' : t; }
+function resultText(c) {
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) return c.map((x) => (x && x.type === 'text' ? x.text : x && x.type ? '[' + x.type + ']' : '')).join('\n');
+  try { return JSON.stringify(c); } catch (_) { return ''; }
+}
+function newRun(reason, t0) {
+  return { id: new Date(t0).toISOString().replace(/[:.]/g, '-'), reason, model: MODEL, started: new Date(t0).toISOString(),
+    status: 'running', events: [], connectors: null };
+}
+function runEvent(run, e) { if (run && run.events.length < 400) run.events.push(Object.assign({ t: Date.now() }, e)); }
+function finishRun(run, o) {
+  run.status = o.error ? 'failed' : 'ok'; run.error = o.error || null; run.cost = o.cost; run.answered = o.answered;
+  run.sources = o.sources || null; run.ended = new Date().toISOString(); run.took = Math.round((Date.parse(run.ended) - Date.parse(run.started)) / 1000);
+  run.output = o.output ? clip(JSON.stringify(o.output, null, 2), 20000) : null;
+  try {
+    fs.mkdirSync(RUNS_DIR, { recursive: true });
+    fs.writeFileSync(path.join(RUNS_DIR, run.id + '.json'), JSON.stringify(run));
+    const all = fs.readdirSync(RUNS_DIR).filter((f) => f.endsWith('.json')).sort();
+    for (const f of all.slice(0, Math.max(0, all.length - RUNS_KEEP))) fs.rmSync(path.join(RUNS_DIR, f), { force: true });
+  } catch (e) { log('run log', e.message); }
+  if (agent.current === run) agent.current = null;
+}
+function runSummary(r) {
+  const tools = r.events.filter((e) => e.kind === 'tool').length, last = [...r.events].reverse().find((e) => e.kind === 'tool');
+  return { id: r.id, reason: r.reason, started: r.started, ended: r.ended || null, took: r.took, status: r.status, error: r.error || null,
+    cost: r.cost, answered: r.answered || [], tools, step: r.status === 'running' && last ? last.name : null,
+    waiting: r.status === 'running' && !r.events.some((e) => e.kind === 'prompt') };
+}
+function readRun(id) {
+  if (agent.current && agent.current.id === id) return agent.current;
+  if (!/^[\w-]+$/.test(String(id || ''))) return null;
+  try { return JSON.parse(fs.readFileSync(path.join(RUNS_DIR, id + '.json'), 'utf8')); } catch (_) { return null; }
+}
+function runs() {
+  let list = [];
+  try { list = fs.readdirSync(RUNS_DIR).filter((f) => f.endsWith('.json')).sort().reverse().slice(0, RUNS_KEEP)
+    .map((f) => readRun(f.slice(0, -5))).filter(Boolean).map(runSummary); } catch (_) {}
+  if (agent.current) list.unshift(runSummary(agent.current));
+  return { runs: list, running: !!agent.current };
+}
+function run(id) { return readRun(id); }
+function panelEnv() {
+  const e = Object.assign({}, process.env, { CLAUDE_WEB_CHAT: '1' });
+  delete e.WEB_TERMINAL_PASSWORD; delete e.NGROK_AUTHTOKEN;
+  return e;
+}
 function readSnapshot() { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch (_) { return null; } }
 function agentRun(reason) {
   if (agent.running) return agent.running;
@@ -149,10 +235,20 @@ function agentRun(reason) {
     const sdk = await getSdk();
     if (!sdk) { agent.error = 'Agent SDK not loaded'; return; }
     const t0 = Date.now(); agent.lastRun = t0; let out = null, cost = null, err = null, sources = null;
+    const calls = {}, answered = {}; // tool_use id -> source; sources with a non-error tool result
+    const run = agent.current = newRun(reason, t0);
     try {
       if (!gh.data && !gh.busy) await ghRun(); else if (gh.busy) await gh.busy;
-      const q = sdk.query({ prompt: agentPrompt(gh.data), options: {
+      // The prompt waits until the claude.ai connectors are up: they connect in the background,
+      // and a run that starts before them has no calendar / Slack / Gmail tools at all.
+      let release; const gate = new Promise((r) => { release = r; });
+      const prompt = agentPrompt(gh.data);
+      async function* input() { await gate; yield { type: 'user', message: { role: 'user', content: prompt }, parent_tool_use_id: null }; }
+      const q = sdk.query({ prompt: input(), options: {
         cwd: HOME, model: MODEL, persistSession: false, maxTurns: 30, permissionMode: 'default',
+        // CLAUDE_WEB_CHAT keeps the tmux hook (notify.sh, loaded with the user's settings) out of this
+        // run: otherwise every run registers as a session of whatever tmux tab was active last.
+        env: panelEnv(),
         // Settings files stay on: without them the SDK does not load the claude.ai connectors
         // (calendar, Jira, Slack, Gmail), which are what this run is for. An "allow" rule in the
         // user's settings could let a tool skip canUseTool, so the same read-only check also runs
@@ -174,17 +270,38 @@ function agentRun(reason) {
         stderr: () => {},
       } });
       const timer = setTimeout(() => { try { q.close(); } catch (_) {} }, 5 * 60000);
+      runEvent(run, { kind: 'wait', text: 'waiting for the connectors…' });
+      waitConnectors(q).then((st) => {
+        if (!st) return;
+        log('connectors', st.text); run.connectors = st.list; runEvent(run, { kind: 'wait', text: 'connectors: ' + st.text });
+        // the connectors that came up are what this account has (init often lists them before they exist)
+        const up = st.list.filter((x) => x.status === 'connected').map((x) => 'mcp__' + x.name + '__');
+        if (up.length) { sources = sources || {}; for (const k of SOURCES) sources[k] = sources[k] || up.some((n) => sourceOf(n) === k); }
+      }).finally(() => { runEvent(run, { kind: 'prompt', text: prompt }); release(); });
       try {
-        for await (const m of q) if (m.type === 'system' && m.subtype === 'init') {
+        for await (const m of q) if (m.type === 'assistant' || m.type === 'user') {
+          // remember which sources really answered: a run where a connector was not ready yet
+          // comes back "ok" with that block empty, which must not wipe the last good data
+          for (const c of (m.message && Array.isArray(m.message.content) && m.message.content) || []) {
+            if (c.type === 'tool_use' && sourceOf(c.name)) calls[c.id] = sourceOf(c.name);
+            else if (c.type === 'tool_result' && calls[c.tool_use_id] && !c.is_error) answered[calls[c.tool_use_id]] = true;
+            if (c.type === 'tool_use') runEvent(run, { kind: 'tool', id: c.id, name: c.name, input: clip(JSON.stringify(c.input || {}), 4000) });
+            else if (c.type === 'tool_result') runEvent(run, { kind: 'result', id: c.tool_use_id, error: !!c.is_error, text: clip(resultText(c.content), 6000) });
+            else if (c.type === 'text' && m.type === 'assistant' && c.text && c.text.trim()) runEvent(run, { kind: 'text', text: clip(c.text, 4000) });
+          }
+        } else if (m.type === 'system' && m.subtype === 'init') {
           // which connectors this account has: a block is shown only when its connector exists.
           // claude.ai connectors are often still "pending" at init (their tools not listed yet),
           // so a server counts unless it failed or needs a login; its tools count too.
           const names = (m.tools || []).filter((n) => n.startsWith('mcp__'))
             .concat((m.mcp_servers || []).filter((s) => !/fail|auth|disabled/i.test(String(s.status || ''))).map((s) => String(s.name || '')));
-          sources = { calendar: names.some((n) => /calendar/i.test(n)), jira: names.some((n) => /atlassian|jira/i.test(n)),
+          const seen = { calendar: names.some((n) => /calendar/i.test(n)), jira: names.some((n) => /atlassian|jira/i.test(n)),
             slack: names.some((n) => /slack/i.test(n)), gmail: names.some((n) => /gmail/i.test(n)) };
+          sources = sources || {}; for (const k of SOURCES) sources[k] = sources[k] || seen[k];
         } else if (m.type === 'result') {
           cost = m.total_cost_usd;
+          // the run is over: do not wait on the CLI to exit by itself
+          setTimeout(() => { try { q.close(); } catch (_) {} }, 3000);
           if (m.structured_output) out = m.structured_output;
           else if (m.subtype !== 'success') err = m.subtype;
           else { try { out = JSON.parse(String(m.result).replace(/^[^{]*/, '').replace(/[^}]*$/, '')); } catch (_) { err = 'no structured output: ' + String(m.result || '').replace(/\s+/g, ' ').slice(0, 160); } }
@@ -200,11 +317,22 @@ function agentRun(reason) {
         snap.jira = snap.jira.filter((i) => !backlog.has(i.key));
         if (backlog.size && Array.isArray(snap.needs)) snap.needs = snap.needs.filter((i) => !(i.source === 'jira' && backlog.has(i.ref)));
       }
+      // a source whose tools never answered this run keeps the previous run's items for a while
+      const prev = readSnapshot();
+      for (const k of SOURCES) {
+        if (answered[k] || (snap[k] || []).length || !prev || !(prev[k] || []).length) continue;
+        const since = (prev.kept && prev.kept[k]) || prev.at;
+        if (Date.now() - Date.parse(since) > KEEP_MS) continue;
+        snap[k] = prev[k]; (snap.kept = snap.kept || {})[k] = since;
+        if (prev.sources && prev.sources[k] && snap.sources) snap.sources[k] = true;
+        log('agent run kept previous', k, 'items: no answer from its tools');
+      }
       // a block that came back with items is connected, whatever init said
-      if (snap.sources) for (const k of ['calendar', 'jira', 'slack', 'gmail']) if ((snap[k] || []).length) snap.sources[k] = true;
+      if (snap.sources) for (const k of SOURCES) if ((snap[k] || []).length) snap.sources[k] = true;
       try { fs.writeFileSync(FILE + '.tmp', JSON.stringify(snap)); fs.renameSync(FILE + '.tmp', FILE); } catch (e) { err = e.message; }
     }
-    agent.error = err; log('agent run', reason, err ? 'failed: ' + err : 'ok', Math.round((Date.now() - t0) / 1000) + 's', cost != null ? '$' + cost.toFixed(4) : '');
+    finishRun(run, { error: err, cost, answered: Object.keys(answered), output: out, sources });
+    agent.error = err; log('agent run', reason, err ? 'failed: ' + err : 'ok', 'answered: ' + (Object.keys(answered).join(',') || 'none'), Math.round((Date.now() - t0) / 1000) + 's', cost != null ? '$' + cost.toFixed(4) : '');
   })().finally(() => { agent.running = null; });
   return agent.running;
 }
@@ -238,7 +366,7 @@ async function get() {
   const ev = everyMin(), due = !snap || (ev > 0 && Date.now() - Date.parse(snap.at) > ev * 60000);
   if (ENABLED && due && !agent.running && Date.now() - agent.lastRun > 60000) agentRun(snap ? 'stale' : 'first');
   return { enabled: ENABLED, github: gh.data, githubError: gh.error, githubAt: gh.at ? new Date(gh.at).toISOString() : null,
-    agent: snap, agentRunning: !!agent.running, agentError: agent.error, every: everyMin(), hidden: readHidden() };
+    agent: snap, agentRunning: !!agent.running, agentError: agent.error, agentNow: agent.current ? runSummary(agent.current) : null, every: everyMin(), hidden: readHidden() };
 }
 async function refresh(what) {
   agent.lastView = Date.now();
@@ -267,4 +395,4 @@ function inMeeting(now = Date.now()) {
   return null;
 }
 
-module.exports = { init, get, refresh, hide, unhideAll, setEvery, inMeeting, READ_TOOL, isReadTool };
+module.exports = { init, get, refresh, hide, unhideAll, setEvery, inMeeting, runs, run, READ_TOOL, isReadTool };

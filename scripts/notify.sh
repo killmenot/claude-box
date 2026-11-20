@@ -19,6 +19,9 @@ state="${1:-done}"
 # The hook inherits $TMUX_PANE from Claude. Without -t "$TMUX_PANE", tmux takes the "current"
 # session of the active client (the last active tab) → the signal would go to the wrong tab.
 pane="${TMUX_PANE:-}"
+# Not inside tmux at all (no pane, no $TMUX): a background run such as an SDK job. There is no
+# tab to signal and no session to register; asking tmux would answer with the active tab.
+[ -z "$pane" ] && [ -z "${TMUX:-}" ] && exit 0
 if [ -n "$pane" ]; then
   sess="$(tmux display-message -p -t "$pane" '#S' 2>/dev/null || true)"
   win="$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null || true)"
