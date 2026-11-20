@@ -203,6 +203,24 @@ function serveFile(res, rel, download) {
   fs.createReadStream(p).on('error', () => res.destroy()).pipe(res);
 }
 
+// GET an image by absolute path, for pictures Claude shows in chat (screenshots in /tmp, files
+// in the session folder, …). Raster images only: an SVG could run script on this origin.
+const IMG_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+const IMG_MAX = 30 * 1048576;
+function serveImage(res, p) {
+  p = String(p || '');
+  if (!path.isAbsolute(p) || p.includes('\0')) throw new Error('need an absolute path');
+  const real = fs.realpathSync(path.resolve(p)), type = IMG_TYPES[path.extname(real).toLowerCase()];
+  if (!type || !IMG_TYPES[path.extname(p).toLowerCase()]) throw new Error('not an image');
+  const st = fs.statSync(real);
+  if (!st.isFile()) throw new Error('not a file');
+  if (st.size > IMG_MAX) throw new Error('image too large');
+  res.writeHead(200, { 'content-type': type, 'content-length': st.size, 'x-content-type-options': 'nosniff',
+    'cache-control': 'private, max-age=60', 'content-security-policy': "default-src 'none'",
+    'content-disposition': "inline; filename*=UTF-8''" + encodeURIComponent(path.basename(real)) });
+  fs.createReadStream(real).on('error', () => res.destroy()).pipe(res);
+}
+
 // ---------- the text editor: read a text file, save it back (whole file, atomic) ----------
 const EDIT_MAX = 2 * 1048576;
 function readText(rel) {
@@ -267,4 +285,4 @@ function clone(url, name, dir) {
   return { id, name: dirName, path: target };
 }
 
-module.exports = { ROOT, list, ls, mkdir, rename, copy, move, trash, upload, serveFile, clone, readText, saveText };
+module.exports = { ROOT, list, ls, mkdir, rename, copy, move, trash, upload, serveFile, serveImage, clone, readText, saveText };

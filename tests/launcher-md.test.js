@@ -16,10 +16,11 @@ function lift(name, until) {
   const end = html.indexOf(until, start + 1);
   return html.slice(start, end);
 }
-const ctx = {};
+const ctx = { PANES: { a: { cwd: '/workspace/proj' } }, ACTIVE: 'a' };
 vm.createContext(ctx);
 vm.runInContext([
   html.slice(html.indexOf('function esc('), html.indexOf('\n', html.indexOf('function esc('))),
+  html.slice(html.indexOf('var IMG_EXT='), html.indexOf('function mdInline(')),
   lift('mdInline', '\nfunction md('),
   lift('md', '\n// ====='),
 ].join('\n'), ctx);
@@ -27,24 +28,29 @@ const { mdInline, md } = ctx;
 
 // every tag in the output must be one the renderer is allowed to emit, with no extra attributes
 const TAG = /<\/?([a-z0-9]+)([^>]*)>/gi;
-const ALLOWED = new Set(['a', 'code', 'strong', 'em', 'pre', 'h1', 'h2', 'h3', 'h4', 'hr', 'table', 'tr', 'th', 'td',
+const ALLOWED = new Set(['a', 'img', 'code', 'strong', 'em', 'pre', 'h1', 'h2', 'h3', 'h4', 'hr', 'table', 'tr', 'th', 'td',
   'blockquote', 'ul', 'ol', 'li', 'p', 'br']);
 function assertSafe(out, input) {
   // quoted attribute values are dropped first, so a '>' inside an href can't hide a tag
   const bare = out.replace(/"[^"]*"/g, '""');
-  assert.ok(!/<(?:script|img|svg|iframe|style)\b/i.test(bare), 'dangerous tag for ' + input + ':\n' + out);
+  assert.ok(!/<(?:script|svg|iframe|style)\b/i.test(bare), 'dangerous tag for ' + input + ':\n' + out);
   let m;
   while ((m = TAG.exec(bare))) {
     assert.ok(ALLOWED.has(m[1].toLowerCase()), 'unexpected <' + m[1] + '> for ' + input + ':\n' + out);
     const attrs = m[2].trim();
     if (m[1].toLowerCase() === 'a' && !m[0].startsWith('</')) {
-      assert.strictEqual(attrs, 'href="" target="" rel=""', 'extra attributes on <a> for ' + input + ':\n' + out);
+      // links; image links (class="mdimg") and image-path code links also carry a title
+      assert.ok(['href="" target="" rel=""', 'href="" target="" rel="" title=""', 'class="" href="" target="" rel="" title=""'].includes(attrs),
+        'extra attributes on <a> for ' + input + ':\n' + out);
+    } else if (m[1].toLowerCase() === 'img') {
+      assert.strictEqual(attrs, 'src="" alt="" loading=""', 'attributes on <img> for ' + input + ':\n' + out);
     } else {
       assert.ok(attrs === '' || attrs === '/', 'attributes on <' + m[1] + '> for ' + input + ':\n' + out);
     }
   }
   // the href value itself: always http(s), never broken out of
-  for (const h of out.matchAll(/<a href="([^"]*)"/g)) assert.match(h[1], /^https?:\/\//);
+  for (const h of out.matchAll(/<a (?:class="mdimg" )?href="([^"]*)"/g)) assert.match(h[1], /^(https?:\/\/|workspace\/image\?p=|data:image\/)/);
+  for (const h of out.matchAll(/<img src="([^"]*)"/g)) assert.match(h[1], /^(https?:\/\/|workspace\/image\?p=|data:image\/)/);
 }
 
 const PAYLOADS = [
@@ -62,7 +68,20 @@ const PAYLOADS = [
   '`code` [l](https://a.example/`x`) https://b.example/\u0000 \u00000\u0000',
   '[`code`](https://a.example/)',
   '*https://a.example/*onmouseover=alert(1)*',
+  '![x](javascript:alert(1))',
+  '![x" onerror="alert(1)](/tmp/a.png)',
+  '![x](/tmp/a.png" onerror="alert(1))',
+  '![x](data:text/html,<script>alert(1)</script>)',
+  '`/tmp/a"onerror=alert(1).png`',
 ];
+
+test('pictures: markdown images and image paths in code', () => {
+  assert.match(mdInline('![s](/tmp/x.png)'), /<img src="workspace\/image\?p=%2Ftmp%2Fx\.png"/);
+  assert.match(mdInline('![s](shots/a.jpg)'), /p=%2Fworkspace%2Fproj%2Fshots%2Fa\.jpg/);
+  assert.match(mdInline('![s](https://e.example/a.png)'), /<img src="https:\/\/e\.example\/a\.png"/);
+  assert.match(mdInline('saved `/tmp/s.png`'), /<a href="workspace\/image\?p=%2Ftmp%2Fs\.png"[^>]*><code>/);
+  assert.doesNotMatch(mdInline('`/tmp/notes.txt`'), /<a /);
+});
 
 test('XSS payloads render as inert text', () => {
   for (const p of PAYLOADS) {

@@ -9,7 +9,8 @@
 //   /search      -> search through session history (web-search.js)
 //   /chat/ws     -> web chat over the Claude Agent SDK (web-chat.js), /chat/info, /dirs
 //   /categories  -> GET/POST the sidebar categories (~/.claude/web-categories.json)
-//   /workspace   -> file manager: GET ls|file|text, POST /workspace/{mkdir,rename,copy,move,trash,clone,upload,save} (web-workspace.js)
+//   /workspace   -> file manager: GET ls|file|text|image (image: any absolute path, raster only), POST /workspace/{mkdir,rename,copy,move,trash,clone,upload,save} (web-workspace.js)
+//   /inbox       -> the coordinator's cards: GET list, POST /inbox/act {token, op: send|seen|later|allow|deny} (web-inbox.js)
 //   /tasks       -> task workspaces: GET list, POST /tasks/{open,archive,reopen,refresh,forget,add-repos,repo-add}
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
@@ -68,6 +69,14 @@ catch (e) { console.error('tasks disabled:', e.message); }
 let panel = null;     // the right-hand "Today" panel (GitHub + an MCP snapshot collected by a cheap agent)
 try { panel = require(process.env.WEB_PANEL_MODULE || './web-panel.js'); if (chat && chat.getSdk) panel.init({ getSdk: chat.getSdk }); }
 catch (e) { console.error('panel disabled:', e.message); }
+let inbox = null;     // the Inbox coordinator: one card per session that needs a look (web-inbox.js)
+try {
+  inbox = require(process.env.WEB_INBOX_MODULE || './web-inbox.js');
+  if (chat && chat.getSdk) {
+    inbox.init({ getSdk: chat.getSdk, listSessions: () => chat.decorate(registry.list()), pendingPerms: chat.pendingPerms,
+      answerPerm: chat.answerPerm, sendTo: chat.sendTo, transcriptPath: chat.transcriptPath });
+  }
+} catch (e) { console.error('inbox disabled:', e.message); }
 // small JSON request bodies only
 function readJson(req, limit, cb) {
   let body = '', big = false;
@@ -189,6 +198,7 @@ const handler = (req, res) => {
         if (req.method !== 'POST') {
           if (op === 'ls') { json(res, 200, workspace.ls(qs.get('p') || '', qs.get('hidden') === '1')); return; }
           if (op === 'file') { workspace.serveFile(res, qs.get('p') || '', qs.get('dl') === '1'); return; }
+          if (op === 'image') { workspace.serveImage(res, qs.get('p') || ''); return; }
           if (op === 'text') { json(res, 200, workspace.readText(qs.get('p') || '')); return; }
           json(res, 200, workspace.list()); return;
         }
@@ -262,6 +272,17 @@ const handler = (req, res) => {
           }
           return r;
         }));
+      });
+      return;
+    }
+    if (path === '/inbox' || path === '/inbox/act' || path === '/inbox/refresh') {
+      if (!inbox) { json(res, 503, { enabled: false, error: 'inbox module not loaded' }); return; }
+      if (path === '/inbox') { json(res, 200, inbox.get()); return; }
+      if (req.method !== 'POST') { json(res, 405, { ok: false }); return; }
+      if (path === '/inbox/refresh') { inbox.tick(); json(res, 200, { ok: true }); return; }
+      readJson(req, 64 << 10, (o) => {
+        Promise.resolve().then(() => inbox.act(o || {}))
+          .then((r) => json(res, 200, Object.assign({ ok: true }, r)), (e) => json(res, 400, { ok: false, error: String(e.message || e) }));
       });
       return;
     }
