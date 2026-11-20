@@ -157,8 +157,6 @@
   .side-foot{padding:9px 18px 10px;border-top:1px solid var(--line);color:var(--slate);font-family:var(--mono);font-size:11.5px;line-height:1.6}
   .side-foot .ln{display:flex;align-items:center;gap:8px;min-width:0}
   .side-foot #hostm{display:block;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .side-foot .pmrow{display:flex;align-items:center;gap:6px;color:var(--mute)}
-  .side-foot .pmrow select{font:inherit;color:var(--body);background:transparent;border:1px solid var(--line);border-radius:6px;padding:1px 4px}
   .side-foot .hot{color:var(--err);font-weight:600}
   .voicebtn{margin-left:auto;border:1px solid var(--line);background:none;color:var(--mute);font:inherit;font-size:11px;
             border-radius:6px;padding:0 7px;cursor:pointer;white-space:nowrap}
@@ -355,6 +353,19 @@
   .agdot.run{background:var(--work);animation:pulse 1s infinite} .agdot.err{background:var(--err)}
   .agit .b{min-width:0;flex:1} .agit .nm{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .agit .d{color:var(--mute);font:11.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .setbtn{border:0;background:none;color:var(--mute);font-size:15px;line-height:1;cursor:pointer;padding:2px 4px}
+  .setbtn:hover{color:var(--ink)}
+  #setd{position:fixed;inset:0;z-index:60;background:rgba(14,17,22,.38);display:none;align-items:flex-start;justify-content:center;padding:10vh 16px 16px}
+  #setd.on{display:flex}
+  #setd .tbox{width:min(460px,100%);max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28)}
+  #setd .thead{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);font-size:15px}
+  #setd .tbody{padding:6px 16px 16px}
+  #setd h4{margin:14px 0 4px;font-size:13px}
+  #setd .sub{color:var(--mute);font-size:12px;margin-bottom:6px}
+  #setd label.opt{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border-radius:8px;cursor:pointer;font-size:13.5px}
+  #setd label.opt:hover{background:var(--hover)}
+  #setd label.opt input{margin-top:3px}
+  #setd label.opt small{display:block;color:var(--mute);font-size:12px}
   #agv{position:fixed;inset:0;z-index:60;background:rgba(14,17,22,.38);display:none;align-items:flex-start;justify-content:center;padding:6vh 16px 16px}
   #agv.on{display:flex}
   #agv .abox{width:min(900px,100%);max-height:86vh;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28);display:flex;flex-direction:column;overflow:hidden}
@@ -384,8 +395,6 @@
   .skilldoc[open]>summary:before{content:"▾ "}
   .skilldoc>summary:hover{color:var(--ink);opacity:1}
   .skilldoc>.body{color:var(--ink);font-size:13px;border-left:2px solid var(--line);padding-left:10px;margin:6px 0 0 3px;max-height:60vh;overflow:auto}
-  .toolsbtn{border:0;background:transparent;color:var(--mute);font:600 11px var(--mono);cursor:pointer;padding:4px 2px;white-space:nowrap}
-  .toolsbtn:hover{color:var(--ink)}
   .attbtn{border:0;background:transparent;color:var(--mute);cursor:pointer;padding:4px;display:flex;border-radius:8px}
   .attbtn:hover{color:var(--ink);background:var(--hover)} .attbtn svg{width:17px;height:17px}
   .atts{display:flex;flex-wrap:wrap;gap:6px}
@@ -608,12 +617,16 @@
   </div></div>
   <div class="side-foot"><div class="ln"><span class="livedot"></span><span id="scount">…</span>
     <button id="voicebtn" class="voicebtn" type="button" title="Voice alerts: this tab reads out what sessions send (Monitoring/notify.sh)">🔇 voice</button>
-    <button id="snoozebtn" class="voicebtn hidden" type="button" title="Quiet for an hour (for a call that is not in the calendar); click again to speak">🔕 1h</button></div>
-    <label class="pmrow" title="Permission mode for all chats">perms <select id="pmode"></select></label>
+    <button id="snoozebtn" class="voicebtn hidden" type="button" title="Quiet for an hour (for a call that is not in the calendar); click again to speak">🔕 1h</button>
+    <button id="setbtn" class="setbtn" type="button" title="Settings" aria-label="Settings">⚙</button></div>
     <span id="hostm" title="Host: load average · CPU · RAM used/total · free space in /workspace"></span></div>
 </aside>
 <div id="scrim"></div>
 <div id="menu"></div>
+  <div id="setd" role="dialog" aria-label="Settings"><div class="tbox">
+    <div class="thead"><b>Settings</b><button class="btn ghost" type="button" id="setclose">Close</button></div>
+    <div class="tbody" id="setbody"></div>
+  </div></div>
 
 <main id="main">
   <div id="topbar">
@@ -873,15 +886,12 @@ function makePane(key, opts){
 }
 // Permission mode is one setting for every chat (sidebar footer), not a control per chat.
 var PMODES={'default':'Ask before edits', acceptEdits:'Accept edits', plan:'Plan mode', auto:'Auto'};
-var PMODE=ls('cb-perm-mode'); if(!PMODES[PMODE]) PMODE='default';
+var PMODE=ls('cb.perm'); if(!PMODES[PMODE]) PMODE='auto';
 function applyMode(p){ if(p && p.wire && p.info && p.info.permissionMode!==PMODE) wsSend({op:'mode', key:p.wire, mode:PMODE}); }
 function setPMode(v){
-  if(!PMODES[v]) return; PMODE=v; ls('cb-perm-mode', v);
+  if(!PMODES[v]) return; PMODE=v; ls('cb.perm', v);
   Object.keys(PANES).forEach(function(k){ var p=PANES[k]; if(p.ready) applyMode(p); });
 }
-(function(){ var sel=$('pmode'); if(!sel) return;
-  sel.innerHTML=Object.keys(PMODES).map(function(k){ return '<option value="'+k+'">'+PMODES[k]+'</option>'; }).join('');
-  sel.value=PMODE; sel.addEventListener('change', function(){ setPMode(sel.value); }); })();
 function buildChat(p){
   if(p.el) return;
   var c=el('div','chat');
@@ -892,7 +902,6 @@ function buildChat(p){
     '<div class="atts"></div><textarea rows="1" placeholder="Message Claude…  ( / for commands )"></textarea>'+
     '<div class="bar"><button class="attbtn" type="button" title="Attach files — or paste / drop them here"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button>'+
     '<input type="file" multiple hidden>'+
-    '<button class="toolsbtn" type="button" title="How tool calls show in the chat: compact / all / hidden"></button>'+
     '<span class="stat"><i></i><span></span></span>'+
     (VOICE.supported ? '<button class="langbtn" type="button" title="Voice input language"></button>'+
       '<button class="micbtn" type="button" title="Voice input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>' : '')+
@@ -937,7 +946,6 @@ function buildChat(p){
     p.langb.textContent=VOICE.label(); p.langb.addEventListener('click', function(){ VOICE.cycleLang(); });
   }
   p.stopb.addEventListener('click', function(){ wsSend({op:'interrupt', key:p.wire}); });
-  var tb=c.querySelector('.toolsbtn'); tb.textContent=TOOLLBL[toolMode]; tb.addEventListener('click', cycleToolMode);
   if(!p.token) p.ta.placeholder='Message Claude in '+base(p.cwd)+'…';
   renderStatus(p);
 }
@@ -1251,14 +1259,37 @@ function addTool(p, b){
   if(b.name==='TodoWrite') d.open=true;
   var g=toolGroup(p); g.lastChild.appendChild(d); p.r.tools[b.id]=d; updGroup(g);
 }
-var TOOLMODES=['compact','all','hidden'], TOOLLBL={compact:'Tools: compact', all:'Tools: all', hidden:'Tools: hidden'};
+var TOOLMODES=['compact','all','hidden'], TOOLLBL={compact:'Compact', all:'All', hidden:'Hidden'};
 var toolMode=ls('cb.tools'); if(TOOLMODES.indexOf(toolMode)<0) toolMode='compact';
 function applyToolMode(){
   TOOLMODES.forEach(function(m){ document.body.classList.toggle('tools-'+m, m===toolMode); });
-  [].forEach.call(document.querySelectorAll('.toolsbtn'), function(b){ b.textContent=TOOLLBL[toolMode]; });
 }
-function cycleToolMode(){ toolMode=TOOLMODES[(TOOLMODES.indexOf(toolMode)+1)%TOOLMODES.length]; ls('cb.tools',toolMode); applyToolMode(); }
+function setToolMode(m){ if(TOOLMODES.indexOf(m)<0) return; toolMode=m; ls('cb.tools',m); applyToolMode(); }
 applyToolMode();
+
+// ---------- settings dialog (sidebar ⚙) ----------
+var PMODEHINT={'default':'Asks before every edit or command', acceptEdits:'Edits files without asking, asks for commands',
+  plan:'Only plans, changes nothing', auto:'Works without asking, a safety check blocks risky actions'};
+var TOOLHINT={compact:'Tool calls folded into one line per step', all:'Every tool call shown', hidden:'No tool calls, only messages'};
+function setGroup(name, title, sub, opts, hints, cur){
+  return '<h4>'+title+'</h4><div class="sub">'+sub+'</div>'+Object.keys(opts).map(function(k){
+    return '<label class="opt"><input type="radio" name="'+name+'" value="'+k+'"'+(k===cur?' checked':'')+'><span>'+esc(opts[k])+
+      '<small>'+esc(hints[k]||'')+'</small></span></label>'; }).join('');
+}
+function openSettings(){
+  var tl={}; TOOLMODES.forEach(function(m){ tl[m]=TOOLLBL[m]; });
+  $('setbody').innerHTML=setGroup('pmode','Permissions','For every chat; open chats switch right away.', PMODES, PMODEHINT, PMODE)+
+    setGroup('tools','Tool calls in chat','How tool calls show in the conversation.', tl, TOOLHINT, toolMode);
+  $('setd').classList.add('on');
+}
+function closeSettings(){ $('setd').classList.remove('on'); }
+$('setbtn').addEventListener('click', openSettings);
+$('setclose').addEventListener('click', closeSettings);
+$('setd').addEventListener('click', function(e){ if(e.target===this) closeSettings(); });
+$('setbody').addEventListener('change', function(e){
+  var t=e.target; if(t.name==='pmode') setPMode(t.value); else if(t.name==='tools') setToolMode(t.value);
+});
+document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('setd').classList.contains('on')){ e.stopPropagation(); closeSettings(); } }, true);
 function resultText(c){
   if(typeof c==='string') return c;
   if(Array.isArray(c)) return c.map(function(x){ return x.type==='text'?x.text:(x.type==='image'?'[image]':''); }).join('\n');
