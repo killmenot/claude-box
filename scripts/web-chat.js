@@ -724,4 +724,41 @@ async function apiStatus(token) {
 
 async function getSdk() { await sdkReady; return sdk; }
 
-module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk };
+// ---------- for the Inbox coordinator (web-inbox.js) ----------
+function chatByToken(rec, token) {
+  let c = rec && BY_CID.get(rec.claudeSessionId);
+  if (!c) for (const x of CHATS) if (x.token === token) c = x;
+  return c || null;
+}
+// Permission / question requests a chat session is waiting on.
+async function pendingPerms(token) {
+  const c = chatByToken(await registry.get(token), token);
+  return c ? [...c.perms].map(([id, p]) => ({ id, tool: p.tool, input: p.input })) : [];
+}
+async function answerPerm(token, id, allow) {
+  const c = chatByToken(await registry.get(token), token);
+  if (!c || !c.perms.has(id)) throw new Error('that request is no longer pending');
+  c.answer(id, { allow: !!allow });
+}
+// Send a user message: into the console when the session is open there, else as chat (resumes it).
+async function sendTo(token, text) {
+  text = String(text || '').trim();
+  if (!text) throw new Error('empty message');
+  const rec = await registry.get(token);
+  if (!rec || !rec.claudeSessionId) throw new Error('unknown session');
+  let c = chatByToken(rec, token);
+  const name = rec.tmuxSession || rec.name || ('chat-' + token);
+  if (!(c && c.q) && await tmuxAlive(name)) {
+    if (await sh('tmux', ['send-keys', '-t', '=' + name + ':', '-l', text.replace(/\s*\n\s*/g, ' ')]) === null ||
+        await sh('tmux', ['send-keys', '-t', '=' + name + ':', 'Enter']) === null) throw new Error('could not type into the console');
+    return { via: 'console' };
+  }
+  await sdkReady;
+  if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
+  if (!c) c = new Chat({ cid: rec.claudeSessionId, cwd: rec.cwd, name, token });
+  await c.send(text);
+  return { via: 'chat' };
+}
+
+module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+  pendingPerms, answerPerm, sendTo, transcriptPath };

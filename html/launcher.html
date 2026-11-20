@@ -44,6 +44,46 @@
   .navbtn:hover{background:var(--hover)}
   .navbtn .ico{width:18px;text-align:center;color:var(--slate);font-size:16px}
   .searchbox{margin:2px 8px 6px;position:relative}
+  .navbtn.on{background:var(--sel);font-weight:600}
+  .ibadge{margin-left:auto;background:var(--iris);color:#fff;border-radius:999px;padding:0 7px;font:600 11.5px var(--sans);line-height:18px}
+  .row .nm small.ib{display:block;font-size:11.5px;color:var(--mute);overflow:hidden;text-overflow:ellipsis}
+  .row.wait .nm small.ib,.row .nm small.ib.needs{color:#9a6a00}
+  .row .nm small.ib.problem{color:var(--err)}
+  #inboxv{position:absolute;inset:0;z-index:4;overflow:auto;background:var(--paper);display:none}
+  #inboxv.on{display:block}
+  #inboxv .iin{max-width:860px;margin:0 auto;padding:16px 24px 40px;display:flex;flex-direction:column;gap:10px}
+  #inboxv .itop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--mute);font-size:12.5px}
+  #inboxv .itop .sp{flex:1}
+  #inboxv .ilnk{border:0;background:none;color:var(--slate);font:600 12.5px var(--sans);cursor:pointer;padding:4px 6px;border-radius:6px}
+  #inboxv .ilnk:hover{background:var(--hover);color:var(--ink)}
+  #inboxv .chips{display:flex;gap:6px;flex-wrap:wrap}
+  #inboxv .chip{font:600 12px var(--sans);border-radius:999px;padding:5px 11px;border:1px solid var(--line);background:var(--panel);color:var(--slate);cursor:pointer}
+  #inboxv .chip.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  #inboxv .isec{font:600 11px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:8px 2px 0}
+  .icard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px;display:flex;gap:11px}
+  .icard.k-needs{border-color:#e9c46a} .icard.k-problem{border-color:#f0c2ad}
+  .icard .dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px;margin-top:6px;background:var(--live)}
+  .icard.k-needs .dot{background:var(--wait)} .icard.k-problem .dot{background:var(--err)}
+  .icard .bd{flex:1;min-width:0}
+  .icard .ih{display:flex;align-items:baseline;gap:8px}
+  .icard .ih b{flex:1;min-width:0;font:600 13px var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  .icard .ih span{font-size:12px;color:var(--mute);white-space:nowrap}
+  .icard p{margin:4px 0 0;font-size:14px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+  .icard .ask{margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--codebg);font-size:13.5px;white-space:pre-wrap;word-break:break-word}
+  .icard .ask.mono{font:12.5px var(--mono)}
+  .icard .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+  .icard .acts .btn{padding:6px 12px;font-size:13px}
+  .icard .acts .sp{flex:1}
+  .icard .acts .lnk{border:0;background:none;color:var(--slate);font:600 12.5px var(--sans);cursor:pointer;padding:6px 4px}
+  .icard .acts .lnk:hover{color:var(--ink)}
+  .icard .will{margin-top:6px;font-size:12px;color:var(--mute)}
+  .icard textarea{width:100%;box-sizing:border-box;margin-top:10px;min-height:64px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:14px var(--sans);resize:vertical;background:var(--panel);color:var(--body)}
+  .icard .err{margin-top:6px;color:var(--err);font-size:12.5px}
+  #inboxv .iempty{padding:40px 10px;text-align:center;color:var(--mute)}
+  #inboxv details.ilog{margin-top:14px;font-size:12.5px;color:var(--slate)}
+  #inboxv details.ilog summary{cursor:pointer;color:var(--mute)}
+  #inboxv details.ilog div{font:12px var(--mono);padding:3px 0;border-bottom:1px solid var(--line)}
+  @media (max-width:760px){ #inboxv .iin{padding:12px 12px 32px} .icard .acts .btn{min-height:40px} }
   .searchbox input[type=text]{width:100%;padding:8px 10px 8px 32px;border:1px solid transparent;border-radius:9px;
            background:transparent;font:14px var(--sans);color:var(--ink)}
   .searchbox input[type=text]:hover{background:var(--hover)}
@@ -410,6 +450,9 @@
   .msg.user .att img{width:auto;height:auto;max-width:200px;max-height:160px;object-fit:contain}
   .chat.drop .box{border-color:var(--iris);box-shadow:0 0 0 3px rgba(91,95,231,.18)}
   .diff{padding:0;overflow:auto} .diff div{padding:0 12px} .diff .a{background:var(--add);color:var(--addt)} .diff .d{background:var(--del);color:var(--delt)}
+  a.mdimg{display:inline-block;max-width:100%;margin:6px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden;line-height:0;background:var(--hover)}
+  a.mdimg img{display:block;max-width:100%;max-height:480px;object-fit:contain}
+  a.mdimg.broken{line-height:1.4;padding:6px 10px;font-size:12px;color:var(--mute)}
   .note{margin:10px 0;color:var(--mute);font-size:13px;text-align:center}
   .note.older{cursor:pointer;opacity:.8}
   .note.older:hover{color:var(--body)}
@@ -592,6 +635,7 @@
  l-48-81l-5,4l-29,302l-13,15L474.0000305,1000z"/> </g> </svg><span>claude-<b>box</b></span></div></div>
   <button id="newbtn" class="navbtn" type="button"><span class="ico">＋</span>New session</button>
   <button id="termbtn" class="navbtn" type="button" title="bash in the container (gh auth login, git, …)"><span class="ico" style="font:600 12px var(--mono)">&gt;_</span>Terminal</button>
+  <button id="inboxbtn" class="navbtn" type="button" title="Sessions that need a look: questions, permissions, problems, finished work"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg></span>Inbox<span class="ibadge hidden" id="ibadge"></span></button>
   <div class="searchbox">
     <span class="ico">⌕</span><input id="q" type="text" placeholder="Search history" autocomplete="off" title="Type and press Enter: sessions, folders and history (Cmd+K)">
   </div>
@@ -637,6 +681,7 @@
     <button id="rpbtn" class="iconbtn" type="button" title="Today: meetings, tasks, PRs, Slack" aria-label="Today panel">◧</button>
   </div>
   <div id="views">
+    <div id="inboxv"><div class="iin" id="ibody"></div></div>
     <div id="blank"><div class="inner">
       <div class="fhead"><h2>Workspace</h2><span class="root" id="wsroot"></span></div>
       <section id="tasksec">
@@ -714,12 +759,30 @@ function el(tag, cls, html){ var e=document.createElement(tag); if(cls) e.classN
 // Code spans and links are cut out of the RAW text first and parked as \u0000N\u0000 placeholders
 // holding finished, escaped HTML. Links are found in ONE pass, so a URL is never re-scanned
 // inside an href that was already built (that re-scan used to break out of the attribute).
+// Where a picture in chat is loaded from: web URLs and data: as is, file paths through the
+// server (relative ones against the open session's folder).
+var IMG_EXT=/\.(png|jpe?g|gif|webp)$/i;
+function imgSrc(src){
+  src=String(src||'').trim();
+  if(/^(https?:|data:image\/)/i.test(src)) return src;
+  if(/^file:\/\//i.test(src)) src=decodeURIComponent(src.slice(7));
+  if(src[0]!=='/'){ var p=PANES[ACTIVE], cwd=(p&&p.cwd)||(p&&p.info&&p.info.cwd)||''; if(!cwd) return ''; src=cwd.replace(/\/+$/,'')+'/'+src.replace(/^\.\//,''); }
+  return 'workspace/image?p='+encodeURIComponent(src);
+}
+function imgHtml(src, alt){
+  var u=imgSrc(src); if(!u) return esc(alt||src);
+  return '<a class="mdimg" href="'+esc(u)+'" target="_blank" rel="noopener" title="'+esc(src)+'"><img src="'+esc(u)+'" alt="'+esc(alt||'')+'" loading="lazy"></a>';
+}
 function mdInline(s){
   var keep=[];
   function hold(html){ keep.push(html); return '\u0000'+(keep.length-1)+'\u0000'; }
   function link(href, text){ return hold('<a href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(text)+'</a>'); }
   s=String(s==null?'':s).replace(/\u0000/g,'');
-  s=s.replace(/`([^`\n]+)`/g,function(_,c){ return hold('<code>'+esc(c)+'</code>'); });
+  s=s.replace(/!\[([^\]]*)\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)/g,function(_,a,u){ return hold(imgHtml(u,a)); });
+  s=s.replace(/`([^`\n]+)`/g,function(_,c){
+    var t=c.trim();
+    if(/^(\/|~\/)\S+$/.test(t) && IMG_EXT.test(t) && t[0]==='/') return hold('<a href="'+esc(imgSrc(t))+'" target="_blank" rel="noopener" title="Open the image"><code>'+esc(c)+'</code></a>');
+    return hold('<code>'+esc(c)+'</code>'); });
   s=s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+)\)|(^|[\s(])(https?:\/\/[^\s<>")\u0000]+)/g,
     function(_,t,u,pre,bare){ return u ? link(u,t) : pre+link(bare,bare); });
   s=esc(s)
@@ -768,6 +831,12 @@ function md(src){
 }
 
 // ======================= sessions / sidebar state =======================
+// a picture that can't load turns into its path, so it's clear what was meant
+document.addEventListener('error', function(e){
+  var im=e.target; if(!im || im.tagName!=='IMG' || !im.parentNode || !im.parentNode.classList || !im.parentNode.classList.contains('mdimg')) return;
+  var a=im.parentNode; a.classList.add('broken'); a.textContent='🖼 image not available: '+(a.title||im.alt||'');
+}, true);
+
 function statusClass(s){ if(!s.live) return 'stop'; if(s.state==='waiting') return 'wait';
   if(s.state==='working') return 'work'; return 'live'; }
 function dispName(s){ var t=(s.title||'').trim(); return t || s.name || s.token; }
@@ -775,6 +844,7 @@ function visibleRows(rows){ return rows.filter(function(s){ return !/^\/tmp\/cla
 
 var ROWS=[], BYTOK={};
 var PANES={};          // key (token, or "new-N" until Claude reports the session) -> pane
+var INBOX={open:false, data:null, by:{}, filter:'all', reply:{}, busy:{}, err:{}, timer:null, sig:''};   // Inbox view state (see the Inbox section)
 var ACTIVE=null;       // active pane key; null -> the "new session" page
 var CHAT_ON=false;     // web chat available on the server
 var MAXCONSOLES=8;     // console iframes kept warm (each holds a websocket + a tmux client)
@@ -1089,6 +1159,7 @@ function send(p){
 
 function activate(key){
   var p=PANES[key]; if(!p) return;
+  if(INBOX.open) closeInbox(true);
   if(VOICE.active && VOICE.active!==p) VOICE.stop(true);
   ACTIVE=key; p.used=Date.now();
   if(p.mode==='console') ensureIframe(p); else { if(!p.el) openChat(p); }
@@ -1166,6 +1237,7 @@ function openShell(dir){
   var p=makePane(key,{mode:'console', cwd:dir}); p.shell=dir; activate(key);
 }
 function showBlank(){
+  if(INBOX.open) closeInbox(true);
   ACTIVE=null; Object.keys(PANES).forEach(function(k){ var q=PANES[k];
     if(q.el) q.el.classList.remove('on'); if(q.iframe) q.iframe.classList.remove('on'); });
   fmMount($('blank').querySelector('.inner')); $('fmhost').classList.remove('on');
@@ -1335,6 +1407,13 @@ function addToolResult(p, b){
   d.classList.remove('pending'); if(b.is_error) d.classList.add('err');
   updGroup(d.parentNode && d.parentNode.parentNode);
   var t=resultText(b.content), ag=p.r.agents && p.r.agents[b.tool_use_id];
+  var pics=Array.isArray(b.content)?b.content.filter(function(x){ return x && x.type==='image' && x.source && x.source.type==='base64'; }):[];
+  if(pics.length){
+    var bd=d.querySelector('.body');
+    pics.forEach(function(x){ var u='data:'+x.source.media_type+';base64,'+x.source.data;
+      bd.insertAdjacentHTML('beforeend','<a class="mdimg" href="'+esc(u)+'" target="_blank" rel="noopener"><img src="'+esc(u)+'" alt=""></a>'); });
+    t=t.replace(/^\[image\]$/mg,'').trim();
+  }
   // a background agent answers "launched" at once and keeps working: it ends with task_notification
   if(ag) agentState(p, ag, b.is_error ? 'err' : (ag.bg && /launch|background|async|running/i.test(t||'') ? 'run' : 'done'));
   if(!t) return;
@@ -1687,6 +1766,7 @@ function onEvent(p, o){
 // ======================= top bar =======================
 function renderTop(){
   var p=PANES[ACTIVE], ttl=$('ttl'), pop=$('popout'), seg=$('modeseg');
+  if(INBOX.open){ ttl.textContent='Inbox'; pop.classList.add('hidden'); seg.classList.add('hidden'); document.title='Inbox · claude-box'; return; }
   if(!p){ ttl.textContent='Workspace'; pop.classList.add('hidden'); seg.classList.add('hidden'); document.title='claude-box'; return; }
   if(p.shell){
     ttl.innerHTML='Terminal<span class="cwd">'+esc(p.shell)+'</span>'; seg.classList.add('hidden');
@@ -1775,7 +1855,7 @@ function group(id, label, tip, arr, defClosed, catId){
     var cls=statusClass(s), dn=dispName(s);
     h+='<a class="row '+cls+(s.token===ACTIVE?' active':'')+'" href="?s='+encodeURIComponent(s.token)+
        '" draggable="true" data-key="'+esc(s.token)+'" title="'+esc(dn+(s.cwd?'\n'+s.cwd:''))+'">'+
-       '<span class="dot"></span><span class="nm">'+esc(dn)+'</span>'+
+       '<span class="dot"></span><span class="nm">'+esc(dn)+inboxLine(s.token)+'</span>'+
        (s.live&&s.mode==='console'?'<span class="tag" title="open in the console">&gt;_</span>':'')+
        '<span class="when">'+fmt(s.lastActivity)+'</span>'+
        '<button class="more" type="button" title="Move to category…" aria-label="Move to category">⋯</button>'+
@@ -1783,6 +1863,108 @@ function group(id, label, tip, arr, defClosed, catId){
   });
   return h;
 }
+
+// ---------- Inbox: the coordinator's cards (scripts/web-inbox.js) ----------
+// One card per session that needs a look. A suggested reply is shown in full before its button
+// sends it; nothing reaches a session without a click here.
+var IKIND={needs:'Needs you', problem:'Problems', done:'Done'};
+function inboxLine(tok){ var it=INBOX.by[tok]; return it&&it.short?'<small class="ib '+esc(it.kind)+'">'+esc(it.short)+'</small>':''; }
+function inboxLoad(){
+  return fetch('inbox').then(function(r){ return r.ok?r.json():null; }).then(function(d){
+    if(!d) return;
+    INBOX.data=d; INBOX.by={}; (d.items||[]).forEach(function(i){ INBOX.by[i.token]=i; });
+    var n=(d.items||[]).filter(function(i){ return i.kind!=='done'; }).length, b=$('ibadge');
+    b.textContent=n; b.classList.toggle('hidden', !n);
+    var sig=(d.items||[]).map(function(i){ return i.token+i.kind+i.short; }).join('|');
+    if(sig!==INBOX.sig){ INBOX.sig=sig; renderList(true); }
+    if(INBOX.open) renderInbox();
+  }).catch(function(){});
+}
+function inboxPoll(){ clearTimeout(INBOX.timer); INBOX.timer=setTimeout(function(){ inboxLoad().then(inboxPoll); }, INBOX.open?8000:30000); }
+function openInbox(){
+  INBOX.open=true; $('inboxv').classList.add('on'); $('inboxbtn').classList.add('on');
+  $('app').classList.remove('drawer'); renderTop(); renderInbox(); inboxLoad(); inboxPoll();
+}
+function closeInbox(quiet){
+  INBOX.open=false; $('inboxv').classList.remove('on'); $('inboxbtn').classList.remove('on');
+  if(!quiet) renderTop();
+}
+function iAgo(ms){ return ms?fmt(Math.floor(ms/1000)):''; }
+function iCard(i){
+  var tok=esc(i.token), when=i.kind==='needs'?'waiting '+iAgo(i.since):i.kind==='problem'?'stopped '+iAgo(i.since)+' ago':iAgo(i.since)+' ago';
+  if(i.kind==='needs' && iAgo(i.since)==='now') when='just now';
+  var h='<article class="icard k-'+esc(i.kind)+'" data-tok="'+tok+'"><span class="dot"></span><div class="bd">'+
+    '<div class="ih"><b data-ia="open" title="'+esc(i.cwd||'')+'">'+esc(i.name||i.token)+'</b><span>'+esc(when)+'</span></div>';
+  if(i.summary) h+='<p>'+esc(i.summary)+'</p>';
+  if(i.ask) h+='<div class="ask'+(i.perm?' mono':'')+'">'+(i.perm?'':'<b>Asks:</b> ')+esc(i.ask)+'</div>';
+  h+='<div class="acts">';
+  if(i.perm) h+='<button class="btn" type="button" data-ia="allow">Allow once</button><button class="btn ghost" type="button" data-ia="deny">Deny</button>';
+  else if(i.action) h+='<button class="btn" type="button" data-ia="send" title="'+esc(i.action.text)+'">'+esc(i.action.label)+'</button>';
+  if(!i.perm) h+='<button class="btn ghost" type="button" data-ia="reply">Reply…</button>';
+  h+='<button class="lnk" type="button" data-ia="open">Open session</button><span class="sp"></span>'+
+     (i.kind==='needs'?'<button class="lnk" type="button" data-ia="later" title="Hide for an hour">Later</button>':'')+
+     '<button class="lnk" type="button" data-ia="seen" title="Hide until the session has something new">'+(i.kind==='done'?'Mark seen':'Dismiss')+'</button></div>';
+  if(i.action && !i.perm) h+='<div class="will">“'+esc(i.action.label)+'” sends: '+esc(i.action.text)+'</div>';
+  if(INBOX.reply[i.token]!=null) h+='<textarea data-ir="1" placeholder="Your answer to this session…">'+esc(INBOX.reply[i.token])+'</textarea>'+
+     '<div class="acts"><button class="btn" type="button" data-ia="sendreply">Send</button><button class="lnk" type="button" data-ia="cancel">Cancel</button></div>';
+  if(INBOX.err[i.token]) h+='<div class="err">'+esc(INBOX.err[i.token])+'</div>';
+  return h+'</div></article>';
+}
+function renderInbox(){
+  var el=$('ibody'), d=INBOX.data;
+  if(!d){ el.innerHTML='<div class="iempty">Loading…</div>'; return; }
+  if(d.enabled===false){ el.innerHTML='<div class="iempty">The coordinator is off.</div>'; return; }
+  var focus=document.activeElement, fTok=focus&&focus.dataset&&focus.dataset.ir&&focus.closest('.icard').dataset.tok, fPos=fTok&&focus.selectionStart;
+  var items=d.items||[], cnt={all:items.length, needs:0, problem:0, done:0};
+  items.forEach(function(i){ cnt[i.kind]=(cnt[i.kind]||0)+1; });
+  var h='<div class="itop"><span>'+(d.running?'Checking sessions…':(d.checked?'Checked '+iAgo(d.checked)+(iAgo(d.checked)==='now'?'':' ago'):'Not checked yet'))+
+    (d.later?' · '+d.later+' hidden for later':'')+'</span><span class="sp"></span><button class="ilnk" type="button" data-ia="refresh">↻ Check now</button></div>';
+  h+='<div class="chips">'+['all','needs','problem','done'].map(function(k){
+    return '<button class="chip'+(INBOX.filter===k?' on':'')+'" type="button" data-if="'+k+'">'+(k==='all'?'All':IKIND[k])+' '+(cnt[k]||0)+'</button>'; }).join('')+'</div>';
+  var shown=items.filter(function(i){ return INBOX.filter==='all' || i.kind===INBOX.filter; });
+  if(!shown.length) h+='<div class="iempty">'+(items.length?'Nothing here.':'All clear: no session needs you.')+'</div>';
+  ['needs','problem','done'].forEach(function(k){
+    var g=shown.filter(function(i){ return i.kind===k; }); if(!g.length) return;
+    h+='<div class="isec">'+IKIND[k]+(k==='needs'?' · oldest first':'')+'</div>'+g.map(iCard).join('');
+  });
+  if(d.log && d.log.length) h+='<details class="ilog"'+(INBOX.logOpen?' open':'')+'><summary>Coordinator log · model '+esc(d.model||'')+'</summary>'+d.log.map(function(e){
+    return '<div>'+esc(new Date(e.at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))+' · '+esc(e.name||e.token||'')+' · '+
+      esc(e.error?'error: '+e.error:e.sent?'sent: '+e.sent:e.perm?'permission: '+e.perm:(e.kind+' · '+(e.took||0)+'s · $'+Number(e.cost||0).toFixed(4)))+'</div>'; }).join('')+'</details>';
+  el.innerHTML=h;
+  if(fTok){ var t=el.querySelector('.icard[data-tok="'+fTok.replace(/"/g,'')+'"] textarea'); if(t){ t.focus(); try{ t.setSelectionRange(fPos,fPos); }catch(e){} } }
+}
+function inboxAct(tok, body){
+  INBOX.busy[tok]=1; delete INBOX.err[tok];
+  return fetch('inbox/act', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(Object.assign({token:tok}, body))})
+    .then(function(r){ return r.json().then(function(o){ if(!r.ok||!o.ok) throw new Error(o.error||'failed'); return o; }); })
+    .then(function(){ delete INBOX.reply[tok]; return inboxLoad(); })
+    .catch(function(e){ INBOX.err[tok]=e.message; renderInbox(); })
+    .finally(function(){ delete INBOX.busy[tok]; });
+}
+$('inboxbtn').addEventListener('click', function(){ if(INBOX.open){ closeInbox(); if(!ACTIVE) showBlank(); else activate(ACTIVE); } else openInbox(); });
+$('ibody').addEventListener('input', function(e){ var c=e.target.closest('.icard'); if(e.target.dataset.ir && c) INBOX.reply[c.dataset.tok]=e.target.value; });
+$('ibody').addEventListener('toggle', function(e){ if(e.target.classList && e.target.classList.contains('ilog')) INBOX.logOpen=e.target.open; }, true);
+$('ibody').addEventListener('click', function(e){
+  var f=e.target.closest('[data-if]'); if(f){ INBOX.filter=f.dataset.if; renderInbox(); return; }
+  var b=e.target.closest('[data-ia]'); if(!b) return;
+  var a=b.dataset.ia;
+  if(a==='refresh'){ fetch('inbox/refresh',{method:'POST'}).then(function(){ setTimeout(inboxLoad, 800); }); return; }
+  var c=b.closest('.icard'), tok=c&&c.dataset.tok, it=tok&&INBOX.by[tok]; if(!tok || INBOX.busy[tok]) return;
+  if(a==='open'){ closeInbox(true); openSession(tok); return; }
+  if(a==='reply'){ INBOX.reply[tok]=INBOX.reply[tok]||''; renderInbox(); var t=c.parentNode.querySelector('.icard[data-tok="'+tok+'"] textarea'); if(t) t.focus(); return; }
+  if(a==='cancel'){ delete INBOX.reply[tok]; renderInbox(); return; }
+  b.disabled=true;
+  if(a==='send' && it && it.action) inboxAct(tok, {op:'send', text:it.action.text});
+  else if(a==='sendreply'){ var tx=(INBOX.reply[tok]||'').trim(); if(!tx){ b.disabled=false; return; } inboxAct(tok, {op:'send', text:tx}); }
+  else if(a==='allow'||a==='deny') inboxAct(tok, {op:a, id:it&&it.perm&&it.perm.id});
+  else if(a==='later') inboxAct(tok, {op:'later', minutes:60});
+  else if(a==='seen') inboxAct(tok, {op:'seen'});
+});
+document.addEventListener('keydown', function(e){
+  if(e.key==='Enter' && (e.metaKey||e.ctrlKey) && e.target.dataset && e.target.dataset.ir){
+    var c=e.target.closest('.icard'), b=c&&c.querySelector('[data-ia="sendreply"]'); if(b){ e.preventDefault(); b.click(); } }
+});
+inboxLoad(); inboxPoll();
 
 // ---------- categories: storage + actions ----------
 function loadCats(){
