@@ -149,6 +149,12 @@ function snapshot() {
 
 // Bring back the sessions of the last snapshot: each gets its tmux session (same name as before)
 // running `claude --resume <id>` in its original cwd, stamped with its token.
+// A run that never saved a conversation (an SDK job, a one-off -p call) has nothing to resume.
+function hasTranscript(id) {
+  const dir = path.join(HOME, '.claude', 'projects');
+  if (!fs.existsSync(dir)) return false;
+  try { return fs.readdirSync(dir).some((d) => fs.existsSync(path.join(dir, d, id + '.jsonl'))); } catch (_) { return true; }
+}
 function restore(log = (s) => console.error(s)) {
   let toks = [];
   try { toks = JSON.parse(fs.readFileSync(LIVE, 'utf8')); } catch (_) { return; }
@@ -158,6 +164,7 @@ function restore(log = (s) => console.error(s)) {
     if (!r) continue;                                             // deleted from the dashboard meanwhile
     const sess = r.tmuxSession || 'web-' + tok;
     if (!r.claudeSessionId || !r.cwd || !fs.existsSync(r.cwd)) { log(`restore: skip ${sess} (folder ${r.cwd} is gone)`); continue; }
+    if (!hasTranscript(r.claudeSessionId)) { log(`restore: skip ${sess} (no transcript for ${r.claudeSessionId})`); continue; }
     if (tmux(['has-session', '-t', '=' + sess]) !== null) continue;   // already running
     const ok = spawnSync('tmux', ['-u', 'new-session', '-d', '-s', sess, '-c', r.cwd, 'claude', '--resume', r.claudeSessionId],
       { stdio: 'ignore' }).status === 0;

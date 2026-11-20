@@ -20,8 +20,10 @@
 //     {op:'mode', key, mode}           permission mode (default|acceptEdits|plan|auto)
 //     {op:'release', key}              stop the chat process (before switching to console)
 //     {op:'takeover', key}             kill the console tmux session (before switching to chat)
+//     {op:'older', key, before}        an older page of history, ending before message uuid `before`
 //   server -> client:
-//     {ev:'history', key, items, state, console, info}
+//     {ev:'history', key, items, state, console, info, more}   more = older items not sent yet
+//     {ev:'older', key, items, more}
 //     {ev:'msg', key, m}               raw SDK message (assistant/user/stream_event/result/system)
 //     {ev:'state', key, state}         idle | running | requires_action | starting | stopped
 //     {ev:'token', key, token}         the session now has a registry token (new or after /clear)
@@ -355,6 +357,22 @@ async function history(chat) {
   }
   return out;
 }
+// History is sent in pages so a long conversation doesn't flood the browser: the last
+// PAGE_PROMPTS user prompts with everything after them, then older pages on request.
+const PAGE_PROMPTS = 5;
+function isPrompt(i) {
+  if (i.type !== 'user' || i.parent_tool_use_id) return false;
+  const c = i.message && i.message.content;
+  if (typeof c === 'string') return true;
+  return Array.isArray(c) && c.some((b) => b && (b.type === 'text' || b.type === 'image')) &&
+    !c.some((b) => b && b.type === 'tool_result');
+}
+// Index where the page ending right before `end` starts (a prompt boundary, or 0).
+function pageStart(items, end) {
+  let n = 0;
+  for (let k = end - 1; k >= 0; k--) if (isPrompt(items[k]) && ++n === PAGE_PROMPTS) return k;
+  return 0;
+}
 // Output of slash commands and skills (/code-review, /cost, …) is saved in the transcript as
 // {type:'system', subtype:'local_command', parentUuid, content:'<local-command-stdout>…'}, which
 // getSessionMessages leaves out. Returns parentUuid -> [local_command_output messages].
@@ -406,10 +424,19 @@ function onConnection(ws) {
       if (msg.op === 'open') {
         let chat = mine.get(key);
         if (!chat) { chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key }); }
-        const items = await history(chat);
+        const all = await history(chat), start = pageStart(all, all.length), items = all.slice(start);
         const pend = [...chat.perms].map(([id, p]) => ({ id, tool: p.tool, input: p.input, reason: p.reason, suggestions: p.suggestions.length > 0 }));
         reply({ ev: 'history', key, items, state: chat.state, console: !chat.q && await tmuxAlive(chat.name),
-                info: chat.info, perms: pend, token: chat.token });
+                info: chat.info, perms: pend, token: chat.token, more: start });
+        return;
+      }
+      if (msg.op === 'older') {
+        const chat = mine.get(key);
+        if (!chat) { reply({ ev: 'older', key, items: [], more: 0 }); return; }
+        const all = await history(chat), end = all.findIndex((i) => i.uuid === msg.before);
+        if (end < 0) { reply({ ev: 'older', key, items: [], more: 0, lost: true }); return; }
+        const start = pageStart(all, end);
+        reply({ ev: 'older', key, items: all.slice(start, end), more: start });
         return;
       }
       const chat = mine.get(key);

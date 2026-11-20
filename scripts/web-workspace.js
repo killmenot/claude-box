@@ -203,6 +203,42 @@ function serveFile(res, rel, download) {
   fs.createReadStream(p).on('error', () => res.destroy()).pipe(res);
 }
 
+// ---------- the text editor: read a text file, save it back (whole file, atomic) ----------
+const EDIT_MAX = 2 * 1048576;
+function readText(rel) {
+  const p = mustExist(abs(rel)), st = fs.statSync(p);
+  if (!st.isFile()) throw new Error('not a file');
+  if (st.size > EDIT_MAX) throw new Error('too large to edit (limit 2 MB)');
+  if (!looksText(p)) throw new Error('not a text file');
+  return { rel: relOf(p), text: fs.readFileSync(p, 'utf8'), mtime: st.mtimeMs, size: st.size };
+}
+// raw body = the new text. mtime = what the editor loaded; a file changed on disk since then
+// is not overwritten (409) unless force. Writes a temp file next to the real one and renames it.
+function saveText(req, rel, mtime, force) {
+  return new Promise((resolve, reject) => {
+    let target, st;
+    try {
+      const p = mustExist(abs(rel)); st = fs.statSync(p);
+      if (!st.isFile()) throw new Error('not a file');
+      target = fs.realpathSync(p); abs(relOf(target));               // a symlink must point inside the workspace
+      if (!force && mtime && Math.abs(st.mtimeMs - Number(mtime)) > 1) { const e = new Error('changed on disk since you opened it'); e.code = 409; throw e; }
+    } catch (e) { req.resume(); reject(e); return; }
+    const chunks = []; let n = 0, failed = false;
+    const fail = (e) => { if (!failed) { failed = true; reject(e); } };
+    req.on('data', (c) => { n += c.length; if (n > EDIT_MAX) { req.destroy(); fail(new Error('too large (limit 2 MB)')); } else chunks.push(c); });
+    req.on('aborted', () => fail(new Error('save aborted'))); req.on('error', fail);
+    req.on('end', () => {
+      if (failed) return;
+      const tmp = path.join(path.dirname(target), '.save-' + process.pid + '-' + Date.now() + '-' + path.basename(target));
+      try {
+        fs.writeFileSync(tmp, Buffer.concat(chunks), { mode: st.mode & 0o7777 });
+        fs.renameSync(tmp, target);
+        resolve({ rel: relOf(target), mtime: fs.statSync(target).mtimeMs, size: n });
+      } catch (e) { fs.rm(tmp, { force: true }, () => {}); fail(e); }
+    });
+  });
+}
+
 // ---------- git clone as a background job (big repos outlive an HTTP request) ----------
 const JOBS = new Map(); let jobSeq = 0;
 function jobList() {
@@ -231,4 +267,4 @@ function clone(url, name, dir) {
   return { id, name: dirName, path: target };
 }
 
-module.exports = { ROOT, list, ls, mkdir, rename, copy, move, trash, upload, serveFile, clone };
+module.exports = { ROOT, list, ls, mkdir, rename, copy, move, trash, upload, serveFile, clone, readText, saveText };

@@ -4,11 +4,12 @@
 //   /            -> launcher (html/launcher.html)
 //   /sessions    -> session registry list (web-registry.js)
 //   /metrics     -> host + session metrics (web-metrics.js)
+//   /say         -> voice alerts for the browser to speak (Monitoring/notify.sh queue)
 //   /preview     -> tmux screenshot of a session (web-preview.js)
 //   /search      -> search through session history (web-search.js)
 //   /chat/ws     -> web chat over the Claude Agent SDK (web-chat.js), /chat/info, /dirs
 //   /categories  -> GET/POST the sidebar categories (~/.claude/web-categories.json)
-//   /workspace   -> file manager: GET ls|file, POST /workspace/{mkdir,rename,copy,move,trash,clone,upload} (web-workspace.js)
+//   /workspace   -> file manager: GET ls|file|text, POST /workspace/{mkdir,rename,copy,move,trash,clone,upload,save} (web-workspace.js)
 //   /tasks       -> task workspaces: GET list, POST /tasks/{open,archive,reopen,refresh,forget,add-repos,repo-add}
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
@@ -75,6 +76,31 @@ function readJson(req, limit, cb) {
 }
 function json(res, code, obj) {
   try { res.writeHead(code, { 'content-type': 'application/json' }); res.end(typeof obj === 'string' ? obj : JSON.stringify(obj)); } catch (_) {}
+}
+
+// Voice alerts spoken by the browser (speechSynthesis), instead of a helper on the host.
+// A session drops phrases into SAY_DIR (Monitoring/notify.sh: "<unix-ns>-<pid>.txt").
+// GET /say?on=1 hands out the queued phrases oldest first and deletes them, so only one
+// open tab speaks each, and refreshes SAY_DIR/.heartbeat ("a browser is listening"),
+// which notify.sh checks. Without on=1 (voice off in that tab) nothing is consumed.
+const SAY_DIR = process.env.WEB_SAY_DIR || '/workspace/Monitoring/alerts';
+const SAY_MAX_AGE = 15 * 60;   // older phrases (laptop asleep, no tab open) are dropped unspoken
+function takeSay() {
+  const p = require('path');
+  let names;
+  try { names = fs.readdirSync(SAY_DIR).filter((n) => /^\d+-\d+\.txt$/.test(n)).sort(); }
+  catch (_) { return []; }
+  try { fs.writeFileSync(p.join(SAY_DIR, '.heartbeat'), String(Math.floor(Date.now() / 1000))); } catch (_) {}
+  const now = Date.now() / 1000, out = [];
+  for (const n of names.slice(0, 20)) {
+    const f = p.join(SAY_DIR, n);
+    let text = '';
+    try { text = fs.readFileSync(f, 'utf8'); fs.unlinkSync(f); } catch (_) { continue; }
+    const at = Number(n.split('-')[0]) / 1e9;
+    text = text.replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (text && now - at <= SAY_MAX_AGE) out.push(text);
+  }
+  return out;
 }
 
 // The sidecar is a long-lived proxy: NO single bad request must crash the process,
@@ -163,7 +189,13 @@ const handler = (req, res) => {
         if (req.method !== 'POST') {
           if (op === 'ls') { json(res, 200, workspace.ls(qs.get('p') || '', qs.get('hidden') === '1')); return; }
           if (op === 'file') { workspace.serveFile(res, qs.get('p') || '', qs.get('dl') === '1'); return; }
+          if (op === 'text') { json(res, 200, workspace.readText(qs.get('p') || '')); return; }
           json(res, 200, workspace.list()); return;
+        }
+        if (op === 'save') {        // raw body = the whole text; ?p=<rel>&mtime=<as loaded>&force=1
+          workspace.saveText(req, qs.get('p') || '', qs.get('mtime'), qs.get('force') === '1')
+            .then((r) => json(res, 200, Object.assign({ ok: true }, r)), fail);
+          return;
         }
         if (op === 'upload') {      // raw body = the file; ?dir=<rel>&name=<name or sub/path>&overwrite=1
           workspace.upload(req, qs.get('dir') || '', qs.get('name') || '', qs.get('overwrite') === '1')
@@ -249,6 +281,13 @@ const handler = (req, res) => {
       });
       return;
     }
+    if (path === '/panel/runs' || path.startsWith('/panel/runs/')) {  // the Today agent's run log
+      if (!panel) { json(res, 503, { error: 'panel module not loaded' }); return; }
+      if (path === '/panel/runs') { json(res, 200, panel.runs()); return; }
+      const r = panel.run(decodeURIComponent(path.slice('/panel/runs/'.length)));
+      if (r) json(res, 200, r); else json(res, 404, { error: 'no such run' });
+      return;
+    }
     if (path === '/panel' || path === '/panel/refresh') {
       if (!panel) { json(res, 503, { enabled: false, error: 'panel module not loaded' }); return; }
       const w = /(?:^|&)what=(github|agent)(?:&|$)/.exec(req.url.split('?')[1] || '');
@@ -276,6 +315,15 @@ const handler = (req, res) => {
           res.end(buf);
         } catch (_) {}
       });
+      return;
+    }
+    if (path === '/say') {
+      if (!/[?&]on=1(?:&|$)/.test(req.url)) { json(res, 200, { say: [] }); return; }
+      // during a calendar meeting the phrases are dropped (they would go into the call's mic),
+      // but the queue is still drained and the heartbeat refreshed, so notify.sh sees a listener
+      let meeting = null; try { meeting = panel && panel.inMeeting ? panel.inMeeting() : null; } catch (_) {}
+      const say = takeSay();
+      json(res, 200, meeting ? { say: [], muted: 'meeting', until: meeting.end, dropped: say.length } : { say });
       return;
     }
     if (path === '/metrics') {

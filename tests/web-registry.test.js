@@ -59,10 +59,21 @@ test('snapshot keeps the newest record per live tmux session; restore brings it 
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'web-live-sessions.json'), 'utf8')), ['new']);
 
   tmux('kill-server');                                   // "container restart"
+  const proj = path.join(tmp, '.claude', 'projects', 'p'); fs.mkdirSync(proj, { recursive: true });
+  fs.writeFileSync(path.join(proj, 'c-new.jsonl'), '');  // only a saved conversation can be resumed
   reg.restore(() => {});
   assert.strictEqual((tmux('show-option', '-t', 'web-7', '-qv', '@cbtoken') || '').trim(), 'new');
   assert.strictEqual(reg.owns('new'), 'web-7');
   assert.strictEqual(reg.owns('old'), null);
+});
+
+test('restore skips a record with no saved conversation', () => {
+  const cwd = fs.mkdtempSync(path.join(tmp, 'proj-'));
+  fs.writeFileSync(reg.REG, JSON.stringify({ sdk: { token: 'sdk', claudeSessionId: 'c-sdk', cwd, tmuxSession: 'shell', lastActivity: 1 } }));
+  fs.writeFileSync(path.join(tmp, '.claude', 'web-live-sessions.json'), JSON.stringify(['sdk']));
+  const said = []; reg.restore((m) => said.push(m));
+  assert.ok(said.some((m) => /no transcript/.test(m)), said.join('\n'));
+  assert.strictEqual(reg.owns('sdk'), null);
 });
 
 test('preview: live capture is cached and served after the session dies', async () => {
