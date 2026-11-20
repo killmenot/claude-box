@@ -157,6 +157,8 @@
   .side-foot{padding:9px 18px 10px;border-top:1px solid var(--line);color:var(--slate);font-family:var(--mono);font-size:11.5px;line-height:1.6}
   .side-foot .ln{display:flex;align-items:center;gap:8px;min-width:0}
   .side-foot #hostm{display:block;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .side-foot .pmrow{display:flex;align-items:center;gap:6px;color:var(--mute)}
+  .side-foot .pmrow select{font:inherit;color:var(--body);background:transparent;border:1px solid var(--line);border-radius:6px;padding:1px 4px}
   .side-foot .hot{color:var(--err);font-weight:600}
   .voicebtn{margin-left:auto;border:1px solid var(--line);background:none;color:var(--mute);font:inherit;font-size:11px;
             border-radius:6px;padding:0 7px;cursor:pointer;white-space:nowrap}
@@ -607,6 +609,7 @@
   <div class="side-foot"><div class="ln"><span class="livedot"></span><span id="scount">…</span>
     <button id="voicebtn" class="voicebtn" type="button" title="Voice alerts: this tab reads out what sessions send (Monitoring/notify.sh)">🔇 voice</button>
     <button id="snoozebtn" class="voicebtn hidden" type="button" title="Quiet for an hour (for a call that is not in the calendar); click again to speak">🔕 1h</button></div>
+    <label class="pmrow" title="Permission mode for all chats">perms <select id="pmode"></select></label>
     <span id="hostm" title="Host: load average · CPU · RAM used/total · free space in /workspace"></span></div>
 </aside>
 <div id="scrim"></div>
@@ -868,6 +871,17 @@ function makePane(key, opts){
   PANES[key]=p; WIRE[p.wire]=p;
   return p;
 }
+// Permission mode is one setting for every chat (sidebar footer), not a control per chat.
+var PMODES={'default':'Ask before edits', acceptEdits:'Accept edits', plan:'Plan mode', auto:'Auto'};
+var PMODE=ls('cb-perm-mode'); if(!PMODES[PMODE]) PMODE='default';
+function applyMode(p){ if(p && p.wire && p.info && p.info.permissionMode!==PMODE) wsSend({op:'mode', key:p.wire, mode:PMODE}); }
+function setPMode(v){
+  if(!PMODES[v]) return; PMODE=v; ls('cb-perm-mode', v);
+  Object.keys(PANES).forEach(function(k){ var p=PANES[k]; if(p.ready) applyMode(p); });
+}
+(function(){ var sel=$('pmode'); if(!sel) return;
+  sel.innerHTML=Object.keys(PMODES).map(function(k){ return '<option value="'+k+'">'+PMODES[k]+'</option>'; }).join('');
+  sel.value=PMODE; sel.addEventListener('change', function(){ setPMode(sel.value); }); })();
 function buildChat(p){
   if(p.el) return;
   var c=el('div','chat');
@@ -878,8 +892,6 @@ function buildChat(p){
     '<div class="atts"></div><textarea rows="1" placeholder="Message Claude…  ( / for commands )"></textarea>'+
     '<div class="bar"><button class="attbtn" type="button" title="Attach files — or paste / drop them here"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button>'+
     '<input type="file" multiple hidden>'+
-    '<select title="Permission mode"><option value="default">Ask before edits</option>'+
-    '<option value="acceptEdits">Accept edits</option><option value="plan">Plan mode</option><option value="auto">Auto</option></select>'+
     '<button class="toolsbtn" type="button" title="How tool calls show in the chat: compact / all / hidden"></button>'+
     '<span class="stat"><i></i><span></span></span>'+
     (VOICE.supported ? '<button class="langbtn" type="button" title="Voice input language"></button>'+
@@ -890,7 +902,7 @@ function buildChat(p){
   p.el=c; p.log=c.querySelector('.log'); p.inner=c.querySelector('.inner');
   p.log.addEventListener('scroll', function(){ checkOlder(p); }, {passive:true});
   p.ta=c.querySelector('textarea'); p.go=c.querySelector('.go'); p.stopb=c.querySelector('.stopbtn');
-  p.stat=c.querySelector('.stat'); p.sel=c.querySelector('select');
+  p.stat=c.querySelector('.stat');
   p.banners=c.querySelector('.banners'); p.permsEl=c.querySelector('.perms'); p.agbar=c.querySelector('.agbar');
   p.r={tools:{}, live:[], seen:{}};
   function grow(){ p.ta.style.height='auto'; p.ta.style.height=Math.min(p.ta.scrollHeight, innerHeight*0.4)+'px';
@@ -926,7 +938,6 @@ function buildChat(p){
   }
   p.stopb.addEventListener('click', function(){ wsSend({op:'interrupt', key:p.wire}); });
   var tb=c.querySelector('.toolsbtn'); tb.textContent=TOOLLBL[toolMode]; tb.addEventListener('click', cycleToolMode);
-  p.sel.addEventListener('change', function(){ wsSend({op:'mode', key:p.wire, mode:p.sel.value}); });
   if(!p.token) p.ta.placeholder='Message Claude in '+base(p.cwd)+'…';
   renderStatus(p);
 }
@@ -1504,9 +1515,9 @@ function renderStatus(p){
   if(!p.token && st==='stopped') lbl='new session in '+(p.cwd||'');
   var bits=[lbl]; if(p.info.model) bits.push(p.info.model.replace(/^claude-/,''));
   if(p.info.cost!=null) bits.push('$'+Number(p.info.cost).toFixed(2));
+  var pm=p.info.permissionMode; if(pm && pm!=='default') bits.push(PMODES[pm]||pm);
   p.stat.className='stat '+cls; p.stat.querySelector('span').textContent=bits.join(' · ');
   p.stopb.classList.toggle('hidden', !(st==='running'||st==='requires_action'||st==='starting'));
-  if(p.info.permissionMode && p.sel.value!==p.info.permissionMode) p.sel.value=p.info.permissionMode;
 }
 
 // ---------- permission / question cards ----------
@@ -1568,7 +1579,7 @@ function onEvent(p, o){
       (o.items||[]).forEach(function(m){ renderItem(p,m); });
       setOlder(p, o.more, o.items);
       if(!o.items || !o.items.length) p.inner.appendChild(el('div','note hint', p.token?'(empty session)':'Start the conversation below.'));
-      p.info=o.info||{}; p.consoleActive=!!o.console; renderBanner(p);
+      p.info=o.info||{}; p.consoleActive=!!o.console; renderBanner(p); applyMode(p);
       (o.perms||[]).forEach(function(r){ renderPerm(p,r); });
       if(o.token && o.token!==p.token) rekey(p,o.token);
       setState(p, o.state||'stopped');
