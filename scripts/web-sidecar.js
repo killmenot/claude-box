@@ -66,14 +66,16 @@ catch (e) { console.error('workspace manager disabled:', e.message); }
 let tasks = null;
 try { tasks = require(process.env.WEB_TASKS_MODULE || './web-tasks.js'); }
 catch (e) { console.error('tasks disabled:', e.message); }
+let wire = null;      // records what the background agents send to the model and get back (web-wire.js)
+try { wire = require(process.env.WEB_WIRE_MODULE || './web-wire.js'); } catch (e) { console.error('wire log disabled:', e.message); }
 let panel = null;     // the right-hand "Today" panel (GitHub + an MCP snapshot collected by a cheap agent)
-try { panel = require(process.env.WEB_PANEL_MODULE || './web-panel.js'); if (chat && chat.getSdk) panel.init({ getSdk: chat.getSdk }); }
+try { panel = require(process.env.WEB_PANEL_MODULE || './web-panel.js'); if (chat && chat.getSdk) panel.init({ getSdk: chat.getSdk, wire }); }
 catch (e) { console.error('panel disabled:', e.message); }
 let inbox = null;     // the Inbox coordinator: one card per session that needs a look (web-inbox.js)
 try {
   inbox = require(process.env.WEB_INBOX_MODULE || './web-inbox.js');
   if (chat && chat.getSdk) {
-    inbox.init({ getSdk: chat.getSdk, listSessions: () => chat.decorate(registry.list()), pendingPerms: chat.pendingPerms,
+    inbox.init({ getSdk: chat.getSdk, wire, listSessions: () => chat.decorate(registry.list()), pendingPerms: chat.pendingPerms,
       answerPerm: chat.answerPerm, sendTo: chat.sendTo, transcriptPath: chat.transcriptPath });
   }
 } catch (e) { console.error('inbox disabled:', e.message); }
@@ -274,6 +276,25 @@ const handler = (req, res) => {
         }));
       });
       return;
+    }
+    if (path === '/wire' || path.startsWith('/wire/')) {      // recorded model traffic (web-wire.js), off by default
+      if (!wire) { json(res, 503, { ok: false }); return; }
+      const q = new URL(req.url, 'http://x').searchParams;
+      if (path === '/wire/settings' && req.method === 'POST') {
+        readJson(req, 1024, (o) => { try { json(res, 200, Object.assign({ ok: true }, wire.setSettings(o || {}))); } catch (e) { json(res, 400, { ok: false, error: e.message }); } });
+        return;
+      }
+      if (path === '/wire') { json(res, 200, { settings: wire.getSettings(), runs: wire.list({ token: q.get('token') || '', cid: q.get('cid') || '' }) }); return; }
+      const m = /^\/wire\/([\w-]+)(?:\/(actions|raw))?$/.exec(path);
+      if (!m) { json(res, 404, { ok: false }); return; }
+      if (m[2] === 'raw') {
+        const f = wire.rawPath(m[1]); if (!f) { json(res, 404, { ok: false }); return; }
+        res.writeHead(200, { 'content-type': 'application/x-ndjson', 'content-disposition': 'attachment; filename="' + m[1] + '.jsonl"' });
+        require('fs').createReadStream(f).pipe(res); return;
+      }
+      const r = m[2] === 'actions' ? wire.actions(m[1]) : wire.get(m[1], q.get('from'), q.get('n'));
+      if (!r) { json(res, 404, { ok: false }); return; }
+      json(res, 200, r); return;
     }
     if (path === '/inbox' || path === '/inbox/act' || path === '/inbox/refresh') {
       if (!inbox) { json(res, 503, { enabled: false, error: 'inbox module not loaded' }); return; }
