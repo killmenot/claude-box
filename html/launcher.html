@@ -1338,8 +1338,9 @@ function toolBody(name, inp){
   var j=''; try{ j=JSON.stringify(inp,null,2); }catch(e){}
   return '<pre>'+esc(j)+'</pre>';
 }
-// Consecutive tool calls (and thinking between them) share one .tgroup, so the "compact" view
-// can fold a whole run into a single line and "hidden" can drop it entirely.
+// Consecutive tool calls and thinking blocks share one .tgroup (the model's reasoning counts as
+// a tool: same compact/all/hidden setting), so the "compact" view can fold a whole run into a
+// single line and "hidden" can drop it entirely.
 function toolGroup(p){
   var last=p.inner.lastElementChild;
   if(last && last.classList.contains('tgroup') && !last.classList.contains('skill')) return last;
@@ -1350,11 +1351,14 @@ function toolGroup(p){
 function updGroup(g){
   if(!g || !g.classList.contains('tgroup')) return;
   if(g.classList.contains('skill')){ updSkill(g); return; }
-  var ts=g.querySelectorAll('.titems > .tool'), names=[];
+  var ts=g.querySelectorAll('.titems > .tool'), ths=g.querySelectorAll('.titems > .thinking'), names=[];
   [].forEach.call(ts, function(t){ var n=t.dataset.name.replace(/^mcp__(?:claude_ai_)?([^_]+(?:_[^_]+)*?)__(.+)$/, '$1: $2');
     if(names.indexOf(n)<0) names.push(n); });
-  var n=ts.length; g.querySelector('.tc').textContent=n+(n===1?' tool call':' tool calls');
-  g.querySelector('.tl').textContent=names.join(', ');
+  var n=ts.length, h=ths.length, tl=g.querySelector('.tl');
+  g.querySelector('.tc').textContent = n ? n+(n===1?' tool call':' tool calls')+(h?' · thinking':'')
+                                           : h ? (h===1?'thinking':h+' thoughts') : '';
+  if(!n && h){ var s=(ths[0].textContent||'').replace(/\s+/g,' ').trim(); tl.textContent=s.slice(0,90)+(s.length>90?'…':''); }
+  else tl.textContent=names.join(', ');
   g.classList.toggle('pending', !!g.querySelector('.titems > .tool.pending'));
   g.classList.toggle('err', !!g.querySelector('.titems > .tool.err'));
 }
@@ -1377,7 +1381,7 @@ applyToolMode();
 // ---------- settings dialog (sidebar ⚙) ----------
 var PMODEHINT={'default':'Asks before every edit or command', acceptEdits:'Edits files without asking, asks for commands',
   plan:'Only plans, changes nothing', auto:'Works without asking, a safety check blocks risky actions'};
-var TOOLHINT={compact:'Tool calls folded into one line per step', all:'Every tool call shown', hidden:'No tool calls, only messages'};
+var TOOLHINT={compact:'Tool calls and thinking folded into one line per step', all:'Every tool call and thinking shown', hidden:'No tool calls or thinking, only messages'};
 function setGroup(name, title, sub, opts, hints, cur){
   return '<h4>'+title+'</h4><div class="sub">'+sub+'</div>'+Object.keys(opts).map(function(k){
     return '<label class="opt"><input type="radio" name="'+name+'" value="'+k+'"'+(k===cur?' checked':'')+'><span>'+esc(opts[k])+
@@ -1631,8 +1635,11 @@ function renderItem(p, m){
         else p.inner.appendChild(el('div','msg asst', md(b.text)));
       } else if(b.type==='tool_use') addTool(p,b);
       else if(b.type==='thinking' && b.thinking){
-        var tl=p.inner.lastElementChild, th=el('div','thinking', esc(b.thinking));
-        if(tl && tl.classList.contains('tgroup') && !tl.classList.contains('skill')) tl.lastChild.appendChild(th); else p.inner.appendChild(th);
+        var tl=p.inner.lastElementChild, g;
+        if(tl && tl.classList.contains('tgroup') && !tl.classList.contains('skill')) g=tl;   // the current tool/thinking run
+        else { g=toolGroup(p); g.classList.add('thought'); }                                   // a standalone run of its own
+        g.lastChild.appendChild(el('div','thinking', esc(b.thinking)));
+        updGroup(g);
       }
     });
     if(m.error) p.inner.appendChild(el('div','note err', esc('API error: '+m.error)));
