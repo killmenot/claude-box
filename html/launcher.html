@@ -322,6 +322,7 @@
   .msg.user .mmeta{justify-content:flex-end}
   .msg:hover .mmeta,.msg:focus-within .mmeta,.msg.speaking .mmeta{opacity:1}
   .msg .mmeta .mt{padding:3px 6px 3px 0;white-space:nowrap}
+  .msg .mmeta .mv{padding:3px 4px 3px 0;font-size:11px}
   .msg .mmeta button{border:0;background:none;color:inherit;cursor:pointer;padding:3px 7px;border-radius:6px;font:inherit}
   .msg .mmeta button:hover{background:var(--hover);color:var(--ink)}
   @media (hover:none){ .msg .mmeta{opacity:.8} .msg .mmeta button{padding:6px 9px} }
@@ -938,6 +939,7 @@ var VOICE=(function(){
   var mobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   var lang=ls('cb.voiceLang')||'ru-RU';
   var V={supported:!!SR, active:null, rec:null, base:'', finals:'', want:false};
+  V.lang=function(){ return lang; };
   V.label=function(){ for(var i=0;i<LANGS.length;i++) if(LANGS[i][0]===lang) return LANGS[i][1]; return lang; };
   V.cycleLang=function(){
     var i=0; for(;i<LANGS.length;i++) if(LANGS[i][0]===lang) break;
@@ -951,6 +953,7 @@ var VOICE=(function(){
   function commit(p, interim){
     var txt=(V.finals+(interim?interim:'')).replace(/\s+/g,' ').trim();
     p.ta.value = V.base + (V.base && txt && !/\s$/.test(V.base) ? ' ' : '') + txt;
+    if(txt) p.voiced=lang;              // part of this message is dictated (in this language): send() adds its VOICE_NOTE
     p.ta.dispatchEvent(new Event('input'));
   }
   function startRec(p){
@@ -1059,7 +1062,7 @@ function buildChat(p){
   p.ta.addEventListener('input', grow);
   p.cmdEl=c.querySelector('.cmdpop'); p.cmdHint=c.querySelector('.cmdhint');
   p.ta.addEventListener('input', function(){ cmdUpdate(p); });
-  p.ta.addEventListener('input', function(){ if(!p.draftRemote) draftLater(p); });
+  p.ta.addEventListener('input', function(){ if(!p.ta.value.trim() && VOICE.active!==p) p.voiced=''; if(!p.draftRemote) draftLater(p); });
   p.ta.addEventListener('blur', function(){ setTimeout(function(){ cmdClose(p); }, 120); });
   p.cmdEl.addEventListener('mousedown', function(e){ var it=e.target.closest('.ci'); if(!it) return;
     e.preventDefault(); cmdAccept(p, +it.dataset.i); });
@@ -1174,13 +1177,13 @@ function cmdKey(p, e){
 function draftKey(p){ return 'cb.draft.'+(p.token || 'new:'+(p.cwd||'')); }
 function draftLocal(p){ try{ return JSON.parse(ls(draftKey(p))||'null'); }catch(e){ return null; } }
 function draftStore(p, text, at){
-  try{ if(text) localStorage.setItem(draftKey(p), JSON.stringify({text:text, at:at})); else localStorage.removeItem(draftKey(p)); }catch(e){}
+  try{ if(text) localStorage.setItem(draftKey(p), JSON.stringify({text:text, at:at, voice:p.voiced||''})); else localStorage.removeItem(draftKey(p)); }catch(e){}
 }
 function draftLater(p){
   var at=Date.now(); p.draftAt=at; draftStore(p, p.ta.value, at);
   clearTimeout(p.draftT); p.draftT=setTimeout(function(){ draftPush(p); }, 600);
 }
-function draftPush(p){ clearTimeout(p.draftT); if(p.token && p.ready) wsSend({op:'draft', key:p.wire, text:p.ta.value}); }
+function draftPush(p){ clearTimeout(p.draftT); if(p.token && p.ready) wsSend({op:'draft', key:p.wire, text:p.ta.value, voice:p.voiced||''}); }
 // Put text into the composer without echoing it back as a new draft.
 function draftShow(p, text){
   p.draftRemote=true; p.ta.value=text; p.ta.dispatchEvent(new Event('input')); p.draftRemote=false;
@@ -1191,28 +1194,38 @@ function draftRestore(p, srv){
   var loc=draftLocal(p), best=srv||null;
   if(loc && (!best || (loc.at||0)>(best.at||0))) best=loc;
   if(!best || !best.text) { if(loc && srv && (srv.at||0)>=(loc.at||0)) draftStore(p,'',0); return; }
-  draftShow(p, best.text); p.draftAt=best.at||0; draftStore(p, best.text, p.draftAt);
+  p.voiced=best.voice===true?'en-US':(best.voice||''); draftShow(p, best.text); p.draftAt=best.at||0; draftStore(p, best.text, p.draftAt);
   if(best===loc && p.token && (!srv || srv.text!==loc.text)) draftPush(p);   // typed offline: share it
 }
 function draftRemote(p, o){
   if(document.activeElement===p.ta && p.ta.value && p.ta.value!==o.text) return;   // typing here wins
+  if(VOICE.active!==p) p.voiced=o.voice||'';
   p.draftAt=o.at||Date.now(); draftStore(p, o.text, p.draftAt);
   if(p.ta.value!==o.text && !(VOICE.active===p)) draftShow(p, o.text||'');
 }
+// A message that was (partly) dictated goes to the agent with this note on its first line; the
+// chat shows it as a 🎤 mark instead (userTextHtml strips it, also from history).
+// The note is written to the agent in the dictation language (the owner asked for that), so the
+// Russian one is a deliberate exception to the English-only rule for strings.
+var VOICE_NOTES={
+  'ru-RU':'[Набрано голосом: распознавание могло исказить слова или термины. Если что-то непонятно или выглядит странно, уточни, прежде чем делать.]',
+  'en-US':'[Dictated by voice: speech recognition may have garbled some words or technical terms. If something is unclear or looks wrong, ask me before acting.]'
+};
+function voiceNote(lang){ return VOICE_NOTES[lang]||VOICE_NOTES['en-US']; }
 function send(p){
   cmdClose(p); if(p.cmdHint) p.cmdHint.classList.add('hidden');
-  var t=p.ta.value, files=p.files||[];
+  var t=p.ta.value, files=p.files||[], voiced=(p.voiced && t.trim() && t.trim()[0]!=='/')?p.voiced:'';
   if(!t.trim() && !files.length) return;
   if(files.some(function(a){ return a.data===null; })){ note(p,'Still reading the attached files — try again in a moment.'); return; }
-  function clear(){ p.ta.value=''; p.ta.style.height='auto'; p.files=[]; renderAtts(p);
+  function clear(){ p.ta.value=''; p.ta.style.height='auto'; p.files=[]; p.voiced=''; renderAtts(p);
     clearTimeout(p.draftT); p.draftAt=Date.now(); draftStore(p,''); }
-  if(!p.ready){ (p.queue=p.queue||[]).push({t:t, files:files}); clear(); return; }
+  if(!p.ready){ (p.queue=p.queue||[]).push({t:t, files:files, voice:voiced}); clear(); return; }
   var wire=files.map(function(a){ return {name:a.name, type:a.type, data:a.data}; });
-  if(!wsSend({op:'send', key:p.wire, text:t, files:wire})){ note(p,'Not connected to the server — retrying…',true); return; }
+  if(!wsSend({op:'send', key:p.wire, text:voiced?voiceNote(voiced)+'\n'+t:t, files:wire})){ note(p,'Not connected to the server — retrying…',true); return; }
   clear();
   var hint=p.inner.querySelector('.note.hint'); if(hint) hint.remove();
   if(!p.firstText) p.firstText=(t.replace(/\s+/g,' ').trim()||(files[0]&&files[0].name)||'').slice(0,80);
-  addUser(p, t, true, files); scrollEnd(p, true);
+  addUser(p, t, true, files, voiced); scrollEnd(p, true);
   if(p.state==='stopped'||p.state==='idle') setState(p,'starting');
 }
 
@@ -1375,7 +1388,8 @@ function stampMsg(d, raw, ts){
   ts=ts||d._ts||MSG_TS||Date.now(); d._ts=ts; d._raw=String(raw||'');
   var old=d.querySelector(':scope > .mmeta'); if(old) old.remove();
   if(!d._raw.trim()) return;
-  d.appendChild(el('div','mmeta','<span class="mt" title="'+esc(new Date(ts).toLocaleString())+'">'+esc(msgTime(ts))+'</span>'+
+  d.appendChild(el('div','mmeta',(d.classList.contains('voiced')?'<span class="mv" title="Dictated by voice: the agent was told it may contain recognition errors">🎤</span>':'')+
+    '<span class="mt" title="'+esc(new Date(ts).toLocaleString())+'">'+esc(msgTime(ts))+'</span>'+
     '<button type="button" data-mm="copy" title="Copy the message">Copy</button>'+
     '<button type="button" data-mm="say" title="Read the message aloud">'+(READ.el===d?'■ Stop':'🔊 Read aloud')+'</button>'));
 }
@@ -1429,8 +1443,8 @@ document.addEventListener('click', function(e){
     .then(function(){ setTimeout(function(){ b.textContent='Copy'; }, 1500); });
   else if(b.dataset.mm==='say') readAloud(d);
 });
-function addUser(p, text, local, atts){
-  var d=el('div','msg user');
+function addUser(p, text, local, atts, voice){
+  var d=el('div','msg user'); if(voice) d.classList.add('voiced');
   if(atts && atts.length) d.appendChild(el('div','atts', atts.map(function(a){ return attHtml(a); }).join('')));
   if(text.trim() || !(atts && atts.length)){ var b=el('div','b'); b.textContent=text; d.appendChild(b); }
   stampMsg(d, text, local?Date.now():0);
@@ -1688,6 +1702,8 @@ function addToolResult(p, b){
 }
 // user-side text: hide harness wrappers, show slash commands and local command output
 function userTextHtml(p, t, imgs){
+  var voice=false;
+  Object.keys(VOICE_NOTES).forEach(function(k){ var n=VOICE_NOTES[k]; if(!voice && t.indexOf(n)===0){ voice=true; t=t.slice(n.length).replace(/^\r?\n/,''); } });
   // "[Attached files]" block appended by web-chat.js -> chips; inline images come in as imgs
   var atts=(imgs||[]).slice(), am=/(?:^|\n\n)\[Attached files\]\n([\s\S]*)$/.exec(t);
   if(am){
@@ -1713,7 +1729,7 @@ function userTextHtml(p, t, imgs){
   // our own optimistic echo arrives back from the SDK — don't print it twice
   var pe=p.r.pendingEcho||[]; var ix=pe.indexOf(t.trim());
   if(ix>=0){ pe.splice(ix,1); return; }
-  addUser(p, t, false, atts);
+  addUser(p, t, false, atts, voice);
 }
 // ---- skills (/code-review …) run as a forked sub-agent: task_* frames + messages whose
 // parent_tool_use_id points at no visible Task row. They collect into one "skill" block.
@@ -2016,7 +2032,7 @@ function onEvent(p, o){
       if(!/running|starting|requires_action/.test(p.state)) agentsSettle(p);
       renderAgBar(p);
       p.ready=true;
-      (p.queue||[]).splice(0).forEach(function(q){ p.ta.value=q.t; p.files=q.files; send(p); });
+      (p.queue||[]).splice(0).forEach(function(q){ p.ta.value=q.t; p.files=q.files; p.voiced=q.voice||''; send(p); });
       draftRestore(p, o.draft);
       requestAnimationFrame(function(){ scrollEnd(p,true); checkOlder(p); });
       break;
