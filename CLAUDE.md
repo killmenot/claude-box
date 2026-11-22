@@ -20,6 +20,7 @@ Guidance for Claude Code (and other agents) working in this repository.
   `scripts/web-chat.js` — web chat mode: Claude Agent SDK sessions streamed to the launcher over `/chat/ws`.
   `scripts/web-panel.js` — the right-hand Today panel: GitHub via `gh`, calendar/Jira/Slack via a read-only cheap-model MCP run, served at `/panel`.
   `scripts/cb-session.js` — CLI for agents: start / poll chat sessions through `/chat/api/*`.
+  `scripts/web-wire.js` — records what the background agents (Inbox, Today) send to the model and get back: a per-run local HTTPS proxy, served at `/wire`.
   `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with per-task repo clones from `/workspace/repos`), served at `/tasks`.
 - `site/` — the static marketing landing for **claude-box.dev** (Tailwind, self-hosted
   fonts, no CDN; deploy with `./site/deploy.sh`).

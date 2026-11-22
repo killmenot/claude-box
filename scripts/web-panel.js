@@ -35,7 +35,8 @@ const HIDDEN_DAYS = 60;
 
 function log(...a) { console.error('[panel]', ...a); }
 let getSdk = async () => null;
-function init(o) { if (o && o.getSdk) getSdk = o.getSdk; }
+let wireMod = null;   // web-wire.js: records this agent's model traffic
+function init(o) { if (o && o.getSdk) getSdk = o.getSdk; if (o && o.wire) wireMod = o.wire; }
 
 // ---------------------------------------------------------------- GitHub (direct)
 // team review requests count only in repos I work in: where I opened or reviewed a PR lately
@@ -237,6 +238,7 @@ function agentRun(reason) {
     const t0 = Date.now(); agent.lastRun = t0; let out = null, cost = null, err = null, sources = null;
     const calls = {}, answered = {}; // tool_use id -> source; sources with a non-error tool result
     const run = agent.current = newRun(reason, t0);
+    let wireRec = null;
     try {
       if (!gh.data && !gh.busy) await ghRun(); else if (gh.busy) await gh.busy;
       // The prompt waits until the claude.ai connectors are up: they connect in the background,
@@ -244,11 +246,13 @@ function agentRun(reason) {
       let release; const gate = new Promise((r) => { release = r; });
       const prompt = agentPrompt(gh.data);
       async function* input() { await gate; yield { type: 'user', message: { role: 'user', content: prompt }, parent_tool_use_id: null }; }
+      const rec = wireMod ? await wireMod.begin('today', 'Today panel: ' + reason, panelEnv()) : { id: null, env: panelEnv(), finish() {} };
+      run.wire = rec.id; wireRec = rec;
       const q = sdk.query({ prompt: input(), options: {
         cwd: HOME, model: MODEL, persistSession: false, maxTurns: 30, permissionMode: 'default',
         // CLAUDE_WEB_CHAT keeps the tmux hook (notify.sh, loaded with the user's settings) out of this
         // run: otherwise every run registers as a session of whatever tmux tab was active last.
-        env: panelEnv(),
+        env: rec.env,
         // Settings files stay on: without them the SDK does not load the claude.ai connectors
         // (calendar, Jira, Slack, Gmail), which are what this run is for. An "allow" rule in the
         // user's settings could let a tool skip canUseTool, so the same read-only check also runs
@@ -331,6 +335,7 @@ function agentRun(reason) {
       if (snap.sources) for (const k of SOURCES) if ((snap[k] || []).length) snap.sources[k] = true;
       try { fs.writeFileSync(FILE + '.tmp', JSON.stringify(snap)); fs.renameSync(FILE + '.tmp', FILE); } catch (e) { err = e.message; }
     }
+    if (wireRec) wireRec.finish({ cost, answer: out, error: err });
     finishRun(run, { error: err, cost, answered: Object.keys(answered), output: out, sources });
     agent.error = err; log('agent run', reason, err ? 'failed: ' + err : 'ok', 'answered: ' + (Object.keys(answered).join(',') || 'none'), Math.round((Date.now() - t0) / 1000) + 's', cost != null ? '$' + cost.toFixed(4) : '');
   })().finally(() => { agent.running = null; });

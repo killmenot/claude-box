@@ -318,6 +318,13 @@
   .msg.user{display:flex;flex-direction:column;align-items:flex-end}
   .msg.user .b{max-width:85%;background:var(--bubble);border-radius:16px;padding:10px 15px;white-space:pre-wrap}
   .msg.asst > :first-child{margin-top:0} .msg.asst > :last-child{margin-bottom:0}
+  .msg .mmeta{display:flex;gap:2px;align-items:center;margin-top:4px;font:11.5px var(--sans);color:var(--mute);opacity:0;transition:opacity .12s}
+  .msg.user .mmeta{justify-content:flex-end}
+  .msg:hover .mmeta,.msg:focus-within .mmeta,.msg.speaking .mmeta{opacity:1}
+  .msg .mmeta .mt{padding:3px 6px 3px 0;white-space:nowrap}
+  .msg .mmeta button{border:0;background:none;color:inherit;cursor:pointer;padding:3px 7px;border-radius:6px;font:inherit}
+  .msg .mmeta button:hover{background:var(--hover);color:var(--ink)}
+  @media (hover:none){ .msg .mmeta{opacity:.8} .msg .mmeta button{padding:6px 9px} }
   .msg.asst p{margin:.55em 0}
   .msg.asst h1,.msg.asst h2,.msg.asst h3,.msg.asst h4{font-family:var(--sans);font-weight:600;line-height:1.3;margin:1.1em 0 .4em}
   .msg.asst h1{font-size:1.3em}.msg.asst h2{font-size:1.18em}.msg.asst h3{font-size:1.06em}.msg.asst h4{font-size:1em}
@@ -395,6 +402,40 @@
   .agit .d{color:var(--mute);font:11.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .setbtn{border:0;background:none;color:var(--mute);font-size:15px;line-height:1;cursor:pointer;padding:2px 4px}
   .setbtn:hover{color:var(--ink)}
+  #wired{position:fixed;inset:0;z-index:61;background:rgba(14,17,22,.38);display:none;align-items:stretch;justify-content:center;padding:4vh 16px}
+  #wired.on{display:flex}
+  #wired .wbox{width:min(1000px,100%);display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28);overflow:hidden}
+  #wired .whead{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:15px}
+  #wired .whead b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #wired .wbody{flex:1;overflow:auto;padding:10px 16px 24px;font-size:13px}
+  #wired .wnote{color:var(--mute);font-size:12.5px;margin:4px 0 10px;line-height:1.5}
+  #wired .wrun{display:flex;gap:10px;align-items:baseline;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:8px 4px;cursor:pointer;font:13px var(--sans);color:var(--ink)}
+  #wired .wrun:hover{background:var(--hover)}
+  #wired .wrun .src{font:600 11px var(--sans);text-transform:uppercase;letter-spacing:.05em;color:var(--mute);flex:0 0 52px}
+  #wired .wrun .lb{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #wired .wrun .mt{color:var(--mute);font:12px var(--mono);white-space:nowrap}
+  #wired .wreq{border:1px solid var(--line);border-radius:10px;margin:10px 0;padding:8px 12px}
+  #wired .wreq>.rh{font:600 12.5px var(--mono);margin-bottom:4px;word-break:break-all}
+  #wired .wreq>.rh .ok{color:#2f7d4f} #wired .wreq>.rh .bad{color:#b3261e}
+  #wired details{margin:4px 0} #wired summary{cursor:pointer;color:var(--slate);font-size:12.5px}
+  #wired pre{white-space:pre-wrap;word-break:break-word;font:12px/1.45 var(--mono);background:var(--hover);border-radius:8px;padding:8px 10px;margin:4px 0;max-height:60vh;overflow:auto}
+  #wired .wmsg{border-left:3px solid var(--line);padding-left:10px;margin:8px 0}
+  #wired .wmsg.user{border-color:#5b5bd6} #wired .wmsg.assistant,#wired .wmsg.answer{border-color:#2f7d4f}
+  #wired .wmsg>.who{font:600 11px var(--sans);text-transform:uppercase;letter-spacing:.05em;color:var(--mute)}
+  #wired .wtog{display:flex;gap:8px;align-items:center;font-size:14px;margin:6px 0 2px;cursor:pointer}
+  #wired .wtabs{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}
+  #wired .wtabs button{font:600 12.5px var(--sans);border-radius:999px;padding:5px 12px;border:1px solid var(--line);background:var(--panel);color:var(--slate);cursor:pointer}
+  #wired .wtabs button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  #wired h4.wh{margin:14px 0 6px;font-size:13px}
+  #wired .whosts{display:flex;flex-wrap:wrap;gap:6px} #wired .whosts span{font:12px var(--mono);border:1px solid var(--line);border-radius:6px;padding:3px 7px}
+  #wired details.wact{border-bottom:1px solid var(--line);margin:0;padding:6px 2px}
+  #wired details.wact summary{display:flex;gap:10px;align-items:baseline;color:var(--ink)}
+  #wired details.wact .an{font:600 12.5px var(--mono);flex:0 0 auto}
+  #wired details.wact .as{font:12.5px var(--mono);color:var(--slate);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #wired details.wact .at{font-size:11.5px;color:var(--mute);white-space:nowrap}
+  #wired details.wact.err .an{color:#b3261e}
+  #wired .ilnk{border:0;background:none;color:var(--slate);font:600 12.5px var(--sans);cursor:pointer;padding:4px 0}
+  @media (max-width:760px){ #wired{padding:0} #wired .wbox{border-radius:0} #wired .wrun{flex-wrap:wrap;row-gap:2px} #wired .wrun .mt{flex:1 1 100%;padding-left:62px;white-space:normal} }
   #setd{position:fixed;inset:0;z-index:60;background:rgba(14,17,22,.38);display:none;align-items:flex-start;justify-content:center;padding:10vh 16px 16px}
   #setd.on{display:flex}
   #setd .tbox{width:min(460px,100%);max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28)}
@@ -492,6 +533,18 @@
   .box .stat{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11.5px}
   .box .stat i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--stop);margin-right:6px}
   .box .stat.run i{background:var(--work);animation:pulse 1.2s infinite} .box .stat.wait i{background:var(--wait)} .box .stat.idle i{background:var(--live)}
+  /* context fill ring: grey up to 20%, then yellow, orange (over 30%), red (over 40%) */
+  .ctxm{position:relative;display:inline-flex;align-items:center;gap:5px;font:11.5px var(--mono);color:var(--mute);cursor:default;border-radius:6px;padding:2px 3px;outline:none;flex:0 0 auto;--c:var(--mute)}
+  .ctxm:focus-visible{box-shadow:0 0 0 2px var(--iris)}
+  .ctxm svg{width:14px;height:14px;display:block}
+  .ctxm .tr{stroke:var(--line)} .ctxm .fg{stroke:var(--c)}
+  .ctxm.l1{--c:#b98500} .ctxm.l2{--c:#d2601a} .ctxm.l3{--c:#c62828}
+  .ctxm.l1 .n,.ctxm.l2 .n,.ctxm.l3 .n{color:var(--c);font-weight:600}
+  .ctxm .tip{position:absolute;bottom:calc(100% + 8px);right:0;z-index:30;width:270px;max-width:80vw;background:var(--ink);color:var(--paper);border-radius:8px;padding:9px 11px;font:11.5px/1.55 var(--mono);box-shadow:0 10px 30px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .12s;white-space:normal}
+  .ctxm:hover .tip,.ctxm:focus .tip{opacity:1}
+  .ctxm .tip .h{font-weight:600;margin-bottom:3px}
+  .ctxm .tip .r{display:flex;justify-content:space-between;gap:10px;font-variant-numeric:tabular-nums}
+  .ctxm .tip .f{margin-top:4px;opacity:.75;font-family:var(--sans)}
   .sendbtn{width:32px;height:32px;border-radius:50%;border:0;background:var(--ink);color:#fff;cursor:pointer;font-size:16px;display:inline-flex;align-items:center;justify-content:center}
   .sendbtn:disabled{opacity:.3;cursor:default} .stopbtn{background:var(--work)}
   /* voice input */
@@ -667,6 +720,11 @@
 </aside>
 <div id="scrim"></div>
 <div id="menu"></div>
+  <div id="wired" role="dialog" aria-label="Model traffic"><div class="wbox">
+    <div class="whead"><button class="btn ghost hidden" type="button" id="wireback">← All runs</button><b id="wiret">Model traffic</b>
+      <a class="btn ghost hidden" id="wiredl" download>Download JSON</a><button class="btn ghost" type="button" id="wireclose">Close</button></div>
+    <div class="wbody" id="wirebody"></div>
+  </div></div>
   <div id="setd" role="dialog" aria-label="Settings"><div class="tbox">
     <div class="thead"><b>Settings</b><button class="btn ghost" type="button" id="setclose">Close</button></div>
     <div class="tbody" id="setbody"></div>
@@ -972,7 +1030,7 @@ function buildChat(p){
     '<div class="atts"></div><textarea rows="1" placeholder="Message Claude…  ( / for commands )"></textarea>'+
     '<div class="bar"><button class="attbtn" type="button" title="Attach files — or paste / drop them here"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button>'+
     '<input type="file" multiple hidden>'+
-    '<span class="stat"><i></i><span></span></span>'+
+    '<span class="stat"><i></i><span></span></span><span class="ctxm hidden" tabindex="0" role="img"></span>'+
     (VOICE.supported ? '<button class="langbtn" type="button" title="Voice input language"></button>'+
       '<button class="micbtn" type="button" title="Voice input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>' : '')+
     '<button class="sendbtn stopbtn hidden" type="button" title="Stop (Esc)">■</button>'+
@@ -981,7 +1039,7 @@ function buildChat(p){
   p.el=c; p.log=c.querySelector('.log'); p.inner=c.querySelector('.inner');
   p.log.addEventListener('scroll', function(){ checkOlder(p); }, {passive:true});
   p.ta=c.querySelector('textarea'); p.go=c.querySelector('.go'); p.stopb=c.querySelector('.stopbtn');
-  p.stat=c.querySelector('.stat');
+  p.stat=c.querySelector('.stat'); p.ctxm=c.querySelector('.ctxm');
   p.banners=c.querySelector('.banners'); p.permsEl=c.querySelector('.perms'); p.agbar=c.querySelector('.agbar');
   p.r={tools:{}, live:[], seen:{}};
   function grow(){ p.ta.style.height='auto'; p.ta.style.height=Math.min(p.ta.scrollHeight, innerHeight*0.4)+'px';
@@ -1304,10 +1362,77 @@ function olderIn(p, o){
   renderAgBar(p);
   requestAnimationFrame(function(){ checkOlder(p); });
 }
+// ---- under each message: when it was sent, Copy, Read aloud
+var MSG_TS=0;   // time of the message renderItem is drawing (history items carry ts)
+function msgTime(ts){
+  var d=new Date(ts), now=new Date(), t=d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  if(d.toDateString()===now.toDateString()) return t;
+  var o={day:'numeric', month:'short'}; if(d.getFullYear()!==now.getFullYear()) o.year='numeric';
+  return d.toLocaleDateString([], o)+', '+t;
+}
+function stampMsg(d, raw, ts){
+  ts=ts||d._ts||MSG_TS||Date.now(); d._ts=ts; d._raw=String(raw||'');
+  var old=d.querySelector(':scope > .mmeta'); if(old) old.remove();
+  if(!d._raw.trim()) return;
+  d.appendChild(el('div','mmeta','<span class="mt" title="'+esc(new Date(ts).toLocaleString())+'">'+esc(msgTime(ts))+'</span>'+
+    '<button type="button" data-mm="copy" title="Copy the message">Copy</button>'+
+    '<button type="button" data-mm="say" title="Read the message aloud">'+(READ.el===d?'■ Stop':'🔊 Read aloud')+'</button>'));
+}
+function copyText(t){
+  if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(t);
+  return new Promise(function(ok, no){
+    var ta=document.createElement('textarea'); ta.value=t; ta.style.cssText='position:fixed;opacity:0;top:0;left:0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy')?ok():no(new Error('copy failed')); }catch(e){ no(e); } ta.remove();
+  });
+}
+// what a person would read out: no code, no link targets, no markdown marks
+function speakable(t){
+  return String(t||'').replace(/```[\s\S]*?```/g,' (code) ').replace(/`([^`\n]+)`/g,'$1')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g,'$1').replace(/\[([^\]]+)\]\([^)]*\)/g,'$1').replace(/https?:\/\/\S+/g,' (link) ')
+    .replace(/^\s{0,3}#{1,6}\s+/gm,'').replace(/^\s*[-*+]\s+/gm,'').replace(/^\s*\|?[-:| ]{3,}\|?\s*$/gm,'').replace(/\|/g,', ')
+    .replace(/[*_~>]+/g,'').replace(/[ \t]+/g,' ').trim();
+}
+var READ={el:null};
+function readStop(){
+  var d=READ.el; READ.el=null; if(window.speechSynthesis) speechSynthesis.cancel();
+  if(d){ d.classList.remove('speaking'); var b=d.querySelector(':scope > .mmeta [data-mm="say"]'); if(b) b.textContent='🔊 Read aloud'; }
+  SAY.busy=false; voicePlay();
+}
+function readAloud(d){
+  if(!window.speechSynthesis){ return; }
+  var was=READ.el; if(was) readStop(); if(was===d) return;
+  var text=speakable(d._raw); if(!text) return;
+  var ru=(text.match(/[а-яё]/gi)||[]).length > (text.match(/[a-z]/gi)||[]).length/3;
+  var vs=speechSynthesis.getVoices()||[], v=ru?voiceVoice():(vs.filter(function(x){ return /samantha/i.test(x.name); })[0]||vs.filter(function(x){ return /^en/i.test(x.lang); })[0]);
+  // long texts are cut off by some engines: speak sentence-sized pieces one after another
+  var parts=text.match(/[^.!?\n]+[.!?]*|\n+/g)||[text], chunks=[], cur='';
+  parts.forEach(function(s){ s=s.trim(); if(!s) return; if((cur+' '+s).length>220 && cur){ chunks.push(cur); cur=s; } else cur=cur?cur+' '+s:s; });
+  if(cur) chunks.push(cur);
+  voiceHush(); SAY.busy=true;           // voice alerts wait until the reading is over
+  READ.el=d; d.classList.add('speaking');
+  var b=d.querySelector(':scope > .mmeta [data-mm="say"]'); if(b) b.textContent='■ Stop';
+  chunks.forEach(function(c, i){
+    var u=new SpeechSynthesisUtterance(c);
+    if(v){ u.voice=v; u.lang=v.lang; } else u.lang=ru?'ru-RU':'en-US';
+    u.rate=1.05;
+    if(i===chunks.length-1) u.onend=function(){ if(READ.el===d) readStop(); };
+    u.onerror=function(){ if(READ.el===d) readStop(); };
+    speechSynthesis.speak(u);
+  });
+}
+document.addEventListener('click', function(e){
+  var b=e.target.closest && e.target.closest('.mmeta [data-mm]'); if(!b) return;
+  var d=b.closest('.msg'); if(!d) return;
+  if(b.dataset.mm==='copy') copyText(d._raw).then(function(){ b.textContent='✓ Copied'; }, function(){ b.textContent='Copy failed'; })
+    .then(function(){ setTimeout(function(){ b.textContent='Copy'; }, 1500); });
+  else if(b.dataset.mm==='say') readAloud(d);
+});
 function addUser(p, text, local, atts){
   var d=el('div','msg user');
   if(atts && atts.length) d.appendChild(el('div','atts', atts.map(function(a){ return attHtml(a); }).join('')));
   if(text.trim() || !(atts && atts.length)){ var b=el('div','b'); b.textContent=text; d.appendChild(b); }
+  stampMsg(d, text, local?Date.now():0);
   p.inner.appendChild(d);
   if(local) p.r.pendingEcho=(p.r.pendingEcho||[]).concat([text.trim()]);
 }
@@ -1390,17 +1515,152 @@ function setGroup(name, title, sub, opts, hints, cur){
 function openSettings(){
   var tl={}; TOOLMODES.forEach(function(m){ tl[m]=TOOLLBL[m]; });
   $('setbody').innerHTML=setGroup('pmode','Permissions','For every chat; open chats switch right away.', PMODES, PMODEHINT, PMODE)+
-    setGroup('tools','Tool calls in chat','How tool calls show in the conversation.', tl, TOOLHINT, toolMode);
+    setGroup('tools','Tool calls in chat','How tool calls show in the conversation.', tl, TOOLHINT, toolMode)+
+    '<h4>Model traffic</h4><div class="sub">Off by default. When on, every session records what went to the model and back, the commands and file changes it made, and the hosts it connected to.</div>'+
+    '<button class="btn" type="button" id="setwire">Model traffic settings &amp; records</button>';
   $('setd').classList.add('on');
 }
 function closeSettings(){ $('setd').classList.remove('on'); }
 $('setbtn').addEventListener('click', openSettings);
 $('setclose').addEventListener('click', closeSettings);
-$('setd').addEventListener('click', function(e){ if(e.target===this) closeSettings(); });
+$('setd').addEventListener('click', function(e){ if(e.target===this) closeSettings(); else if(e.target.id==='setwire'){ closeSettings(); openWire(); } });
 $('setbody').addEventListener('change', function(e){
   var t=e.target; if(t.name==='pmode') setPMode(t.value); else if(t.name==='tools') setToolMode(t.value);
 });
 document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('setd').classList.contains('on')){ e.stopPropagation(); closeSettings(); } }, true);
+// ===== model traffic: what a session sent to the model, got back, and did (web-wire.js)
+// Recording is off by default (Settings). A run = one agent process: a chat session from start to
+// stop, one Inbox check, one Today panel run.
+var WIRE={id:null, tab:'actions', token:'', from:0, settings:null};
+function wFmtB(n){ return n>=1048576?(n/1048576).toFixed(1)+' MB':n>=1024?Math.round(n/1024)+' KB':(n||0)+' B'; }
+function wFmtT(n){ return n>=1000000?(n/1000000).toFixed(2)+'M':n>=1000?(n/1000).toFixed(1)+'k':String(n||0); }
+function wPre(v){ return '<pre>'+esc(typeof v==='string'?v:JSON.stringify(v,null,2))+'</pre>'; }
+function wDet(sum, inner, open){ return '<details'+(open?' open':'')+'><summary>'+sum+'</summary>'+inner+'</details>'; }
+function wWhen(t){ return new Date(t).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
+function wBlock(b){
+  if(!b || typeof b!=='object') return wPre(b);
+  if(b.type==='text') return wPre(b.text);
+  if(b.type==='thinking') return wDet('thinking', wPre(b.thinking||''));
+  if(b.type==='tool_use'||b.type==='server_tool_use') return '<div class="wnote">tool call: <b>'+esc(b.name)+'</b></div>'+wPre(b.input);
+  if(b.type==='tool_result') return '<div class="wnote">tool result'+(b.is_error?' (error)':'')+'</div>'+wPre(typeof b.content==='string'?b.content:(b.content||[]).map(function(x){ return x.type==='text'?x.text:'['+x.type+']'; }).join('\n'));
+  if(b.type==='image') return '<div class="wnote">[image, '+esc((b.source&&b.source.media_type)||'')+']</div>';
+  return wPre(b);
+}
+function wMsg(role, content){
+  var c=typeof content==='string'?[{type:'text',text:content}]:(content||[]);
+  return '<div class="wmsg '+esc(role)+'"><div class="who">'+esc(role)+'</div>'+c.map(wBlock).join('')+'</div>';
+}
+function wReq(q){
+  var b=q.request.body, r=q.response||{}, ok=r.status>=200&&r.status<400, u=(r.body&&r.body.usage)||{};
+  var h='<div class="wreq"><div class="rh">#'+q.n+' '+esc(q.method)+' '+esc(q.path)+' · <span class="'+(ok?'ok':'bad')+'">'+esc(r.status||r.error||'?')+'</span>'+
+    ' · sent '+wFmtB(q.request.bytes)+(r.ms!=null?' · '+(r.ms/1000).toFixed(1)+'s':'')+' · '+esc(wWhen(q.at))+'</div>';
+  if(b && typeof b==='object' && Array.isArray(b.messages)){
+    var same=function(v){ return v && typeof v==='object' && !Array.isArray(v) && v.$same_as; };
+    var sys=same(b.system)?null:(typeof b.system==='string'?b.system:(b.system||[]).map(function(x){ return x.text||''; }).join('\n\n-----\n\n'));
+    var rest={}; Object.keys(b).forEach(function(k){ if(['system','messages','tools','messagesFrom'].indexOf(k)<0) rest[k]=b[k]; });
+    h+='<div class="wnote">model '+esc(b.model||'')+' · in '+wFmtT((u.input_tokens||0)+(u.cache_read_input_tokens||0)+(u.cache_creation_input_tokens||0))+' tokens · out '+wFmtT(u.output_tokens)+'</div>';
+    h+=same(b.system)?'<div class="wnote">System prompt: same as request #'+b.system.$same_as+'</div>':wDet('System prompt ('+wFmtB((sys||'').length)+')', wPre(sys||''));
+    h+=same(b.tools)?'<div class="wnote">Tools: same as request #'+b.tools.$same_as+'</div>'
+      :wDet('Tools offered to the model ('+(b.tools||[]).length+'): '+esc((b.tools||[]).map(function(t){ return t.name; }).join(', ')), wPre(b.tools||[]));
+    if(b.messagesFrom) h+='<div class="wnote">Messages 1–'+b.messagesFrom.count+' were sent again unchanged (as in request #'+b.messagesFrom.req+'). New in this request:</div>';
+    h+=wDet((b.messagesFrom?'New messages':'Messages sent')+' ('+b.messages.length+')', b.messages.map(function(m){ return wMsg(m.role, m.content); }).join(''), true);
+    h+=wDet('Other request fields', wPre(rest));
+    if(r.body && r.body.content) h+=wDet('Answer'+(r.body.stop_reason?' ('+esc(r.body.stop_reason)+')':''), wMsg('answer', r.body.content), true);
+    else if(r.body) h+=wDet('Answer', wPre(r.body), true);
+  } else {
+    if(b!=null && b!=='') h+=wDet('Request body', wPre(b));
+    if(r.body!=null && r.body!=='') h+=wDet('Response body', wPre(r.body));
+  }
+  h+=wDet('Headers (credentials hidden)', wPre({request:q.request.headers, response:r.headers||{}}));
+  return h+'</div>';
+}
+function wRunLabel(r){
+  if(r.source==='chat'){ var s=r.token&&BYTOK[r.token]; return s?dispName(s):(r.cwd?base(r.cwd):r.label); }
+  return r.label||r.id;
+}
+function wSettingsHtml(st){
+  if(!st || !st.allowed) return '<div class="wnote">Recording is turned off on this server (WEB_WIRE=0).</div>';
+  return '<label class="wtog"><input type="checkbox" data-wtog'+(st.enabled?' checked':'')+'> <b>Record model traffic</b></label>'+
+    '<div class="wnote">When on, every session started from here (chats, Inbox, Today) goes through a recorder inside the container: '+
+    'each request to the model and each answer, every command and file change the agent made, and every host it connected to. '+
+    'Sessions already running are recorded from their next start. Kept in the container only ('+esc(st.dir)+', newest '+st.maxMb+' MB). '+
+    'Console (terminal) sessions are not recorded.</div>';
+}
+function wireList(token){
+  WIRE.id=null; WIRE.token=token||''; $('wireback').classList.add('hidden'); $('wiredl').classList.add('hidden');
+  var s=token&&BYTOK[token]; $('wiret').textContent=s?'Model traffic · '+dispName(s):'Model traffic';
+  var el=$('wirebody'); el.innerHTML='<div class="wnote">Loading…</div>';
+  fetch('wire'+(token?'?token='+encodeURIComponent(token):'')).then(function(r){ return r.json(); }).then(function(o){
+    WIRE.settings=o.settings; var runs=o.runs||[];
+    el.innerHTML=wSettingsHtml(o.settings)+(token?'<div class="wnote"><button class="ilnk" type="button" data-wall>Show all sessions</button></div>':'')+
+      (runs.length?runs.map(function(r){
+        return '<button class="wrun" type="button" data-wid="'+esc(r.id)+'"><span class="src">'+esc(r.source)+'</span><span class="lb">'+esc(wRunLabel(r))+'</span>'+
+          '<span class="mt">'+esc(wWhen(r.started))+' · '+r.requests+' req · '+r.actions+' actions · '+r.hostCount+' hosts · '+wFmtT(r.inTokens)+'→'+wFmtT(r.outTokens)+(r.live?' · running':'')+'</span></button>';
+      }).join(''):'<div class="wnote">'+(o.settings&&o.settings.enabled?'Nothing recorded yet'+(token?' for this session (it is recorded from its next start)':'')+'.':'Nothing recorded.')+'</div>');
+  }).catch(function(e){ el.innerHTML='<div class="wnote">Could not load: '+esc(e.message)+'</div>'; });
+}
+function wActSum(a){
+  var i=a.input||{};
+  return String(i.command||i.file_path||i.notebook_path||i.url||i.pattern||i.query||i.path||i.description||i.prompt||i.skill||(function(){ try{ return JSON.stringify(i); }catch(e){ return ''; } })()).split('\n')[0].slice(0,240);
+}
+function wActions(id, el){
+  fetch('wire/'+encodeURIComponent(id)+'/actions').then(function(r){ if(!r.ok) throw new Error('not found (old runs are removed)'); return r.json(); }).then(function(o){
+    if(WIRE.id!==id || WIRE.tab!=='actions') return;
+    var hosts=Object.keys(o.hosts||{}), h='';
+    h+='<h4 class="wh">Network: hosts it connected to ('+hosts.length+')</h4>';
+    h+=hosts.length?'<div class="whosts">'+hosts.map(function(k){ var x=o.hosts[k]; return '<span title="first '+esc(wWhen(x.first))+', last '+esc(wWhen(x.last))+'"><b>'+esc(k)+'</b> ×'+x.count+'</span>'; }).join('')+'</div>'
+      :'<div class="wnote">None besides the model API.</div>';
+    h+='<div class="wnote">Model API ('+esc(o.meta.upstream||'')+') is not listed: its traffic is in Requests.</div>';
+    h+='<h4 class="wh">Actions: tool calls the model made ('+o.actions.length+')</h4>';
+    h+=o.actions.length?o.actions.map(function(a){
+      return '<details class="wact'+(a.error?' err':'')+'"><summary><span class="an">'+esc(a.name)+'</span><span class="as">'+esc(wActSum(a))+'</span><span class="at">'+esc(wWhen(a.at))+(a.result==null?' · no result':a.error?' · error':'')+'</span></summary>'+
+        '<div class="wnote">input · request #'+a.req+'</div>'+wPre(a.input)+(a.result!=null?'<div class="wnote">result'+(a.error?' (error)':'')+'</div>'+wPre(a.result):'')+'</details>';
+    }).join(''):'<div class="wnote">No tool calls.</div>';
+    el.innerHTML=h;
+  }).catch(function(e){ el.innerHTML='<div class="wnote">'+esc(e.message)+'</div>'; });
+}
+function wRequests(id, el, from){
+  fetch('wire/'+encodeURIComponent(id)+'?from='+from+'&n=20').then(function(r){ if(!r.ok) throw new Error('not found (old runs are removed)'); return r.json(); }).then(function(o){
+    if(WIRE.id!==id || WIRE.tab!=='requests') return;
+    var more=el.querySelector('[data-wmore]'); if(more) more.remove();
+    el.insertAdjacentHTML('beforeend', (from===0&&!o.requests.length?'<div class="wnote">No requests yet.</div>':'')+o.requests.map(wReq).join('')+
+      (o.from+o.requests.length<o.total?'<button class="btn ghost" type="button" data-wmore="'+(o.from+o.requests.length)+'">Load more ('+(o.total-o.from-o.requests.length)+' left)</button>':''));
+  }).catch(function(e){ el.innerHTML='<div class="wnote">'+esc(e.message)+'</div>'; });
+}
+function wireShow(id, tab){
+  WIRE.id=id; WIRE.tab=tab||WIRE.tab||'actions'; $('wireback').classList.remove('hidden');
+  var dl=$('wiredl'); dl.href='wire/'+encodeURIComponent(id)+'/raw'; dl.setAttribute('download', id+'.jsonl'); dl.classList.remove('hidden');
+  var el=$('wirebody'); el.innerHTML='<div class="wnote">Loading…</div>';
+  fetch('wire/'+encodeURIComponent(id)+'?n=1').then(function(r){ if(!r.ok) throw new Error('not found (old runs are removed)'); return r.json(); }).then(function(o){
+    if(WIRE.id!==id) return;
+    var m=o.meta; $('wiret').textContent=wRunLabel(m);
+    el.innerHTML='<div class="wnote">'+esc(m.source)+' · '+esc(wWhen(m.started))+(m.ended?' – '+esc(wWhen(m.ended)):' · still running')+
+      ' · '+m.requests+' requests · sent '+wFmtB(m.sentBytes)+' · received '+wFmtB(m.recvBytes)+(m.cost!=null?' · $'+Number(m.cost).toFixed(4):'')+(m.cwd?' · '+esc(m.cwd):'')+'</div>'+
+      '<div class="wtabs"><button type="button" data-wtab="actions" class="'+(WIRE.tab==='actions'?'on':'')+'">Actions &amp; network</button>'+
+      '<button type="button" data-wtab="requests" class="'+(WIRE.tab==='requests'?'on':'')+'">Requests to the model ('+o.total+')</button></div><div id="wtabbody"></div>';
+    var tb=$('wtabbody');
+    if(WIRE.tab==='actions') wActions(id, tb); else wRequests(id, tb, 0);
+  }).catch(function(e){ el.innerHTML='<div class="wnote">'+esc(e.message)+'</div>'; });
+}
+function openWire(id, token){ $('wired').classList.add('on'); if(id) wireShow(id); else wireList(token); }
+function closeWire(){ $('wired').classList.remove('on'); }
+$('wireclose').addEventListener('click', closeWire);
+$('wireback').addEventListener('click', function(){ wireList(WIRE.token); });
+$('wired').addEventListener('click', function(e){
+  if(e.target===this){ closeWire(); return; }
+  var b=e.target.closest('[data-wid]'); if(b){ wireShow(b.dataset.wid); return; }
+  var t=e.target.closest('[data-wtab]'); if(t){ WIRE.tab=t.dataset.wtab; wireShow(WIRE.id, WIRE.tab); return; }
+  var m=e.target.closest('[data-wmore]'); if(m){ m.disabled=true; wRequests(WIRE.id, $('wtabbody'), +m.dataset.wmore); return; }
+  if(e.target.closest('[data-wall]')) wireList('');
+});
+$('wired').addEventListener('change', function(e){
+  if(!e.target.hasAttribute('data-wtog')) return;
+  var on=e.target.checked;
+  fetch('wire/settings', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({enabled:on})})
+    .then(function(r){ return r.json(); }).then(function(){ wireList(WIRE.token); }, function(){ e.target.checked=!on; });
+});
+document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('wired').classList.contains('on')){ e.stopPropagation(); closeWire(); } }, true);
+document.addEventListener('click', function(e){ var a=e.target.closest && e.target.closest('#agv a[data-wire]'); if(a){ e.preventDefault(); openWire(a.dataset.wire); } });
 function resultText(c){
   if(typeof c==='string') return c;
   if(Array.isArray(c)) return c.map(function(x){ return x.type==='text'?x.text:(x.type==='image'?'[image]':''); }).join('\n');
@@ -1615,6 +1875,7 @@ function renderItem(p, m){
   if(m.type==='system'){ renderSystem(p,m); return; }
   if(m.parent_tool_use_id){ renderSub(p,m); return; }     // Task-row internals stay hidden; skill runs collect
   if(m.uuid){ if(p.r.seen[m.uuid]) return; p.r.seen[m.uuid]=1; }
+  MSG_TS=m.ts||0;
   var msg=m.message||{}, c=msg.content;
   if(m.type==='user'){
     if(typeof c==='string'){ userTextHtml(p,c); return; }
@@ -1631,8 +1892,8 @@ function renderItem(p, m){
     (Array.isArray(c)?c:[]).forEach(function(b){
       if(b.type==='text'){
         var live=p.r.live.shift();
-        if(live){ live.classList.remove('live'); live.innerHTML=md(b.text); }
-        else p.inner.appendChild(el('div','msg asst', md(b.text)));
+        if(live){ live.classList.remove('live'); live.innerHTML=md(b.text); stampMsg(live, b.text); }
+        else { var ad=el('div','msg asst', md(b.text)); stampMsg(ad, b.text); p.inner.appendChild(ad); }
       } else if(b.type==='tool_use') addTool(p,b);
       else if(b.type==='thinking' && b.thinking){
         var tl=p.inner.lastElementChild, g;
@@ -1650,16 +1911,32 @@ function onStream(p, m){
   if(m.parent_tool_use_id) return;
   var ev=m.event||{};
   if(ev.type==='content_block_start' && ev.content_block && ev.content_block.type==='text'){
-    var d=el('div','msg asst live'); d._txt=''; p.inner.appendChild(d); p.r.live.push(d); p.r.cur=d;
+    var d=el('div','msg asst live'); d._txt=''; d._ts=Date.now(); p.inner.appendChild(d); p.r.live.push(d); p.r.cur=d;
   } else if(ev.type==='content_block_delta' && ev.delta && ev.delta.type==='text_delta' && p.r.cur){
     var cur=p.r.cur; cur._txt+=ev.delta.text;
     if(!cur._raf){ cur._raf=requestAnimationFrame(function(){ cur._raf=0; if(!cur.classList.contains('live')) return;
       before(p); cur.innerHTML=md(cur._txt)+'<span class="cursor"></span>'; scrollEnd(p); }); }
   } else if(ev.type==='content_block_stop'){ p.r.cur=null; }
 }
-function finishLive(p){ p.r.live.forEach(function(d){ d.classList.remove('live'); d.innerHTML=md(d._txt||''); }); p.r.live=[]; p.r.cur=null; }
+function finishLive(p){ p.r.live.forEach(function(d){ d.classList.remove('live'); d.innerHTML=md(d._txt||''); stampMsg(d, d._txt||'', d._ts||Date.now()); }); p.r.live=[]; p.r.cur=null; }
 
 function setState(p, st){ p.state=st; renderStatus(p); if(PANES[ACTIVE]===p) renderTop(); }
+// the context fill ring next to the status line; the numbers come from web-chat.js (info.context)
+function ctxK(n){ return n>=1000000?(n/1000000).toFixed(2)+'M':n>=1000?(n/1000).toFixed(1)+'k':String(n||0); }
+function renderCtx(p){
+  var m=p.ctxm, c=p.info&&p.info.context; if(!m) return;
+  if(!c || !c.max){ m.classList.add('hidden'); return; }
+  var pct=c.pct!=null?c.pct:Math.round(c.total/c.max*100), lv=pct>40?3:pct>30?2:pct>20?1:0;
+  var r=5.5, C=2*Math.PI*r, off=C*(1-Math.min(pct,100)/100);
+  var tip='<span class="tip" role="tooltip"><div class="h">Context: '+Number(c.total).toLocaleString('en-US')+' of '+Number(c.max).toLocaleString('en-US')+' tokens ('+pct+'%)</div>'+
+    (c.cats||[]).map(function(k){ return '<div class="r"><span>'+esc(k.name)+(k.kind==='buffer'?' (reserve)':'')+'</span><span>'+ctxK(k.tokens)+'</span></div>'; }).join('')+
+    '<div class="f">'+(c.estimated?'Estimated from the last answer; exact after the next turn. ':'')+'Claude Code compacts the conversation automatically near the limit.</div></span>';
+  m.className='ctxm l'+lv;
+  m.setAttribute('aria-label','Context '+pct+'% full');
+  m.innerHTML='<svg viewBox="0 0 14 14" aria-hidden="true"><circle class="tr" cx="7" cy="7" r="'+r+'" fill="none" stroke-width="2.4"/>'+
+    '<circle class="fg" cx="7" cy="7" r="'+r+'" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="'+C.toFixed(2)+'" stroke-dashoffset="'+off.toFixed(2)+'" transform="rotate(-90 7 7)"/></svg>'+
+    '<span class="n">'+pct+'%</span>'+tip;
+}
 function renderStatus(p){
   if(!p.stat) return;
   var st=p.state, cls={running:'run',starting:'run',requires_action:'wait',idle:'idle'}[st]||'';
@@ -1667,8 +1944,8 @@ function renderStatus(p){
   if(!p.token && st==='stopped') lbl='new session in '+(p.cwd||'');
   var bits=[lbl]; if(p.info.model) bits.push(p.info.model.replace(/^claude-/,''));
   if(p.info.cost!=null) bits.push('$'+Number(p.info.cost).toFixed(2));
-  var pm=p.info.permissionMode; if(pm && pm!=='default') bits.push(PMODES[pm]||pm);
   p.stat.className='stat '+cls; p.stat.querySelector('span').textContent=bits.join(' · ');
+  renderCtx(p);
   p.stopb.classList.toggle('hidden', !(st==='running'||st==='requires_action'||st==='starting'));
 }
 
@@ -1936,7 +2213,9 @@ function renderInbox(){
   });
   if(d.log && d.log.length) h+='<details class="ilog"'+(INBOX.logOpen?' open':'')+'><summary>Coordinator log · model '+esc(d.model||'')+'</summary>'+d.log.map(function(e){
     return '<div>'+esc(new Date(e.at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}))+' · '+esc(e.name||e.token||'')+' · '+
-      esc(e.error?'error: '+e.error:e.sent?'sent: '+e.sent:e.perm?'permission: '+e.perm:(e.kind+' · '+(e.took||0)+'s · $'+Number(e.cost||0).toFixed(4)))+'</div>'; }).join('')+'</details>';
+      esc(e.error?'error: '+e.error:e.sent?'sent: '+e.sent:e.perm?'permission: '+e.perm:(e.kind+' · '+(e.took||0)+'s · $'+Number(e.cost||0).toFixed(4)))+
+      (e.wire?' · <button class="ilnk" type="button" data-wire="'+esc(e.wire)+'">what was sent</button>':'')+'</div>'; }).join('')+
+    '<div><button class="ilnk" type="button" data-wire="">All model traffic</button></div></details>';
   el.innerHTML=h;
   if(fTok){ var t=el.querySelector('.icard[data-tok="'+fTok.replace(/"/g,'')+'"] textarea'); if(t){ t.focus(); try{ t.setSelectionRange(fPos,fPos); }catch(e){} } }
 }
@@ -1952,6 +2231,7 @@ $('inboxbtn').addEventListener('click', function(){ if(INBOX.open){ closeInbox()
 $('ibody').addEventListener('input', function(e){ var c=e.target.closest('.icard'); if(e.target.dataset.ir && c) INBOX.reply[c.dataset.tok]=e.target.value; });
 $('ibody').addEventListener('toggle', function(e){ if(e.target.classList && e.target.classList.contains('ilog')) INBOX.logOpen=e.target.open; }, true);
 $('ibody').addEventListener('click', function(e){
+  var w=e.target.closest('[data-wire]'); if(w){ openWire(w.dataset.wire||null); return; }
   var f=e.target.closest('[data-if]'); if(f){ INBOX.filter=f.dataset.if; renderInbox(); return; }
   var b=e.target.closest('[data-ia]'); if(!b) return;
   var a=b.dataset.ia;
@@ -2040,7 +2320,7 @@ function moveCat(oldTok, newTok){ if(CATS.map[oldTok]){ CATS.map[newTok]=CATS.ma
 var menuEl=$('menu');
 function openMenu(tok, anchor){
   var cur=CATS.map[tok]||'';
-  var h='<button type="button" data-act="rename">✎ Rename…</button><hr><div class="mh">Move to</div>';
+  var h='<button type="button" data-act="rename">✎ Rename…</button><button type="button" data-act="wire">🔍 Model traffic &amp; actions</button><hr><div class="mh">Move to</div>';
   CATS.cats.forEach(function(c){ h+='<button type="button" data-cat="'+esc(c.id)+'"'+(cur===c.id?' class="cur"':'')+'>'+esc(c.name)+'</button>'; });
   h+='<button type="button" data-cat=""'+(cur?'':' class="cur"')+'>No category</button><hr>'+
      '<button type="button" data-cat="__new">＋ New category…</button>';
@@ -2056,6 +2336,7 @@ menuEl.addEventListener('click', function(e){
   if(menuEl.dataset.mode==='task'){ var ta=b.getAttribute('data-ta'); closeMenu(); taskAction(ta, menuEl.dataset.slug); return; }
   var tok=menuEl.dataset.tok; closeMenu();
   if(b.getAttribute('data-act')==='rename'){ renameSession(tok); return; }
+  if(b.getAttribute('data-act')==='wire'){ openWire(null, tok); return; }
   assign(tok, b.getAttribute('data-cat'));
 });
 document.addEventListener('pointerdown', function(e){ if(!menuEl.contains(e.target) && !e.target.closest('.more')) closeMenu(); });
@@ -3045,6 +3326,7 @@ function paRender(r){
   if(r.connectors) h+='<div class="prchips">'+r.connectors.map(function(c){ return '<span class="'+(c.status==='connected'?'ok':c.status==='pending'?'':'bad')+'" title="'+esc(c.error||'')+'">'+esc(c.name.replace(/^claude\.ai /,''))+' '+esc(c.status)+'</span>'; }).join('')+'</div>';
   if(r.status!=='running' && r.answered) h+='<div class="prn">answered: '+esc(r.answered.join(', ')||'none')+'</div>';
   if(r.error) h+='<div class="prn err">'+esc(r.error)+'</div>';
+  if(r.wire) h+='<div class="prn"><a href="#" data-wire="'+esc(r.wire)+'">What went to the model and back</a></div>';
   f.innerHTML=h;
   var tools={};
   (r.events||[]).forEach(function(e){

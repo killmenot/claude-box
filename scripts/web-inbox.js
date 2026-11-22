@@ -123,8 +123,9 @@ async function triage(row, t) {
   const env = Object.assign({}, process.env, { CLAUDE_WEB_CHAT: '1' });
   delete env.WEB_TERMINAL_PASSWORD; delete env.NGROK_AUTHTOKEN;
   const deny = { behavior: 'deny', message: 'No tools in this run.' };
+  const rec = deps.wire ? await deps.wire.begin('inbox', 'Inbox: ' + (row.title || row.name || row.token), env, { token: row.token, cid: row.claudeSessionId }) : { id: null, env, finish() {} };
   const q = sdk.query({ prompt: prompt(row, t), options: {
-    cwd: HOME, model: MODEL, persistSession: false, maxTurns: 3, permissionMode: 'default', env,
+    cwd: HOME, model: MODEL, persistSession: false, maxTurns: 3, permissionMode: 'default', env: rec.env,
     settingSources: [], mcpServers: {}, strictMcpConfig: true,      // no user settings, hooks or connectors
     disallowedTools: ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task', 'WebFetch', 'WebSearch',
       'Workflow', 'CronCreate', 'CronDelete', 'RemoteTrigger', 'PushNotification', 'SendMessage', 'ScheduleWakeup', 'Skill', 'TodoWrite'],
@@ -142,9 +143,9 @@ async function triage(row, t) {
       if (m.structured_output) out = m.structured_output;
       setTimeout(() => { try { q.close(); } catch (_) {} }, 2000);
     }
-  } finally { clearTimeout(timer); }
-  if (!out) throw new Error('no answer from the model');
-  return { out, cost };
+  } finally { clearTimeout(timer); rec.finish({ cost, answer: out }); }
+  if (!out) throw Object.assign(new Error('no answer from the model'), { wire: rec.id });
+  return { out, cost, wire: rec.id };
 }
 
 // ---------- the loop ----------
@@ -190,13 +191,13 @@ async function tick() {
     for (const { r, t } of todo) {
       const t0 = Date.now();
       try {
-        const { out, cost } = await triage(r, t);
+        const { out, cost, wire } = await triage(r, t);
         const act = out.action_label && out.action_text ? { label: clip(out.action_label, 40), text: clip(out.action_text, 600) } : null;
         state.items[r.token] = Object.assign(cardFor(r), { kind: out.kind, summary: clip(out.summary, 600), ask: clip(out.ask, 400),
           short: clip(out.short, 60), action: act, uuid: t.uuid, since: (r.lastActivity ? r.lastActivity * 1000 : now) });
-        addLog({ token: r.token, name: r.title || r.name, kind: out.kind, took: Math.round((Date.now() - t0) / 1000), cost });
+        addLog({ token: r.token, name: r.title || r.name, kind: out.kind, took: Math.round((Date.now() - t0) / 1000), cost, wire });
       } catch (e) {
-        addLog({ token: r.token, name: r.title || r.name, error: clip(e.message, 200) });
+        addLog({ token: r.token, name: r.title || r.name, error: clip(e.message, 200), wire: e.wire || null });
         log('triage failed', r.token, e.message);
         break;                                   // try again next tick
       }

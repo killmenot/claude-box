@@ -47,6 +47,8 @@ function sessionEnv() {
   return e;
 }
 const { pathToFileURL } = require('url');
+let wire = null;   // model traffic recorder (web-wire.js), only when switched on in Settings
+try { wire = require(process.env.WEB_WIRE_MODULE || './web-wire.js'); } catch (e) { console.error('wire log disabled:', e.message); }
 
 const MODULES = process.env.WEB_CHAT_MODULES || '/opt/claude-web-chat/node_modules';
 // files attached in the chat composer are saved here (one folder per message) and the folder is
@@ -226,12 +228,15 @@ class Chat {
   async syncRegistry(state, title) {
     const tok = await registry.upsert({ cid: this.cid, cwd: this.cwd, name: this.name, state, title });
     if (tok && tok !== this.token) { this.token = tok; this.emit({ ev: 'token', token: tok }); }
+    if (this.wire) this.wire.update({ token: this.token, cid: this.cid });
   }
   async start() {
     await sdkReady;
     if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
     if (this.cid && await tmuxAlive(this.name)) throw new Error('This session is open in the console. Switch to chat first (it closes the console).');
     this.input = new InputQueue();
+    this.wire = wire ? await wire.begin('chat', this.name, sessionEnv(), { token: this.token, cid: this.cid, cwd: this.cwd })
+      : { id: null, env: sessionEnv(), update() {}, finish() {} };
     const options = {
       cwd: this.cwd,
       includePartialMessages: true,
@@ -239,7 +244,7 @@ class Chat {
       canUseTool: (tool, input, o) => this.askPermission(tool, input, o),
       // claude-notify (the tmux hook) must not touch the registry for chat-owned sessions —
       // this module keeps those records itself (see scripts/notify.sh).
-      env: sessionEnv(),
+      env: this.wire.env,
       additionalDirectories: [UPLOADS],
       stderr: (d) => log(this.name, String(d).trim()),
     };
@@ -258,6 +263,7 @@ class Chat {
       this.emit({ ev: 'error', text: String((e && e.message) || e) });
     }
     this.q = null; this.input = null; this.turn = [];
+    if (this.wire) { this.wire.finish({ cid: this.cid, token: this.token }); this.wire = null; }
     for (const [id, p] of this.perms) { p.resolve({ behavior: 'deny', message: 'session stopped' }); this.emit({ ev: 'perm_done', id }); }
     this.perms.clear();
     this.setState('stopped');
@@ -290,6 +296,7 @@ class Chat {
     }
     if (m.type === 'result') {
       this.info.cost = m.total_cost_usd; this.emit({ ev: 'info', info: this.info });
+      measureCtx(this);
       this.turn = [];
       this.emit({ ev: 'msg', m });
       if (this.state !== 'requires_action') this.setState('idle');
@@ -301,7 +308,7 @@ class Chat {
         (m.type === 'system' && ['local_command_output', 'compact_boundary', 'task_started', 'task_progress', 'task_notification'].includes(m.subtype))) {
       const working = m.type !== 'system' || m.subtype === 'task_started';
       if (this.state !== 'running' && this.state !== 'requires_action' && working) this.setState('running');
-      if (m.type !== 'stream_event') this.turn.push(m);
+      if (m.type !== 'stream_event') { if (!m.ts) m.ts = Date.now(); this.turn.push(m); }   // when it arrived, for the chat's time stamps
       this.emit({ ev: 'msg', m });
     }
   }
@@ -371,6 +378,44 @@ class Chat {
   }
 }
 
+// ---------- context fill ----------
+// How full each session's context window is, shown as a ring in the chat's status line. Measured
+// with getContextUsage('summary') after every turn (no API call: last answer's usage plus local
+// estimates) and kept per session id, so a session that is not running still shows its last value.
+const CTX_FILE = process.env.WEB_CHAT_CONTEXT || path.join(require('os').homedir(), '.claude', 'web-context.json');
+let CTX = {}; try { CTX = JSON.parse(fs.readFileSync(CTX_FILE, 'utf8')) || {}; } catch (_) {}
+let ctxTimer = null;
+function saveCtx() {
+  clearTimeout(ctxTimer);
+  ctxTimer = setTimeout(() => {
+    const keys = Object.keys(CTX).filter((k) => k !== '_max').sort((a, b) => (CTX[b].at || 0) - (CTX[a].at || 0));
+    for (const k of keys.slice(500)) delete CTX[k];
+    try { fs.writeFileSync(CTX_FILE + '.tmp', JSON.stringify(CTX)); fs.renameSync(CTX_FILE + '.tmp', CTX_FILE); } catch (e) { log('context save', e.message); }
+  }, 1000);
+}
+async function measureCtx(chat) {
+  if (!chat.q || typeof chat.q.getContextUsage !== 'function' || !chat.cid) return;
+  try {
+    const u = await chat.q.getContextUsage({ detail: 'summary' });
+    if (!u || !u.raw_max_tokens) return;
+    const c = { total: u.total_tokens, max: u.raw_max_tokens, pct: u.percentage, model: u.model || '', at: Date.now(),
+      cats: (u.categories || []).filter((k) => k.kind !== 'free' && k.tokens > 0).map((k) => ({ name: k.name, tokens: k.tokens, kind: k.kind })) };
+    CTX[chat.cid] = c; CTX._max = c.max; saveCtx();
+    chat.info.context = c; chat.emit({ ev: 'info', info: chat.info });
+  } catch (e) { log(chat.name, 'context usage', e.message); }
+}
+// Before the first measurement: an estimate from the last main-loop answer's usage in the transcript.
+function estimateCtx(items) {
+  for (let k = items.length - 1; k >= 0; k--) {
+    const i = items[k], u = i.type === 'assistant' && !i.parent_tool_use_id && i.message && i.message.usage;
+    if (!u || !u.input_tokens && !u.cache_read_input_tokens) continue;
+    const total = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
+    const max = CTX._max || null;
+    return { total, max, pct: max ? Math.round(total / max * 100) : null, estimated: true, cats: [] };
+  }
+  return null;
+}
+
 // ---------- history ----------
 async function history(chat) {
   if (!chat.cid) return [];
@@ -381,10 +426,11 @@ async function history(chat) {
   // add what the SDK has streamed this turn but the transcript doesn't have yet
   const seen = new Set(items.map((i) => i.uuid));
   for (const m of chat.turn) if (!seen.has(m.uuid)) items.push(m);
-  const out = [], extra = localOutputs(chat);
+  const out = [], { extra, times } = transcriptExtras(chat);
   for (const i of items) {
     if (i.type !== 'user' && i.type !== 'assistant') continue;
-    out.push({ type: i.type, uuid: i.uuid, message: i.message, parent_tool_use_id: i.parent_tool_use_id || null });
+    const ts = i.ts || times.get(i.uuid) || 0;
+    out.push({ type: i.type, uuid: i.uuid, message: i.message, parent_tool_use_id: i.parent_tool_use_id || null, ts: ts || undefined });
     for (const x of extra.get(i.uuid) || []) out.push(x);
   }
   return out;
@@ -407,13 +453,18 @@ function pageStart(items, end) {
 }
 // Output of slash commands and skills (/code-review, /cost, …) is saved in the transcript as
 // {type:'system', subtype:'local_command', parentUuid, content:'<local-command-stdout>…'}, which
-// getSessionMessages leaves out. Returns parentUuid -> [local_command_output messages].
-function localOutputs(chat) {
-  const map = new Map();
+// getSessionMessages leaves out. Returns { extra: parentUuid -> [local_command_output messages],
+// times: uuid -> when the message was written (ms) }; getSessionMessages has no timestamps either.
+// A transcript line starts with its own fields, so the first "uuid":…,"timestamp":… pair is the message's.
+const UUID_TS = /"uuid":"([^"]+)","timestamp":"([^"]+)"/;
+function transcriptExtras(chat) {
+  const map = new Map(), times = new Map();
   const f = chat.cid && transcriptPath(chat.cid, chat.cwd);
   let text = '';
   try { if (f) text = fs.readFileSync(f, 'utf8'); } catch (_) {}
   for (const l of text.split('\n')) {
+    const t = UUID_TS.exec(l);
+    if (t) { const ms = Date.parse(t[2]); if (ms) times.set(t[1], ms); }
     if (!l.includes('"local_command"')) continue;
     let e; try { e = JSON.parse(l); } catch (_) { continue; }
     if (e.type !== 'system' || e.subtype !== 'local_command' || e.isSidechain) continue;
@@ -423,7 +474,7 @@ function localOutputs(chat) {
     if (!map.has(k)) map.set(k, []);
     map.get(k).push({ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: c });
   }
-  return map;
+  return { extra: map, times };
 }
 
 // ---------- per-socket handling ----------
@@ -457,6 +508,7 @@ function onConnection(ws) {
         let chat = mine.get(key);
         if (!chat) { chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key }); }
         const all = await history(chat), start = pageStart(all, all.length), items = all.slice(start);
+        if (!chat.info.context) chat.info.context = (chat.cid && CTX[chat.cid]) || estimateCtx(all);
         const pend = [...chat.perms].map(([id, p]) => ({ id, tool: p.tool, input: p.input, reason: p.reason, suggestions: p.suggestions.length > 0 }));
         reply({ ev: 'history', key, items, state: chat.state, console: !chat.q && await tmuxAlive(chat.name),
                 info: chat.info, perms: pend, token: chat.token, more: start,
