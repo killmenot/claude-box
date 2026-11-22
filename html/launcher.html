@@ -322,7 +322,7 @@
   .msg.user .mmeta{justify-content:flex-end}
   .msg:hover .mmeta,.msg:focus-within .mmeta,.msg.speaking .mmeta{opacity:1}
   .msg .mmeta .mt{padding:3px 6px 3px 0;white-space:nowrap}
-  .msg .mmeta .mv{padding:3px 4px 3px 0;font-size:11px}
+  .msg .vmk{font:11.5px var(--sans);color:var(--mute);margin-top:3px}
   .msg .mmeta button{border:0;background:none;color:inherit;cursor:pointer;padding:3px 7px;border-radius:6px;font:inherit}
   .msg .mmeta button:hover{background:var(--hover);color:var(--ink)}
   @media (hover:none){ .msg .mmeta{opacity:.8} .msg .mmeta button{padding:6px 9px} }
@@ -1388,8 +1388,7 @@ function stampMsg(d, raw, ts){
   ts=ts||d._ts||MSG_TS||Date.now(); d._ts=ts; d._raw=String(raw||'');
   var old=d.querySelector(':scope > .mmeta'); if(old) old.remove();
   if(!d._raw.trim()) return;
-  d.appendChild(el('div','mmeta',(d.classList.contains('voiced')?'<span class="mv" title="Dictated by voice: the agent was told it may contain recognition errors">🎤</span>':'')+
-    '<span class="mt" title="'+esc(new Date(ts).toLocaleString())+'">'+esc(msgTime(ts))+'</span>'+
+  d.appendChild(el('div','mmeta','<span class="mt" title="'+esc(new Date(ts).toLocaleString())+'">'+esc(msgTime(ts))+'</span>'+
     '<button type="button" data-mm="copy" title="Copy the message">Copy</button>'+
     '<button type="button" data-mm="say" title="Read the message aloud">'+(READ.el===d?'■ Stop':'🔊 Read aloud')+'</button>'));
 }
@@ -1447,6 +1446,7 @@ function addUser(p, text, local, atts, voice){
   var d=el('div','msg user'); if(voice) d.classList.add('voiced');
   if(atts && atts.length) d.appendChild(el('div','atts', atts.map(function(a){ return attHtml(a); }).join('')));
   if(text.trim() || !(atts && atts.length)){ var b=el('div','b'); b.textContent=text; d.appendChild(b); }
+  if(voice) d.appendChild(el('div','vmk','<span title="The agent got a note that this was dictated and may contain recognition errors">🎤 dictated</span>'));
   stampMsg(d, text, local?Date.now():0);
   p.inner.appendChild(d);
   if(local) p.r.pendingEcho=(p.r.pendingEcho||[]).concat([text.trim()]);

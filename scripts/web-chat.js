@@ -399,8 +399,10 @@ async function measureCtx(chat) {
   if (!chat.q || typeof chat.q.getContextUsage !== 'function' || !chat.cid) return;
   try {
     const u = await chat.q.getContextUsage({ detail: 'summary' });
-    if (!u || !u.raw_max_tokens) return;
-    const c = { total: u.total_tokens, max: u.raw_max_tokens, pct: u.percentage, model: u.model || '', at: Date.now(),
+    // the control reply is camelCase (SDKControlGetContextUsageResponse)
+    const max = u && (u.rawMaxTokens || u.maxTokens), total = u && u.totalTokens;
+    if (!max || total == null) { log(chat.name, 'context usage: unexpected reply', Object.keys(u || {}).join(',')); return; }
+    const c = { total, max, pct: u.percentage != null ? Math.round(u.percentage) : Math.round(total / max * 100), model: u.model || '', at: Date.now(),
       cats: (u.categories || []).filter((k) => k.kind !== 'free' && k.tokens > 0).map((k) => ({ name: k.name, tokens: k.tokens, kind: k.kind })) };
     CTX[chat.cid] = c; CTX._max = c.max; saveCtx();
     chat.info.context = c; chat.emit({ ev: 'info', info: chat.info });
