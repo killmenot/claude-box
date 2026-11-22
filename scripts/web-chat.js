@@ -20,12 +20,13 @@
 //     {op:'mode', key, mode}           permission mode (default|acceptEdits|plan|auto)
 //     {op:'release', key}              stop the chat process (before switching to console)
 //     {op:'takeover', key}             kill the console tmux session (before switching to chat)
-//     {op:'draft', key, text}          the unsent composer text (kept per session, sent to other viewers)
+//     {op:'draft', key, text, voice}   the unsent composer text (kept per session, sent to other viewers);
+//                                      voice: the dictation language when part of it was dictated
 //     {op:'older', key, before}        an older page of history, ending before message uuid `before`
 //   server -> client:
 //     {ev:'history', key, items, state, console, info, more}   more = older items not sent yet
 //     {ev:'older', key, items, more}
-//     {ev:'draft', key, text, at}      another viewer changed the unsent text; history carries draft too
+//     {ev:'draft', key, text, at, voice} another viewer changed the unsent text; history carries draft too
 //     {ev:'msg', key, m}               raw SDK message (assistant/user/stream_event/result/system)
 //     {ev:'state', key, state}         idle | running | requires_action | starting | stopped
 //     {ev:'token', key, token}         the session now has a registry token (new or after /clear)
@@ -149,13 +150,14 @@ function saveDrafts() {
   }, 1000);
 }
 // Store a draft and pass it to the session's other viewers (not the one that typed it).
-function setDraft(chat, text, from) {
+function setDraft(chat, text, from, voice) {
   if (!chat.token) return;
   const d = { text: String(text || '').slice(0, DRAFT_MAX), at: Date.now() };
+  if (voice && d.text) d.voice = /^[\w-]{2,12}$/.test(String(voice)) ? String(voice) : 'en-US';   // dictation language
   DRAFTS[chat.token] = d; saveDrafts();
   for (const s of chat.subs) {
     if (from && s.ws === from.ws && s.key === from.key) continue;
-    try { s.ws.send(JSON.stringify({ ev: 'draft', key: s.key, text: d.text, at: d.at })); } catch (_) {}
+    try { s.ws.send(JSON.stringify({ ev: 'draft', key: s.key, text: d.text, at: d.at, voice: d.voice || '' })); } catch (_) {}
   }
 }
 
@@ -540,7 +542,7 @@ function onConnection(ws) {
           }
           break;
         }
-        case 'draft': setDraft(chat, msg.text, { ws, key }); break;
+        case 'draft': setDraft(chat, msg.text, { ws, key }, msg.voice || ''); break;
         case 'interrupt': await chat.interrupt(); break;
         case 'perm': chat.answer(msg.id, msg); break;
         case 'mode': await chat.setMode(String(msg.mode)); break;
