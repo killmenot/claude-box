@@ -70,6 +70,20 @@ bash tests/claude-box.test.sh   # host entry point: first-run setup, docker call
 
 ---
 
+## Running on macOS
+
+Works out of the box: `./claude-box` detects Docker Desktop and switches the network mode to
+explicit port mapping (`WEB_BIND=ports`), so the UI opens at `https://localhost:8443` on the Mac.
+No plugins needed. On Linux (and WSL2) nothing changes — the container keeps sharing the host
+network directly.
+
+Caveat of the mapped mode: the container cannot reach services bound to the Mac's `127.0.0.1`
+(Tailscale socket, local databases). Address those via `host.docker.internal`, the LAN or the
+tailnet IP. Force a mode explicitly with `WEB_BIND=ports` or `WEB_BIND=host` in `.env`
+(host networking on macOS requires an engine with real host support, e.g. OrbStack).
+
+---
+
 ## Using GLM (z.ai) instead of Anthropic
 
 claude-box works with any Anthropic-compatible provider. To run on **GLM**, put this block in `.env`

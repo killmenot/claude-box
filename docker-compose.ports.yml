@@ -1,0 +1,12 @@
+# Overlay for macOS / Docker Desktop: `network_mode: host` there does NOT publish ports to the
+# real machine (the listener stays inside the Docker VM), so we use a plain bridge with explicit
+# port mapping instead — Docker Desktop forwards these to the Mac itself.
+# Enable: automatically on macOS (claude-box detects it), or WEB_BIND=ports in .env.
+# Caveat: without host networking the container cannot reach services bound to the Mac's
+# 127.0.0.1 (Tailscale socket, local DBs) — use host.docker.internal, LAN or tailnet addresses.
+services:
+  web:
+    network_mode: bridge
+    ports:
+      - "${WEB_TERMINAL_INTERFACE:-127.0.0.1}:${WEB_TERMINAL_PORT:-7681}:7681"
+      - "${WEB_TERMINAL_INTERFACE:-127.0.0.1}:${WEB_TLS_PORT:-8443}:8443"
