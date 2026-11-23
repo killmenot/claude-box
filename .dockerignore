@@ -8,4 +8,5 @@ scripts/*.sh
 # the two shell pieces that run inside the image (host-only scripts like certs-fix.sh stay excluded)
 !scripts/web-menu.sh
 !scripts/notify.sh
+!scripts/web-entry.sh
 docker-compose*.yml
