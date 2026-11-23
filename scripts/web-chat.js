@@ -541,7 +541,13 @@ function onConnection(ws) {
         reply({ ev: 'older', key, items: all.slice(start, end), more: start });
         return;
       }
-      const chat = mine.get(key);
+      let chat = mine.get(key);
+      // Self-healing: after a reconnect or a server restart an op can arrive for a key whose
+      // open was lost (the client only re-sends 'open' on its own socket reconnect). If the op
+      // carries an identity, just open the session here instead of dead-ending the pane.
+      if (!chat && (msg.token || msg.cwd)) {
+        chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key });
+      }
       if (!chat) { reply({ ev: 'error', key, text: 'session not open' }); return; }
       switch (msg.op) {
         case 'close':
