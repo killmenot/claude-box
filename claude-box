@@ -146,12 +146,39 @@ setup_login() {
   env_set WEB_TERMINAL_PASSWORD "$pw"
 }
 
+# Several boxes can share one docker daemon (two users of one Mac, two checkouts) only if
+# each has its own container name and its own ports: the container uses the host network, so
+# the internal ttyd port is shared too. Asked once, when .env is created and another box exists.
+taken_names() { docker ps -a --format '{{.Names}}' 2>/dev/null || true; }
+setup_instance() {
+  local others name n=2 off
+  others="$(taken_names | grep -E -e '-web$' || true)"
+  printf '%s\n' "$others" | grep -qx "claude-box-web" || return 0
+  echo
+  echo "Another claude-box already runs on this Docker (container claude-box-web)."
+  echo "This one needs its own name and ports, or starting it would replace that one."
+  while printf '%s\n' "$others" | grep -qx "claude-box-$n-web"; do n=$((n + 1)); done
+  while :; do
+    name="$(ask "  Instance name" "claude-box-$n")"
+    case "$name" in [a-z0-9]*) ;; *) echo "  Start with a lowercase letter or digit." >&2; continue ;; esac
+    case "$name" in *[!a-z0-9_-]*) echo "  Lowercase letters, digits, '_' and '-' only." >&2; continue ;; esac
+    printf '%s\n' "$others" | grep -qx "$name-web" && { echo "  $name-web is taken." >&2; continue; }
+    break
+  done
+  off=$(( (n - 1) * 10 ))
+  env_set CLAUDE_BOX_NAME "$name"
+  env_set WEB_TERMINAL_PORT "$(ask "  Web UI port (http)" "$((7681 + off))")"
+  env_set WEB_TLS_PORT "$(ask "  Web UI port (https)" "$((8443 + off))")"
+  env_set TTYD_PORT "$(ask "  Internal console port" "$((7682 + off))")"
+}
+
 first_run() {
   if [ ! -f "$ENV_FILE" ]; then
     if ! interactive; then echo "✗ $ENV_FILE is missing (copy .env.example and fill it in)." >&2; exit 1; fi
     cp "$REPO/.env.example" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
     echo "Created $ENV_FILE from .env.example (tokens, proxy and other settings live there)."
+    setup_instance
   fi
   setup_workspace
   setup_login
@@ -163,7 +190,26 @@ mkdir -p ./home
 
 compose_files=(-f docker-compose.yml)
 [ "$no_proxy" = 1 ] && compose_files+=(-f docker-compose.no-proxy.yml)
-dc() { docker compose "${compose_files[@]}" "$@"; }
+# A named instance is its own compose project too (the default project is the folder's name,
+# so two checkouts both called claude-box would otherwise be one project).
+name_set="$(env_get CLAUDE_BOX_NAME)"; name="$name_set"
+dc() {
+  if [ -n "$name" ]; then COMPOSE_PROJECT_NAME="$name" docker compose "${compose_files[@]}" "$@"
+  else docker compose "${compose_files[@]}" "$@"; fi
+}
+name="${name:-claude-box}"
+container="$name-web"
+# Refuse to touch a container of the same name that another checkout started: compose would
+# stop and replace it (that is how a second box used to kill the first one).
+guard_owner() {
+  local dir
+  dir="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container" 2>/dev/null || true)"
+  [ -z "$dir" ] || [ "$(cd "$dir" 2>/dev/null && pwd -P || echo "$dir")" = "$REPO" ] && return 0
+  echo "✗ Container $container belongs to another claude-box ($dir)." >&2
+  echo "  Give this one its own CLAUDE_BOX_NAME and ports in $ENV_FILE" >&2
+  echo "  (WEB_TERMINAL_PORT, WEB_TLS_PORT, TTYD_PORT), then run claude-box again." >&2
+  exit 1
+}
 
 port="$(env_get WEB_TERMINAL_PORT)"; port="${port:-7681}"
 tls_port="$(env_get WEB_TLS_PORT)"; tls_port="${tls_port:-8443}"
@@ -174,12 +220,13 @@ login="$(env_get WEB_TERMINAL_USER)"; login="${login:-claude}"
 
 case "$action" in
   stop)
+    guard_owner
     dc rm -sf web
     echo "claude-box stopped."
     exit 0
     ;;
   status)
-    cid="$(docker ps -q --filter label=claude-box.role=web | head -n1)"
+    cid="$(docker ps -q --filter "name=^${container}\$" | head -n1)"
     if [ -z "$cid" ]; then echo "claude-box is not running."; exit 0; fi
     echo "claude-box is running: ${url}"
     url="$(head -n1 ./home/.claude/web-tunnel-url 2>/dev/null || true)"
@@ -192,6 +239,9 @@ esac
 
 # --- start ---
 first_run
+# the setup may have just named this instance
+if [ -z "$name_set" ] && [ -n "$(env_get CLAUDE_BOX_NAME)" ]; then exec "$SELF" "$@"; fi
+guard_owner
 
 # Build bypassing the proxy: compose reads .env at build time too and would pick up HTTPS_PROXY
 # (it is meant only for Claude -> Anthropic at run time). Through the proxy BuildKit fails to
