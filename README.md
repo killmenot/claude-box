@@ -45,7 +45,7 @@ To call `claude-box` from anywhere, add it to PATH (`./claude-box --install` sho
 
 ## What's already set up inside
 
-- **Claude authentication** — `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (obtained via `claude setup-token`).
+- **Claude authentication** — `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (obtained via `claude setup-token`), or a GLM / Anthropic-compatible provider (see [Using GLM](#using-glm-zai-instead-of-anthropic)).
 - **Settings** — the host's `settings.json` is copied (auto mode, theme, etc.).
 - **superpowers plugin** — lives in `home/.claude/plugins/`, active right away.
 - **MCP servers** — user-scope, seeded from `claude-defaults/mcp.json` into `~/.claude.json` at startup: `atlassian`, `github`, `sentry`, `context7`, `kubernetes`, `figma`, `playwright`, `grafana`. Remote ones (`atlassian`/`sentry`/`figma`) are authorized once via `/mcp`; `github` takes `GH_TOKEN`, `context7` takes `CONTEXT7_API_KEY`, `grafana` takes `GRAFANA_URL`+`GRAFANA_SERVICE_ACCOUNT_TOKEN` from `.env`.
@@ -67,6 +67,26 @@ node --test tests/*.test.js     # web server modules: registry, search, preview,
 bash tests/web-menu.test.sh     # console deep links / resume (needs tmux, jq)
 bash tests/claude-box.test.sh   # host entry point: first-run setup, docker calls (docker is stubbed)
 ```
+
+---
+
+## Using GLM (z.ai) instead of Anthropic
+
+claude-box works with any Anthropic-compatible provider. To run on **GLM**, put this block in `.env`
+— Claude Code picks it up in the web chat and in the console alike:
+
+```env
+ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
+ANTHROPIC_AUTH_TOKEN=<your z.ai key>
+ANTHROPIC_DEFAULT_SONNET_MODEL=GLM-5.3-Flash
+ANTHROPIC_DEFAULT_OPUS_MODEL=GLM-5.3-Flash
+ANTHROPIC_DEFAULT_HAIKU_MODEL=GLM-5.3-Flash
+```
+
+`CLAUDE_CODE_OAUTH_TOKEN` must stay **empty** in this mode. Model names are whatever your z.ai plan
+exposes (e.g. `GLM-5.3`, `GLM-5.3-Flash`). Restart with `./claude-box --stop && ./claude-box`.
+The same block can instead live in `home/.claude/settings.json` as `"env": { ... }` — the `.env`
+variant is preferred, keeping secrets in one place.
 
 ---
 
