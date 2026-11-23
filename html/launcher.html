@@ -1546,7 +1546,7 @@ document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('setd
 // ===== model traffic: what a session sent to the model, got back, and did (web-wire.js)
 // Recording is off by default (Settings). A run = one agent process: a chat session from start to
 // stop, one Inbox check, one Today panel run.
-var WIRE={id:null, tab:'actions', token:'', from:0, settings:null};
+var WV={id:null, tab:'actions', token:'', from:0, settings:null};
 function wFmtB(n){ return n>=1048576?(n/1048576).toFixed(1)+' MB':n>=1024?Math.round(n/1024)+' KB':(n||0)+' B'; }
 function wFmtT(n){ return n>=1000000?(n/1000000).toFixed(2)+'M':n>=1000?(n/1000).toFixed(1)+'k':String(n||0); }
 function wPre(v){ return '<pre>'+esc(typeof v==='string'?v:JSON.stringify(v,null,2))+'</pre>'; }
@@ -1602,11 +1602,11 @@ function wSettingsHtml(st){
     'Console (terminal) sessions are not recorded.</div>';
 }
 function wireList(token){
-  WIRE.id=null; WIRE.token=token||''; $('wireback').classList.add('hidden'); $('wiredl').classList.add('hidden');
+  WV.id=null; WV.token=token||''; $('wireback').classList.add('hidden'); $('wiredl').classList.add('hidden');
   var s=token&&BYTOK[token]; $('wiret').textContent=s?'Model traffic · '+dispName(s):'Model traffic';
   var el=$('wirebody'); el.innerHTML='<div class="wnote">Loading…</div>';
   fetch('wire'+(token?'?token='+encodeURIComponent(token):'')).then(function(r){ return r.json(); }).then(function(o){
-    WIRE.settings=o.settings; var runs=o.runs||[];
+    WV.settings=o.settings; var runs=o.runs||[];
     el.innerHTML=wSettingsHtml(o.settings)+(token?'<div class="wnote"><button class="ilnk" type="button" data-wall>Show all sessions</button></div>':'')+
       (runs.length?runs.map(function(r){
         return '<button class="wrun" type="button" data-wid="'+esc(r.id)+'"><span class="src">'+esc(r.source)+'</span><span class="lb">'+esc(wRunLabel(r))+'</span>'+
@@ -1620,7 +1620,7 @@ function wActSum(a){
 }
 function wActions(id, el){
   fetch('wire/'+encodeURIComponent(id)+'/actions').then(function(r){ if(!r.ok) throw new Error('not found (old runs are removed)'); return r.json(); }).then(function(o){
-    if(WIRE.id!==id || WIRE.tab!=='actions') return;
+    if(WV.id!==id || WV.tab!=='actions') return;
     var hosts=Object.keys(o.hosts||{}), h='';
     h+='<h4 class="wh">Network: hosts it connected to ('+hosts.length+')</h4>';
     h+=hosts.length?'<div class="whosts">'+hosts.map(function(k){ var x=o.hosts[k]; return '<span title="first '+esc(wWhen(x.first))+', last '+esc(wWhen(x.last))+'"><b>'+esc(k)+'</b> ×'+x.count+'</span>'; }).join('')+'</div>'
@@ -1636,43 +1636,43 @@ function wActions(id, el){
 }
 function wRequests(id, el, from){
   fetch('wire/'+encodeURIComponent(id)+'?from='+from+'&n=20').then(function(r){ if(!r.ok) throw new Error('not found (old runs are removed)'); return r.json(); }).then(function(o){
-    if(WIRE.id!==id || WIRE.tab!=='requests') return;
+    if(WV.id!==id || WV.tab!=='requests') return;
     var more=el.querySelector('[data-wmore]'); if(more) more.remove();
     el.insertAdjacentHTML('beforeend', (from===0&&!o.requests.length?'<div class="wnote">No requests yet.</div>':'')+o.requests.map(wReq).join('')+
       (o.from+o.requests.length<o.total?'<button class="btn ghost" type="button" data-wmore="'+(o.from+o.requests.length)+'">Load more ('+(o.total-o.from-o.requests.length)+' left)</button>':''));
   }).catch(function(e){ el.innerHTML='<div class="wnote">'+esc(e.message)+'</div>'; });
 }
 function wireShow(id, tab){
-  WIRE.id=id; WIRE.tab=tab||WIRE.tab||'actions'; $('wireback').classList.remove('hidden');
+  WV.id=id; WV.tab=tab||WV.tab||'actions'; $('wireback').classList.remove('hidden');
   var dl=$('wiredl'); dl.href='wire/'+encodeURIComponent(id)+'/raw'; dl.setAttribute('download', id+'.jsonl'); dl.classList.remove('hidden');
   var el=$('wirebody'); el.innerHTML='<div class="wnote">Loading…</div>';
   fetch('wire/'+encodeURIComponent(id)+'?n=1').then(function(r){ if(!r.ok) throw new Error('not found (old runs are removed)'); return r.json(); }).then(function(o){
-    if(WIRE.id!==id) return;
+    if(WV.id!==id) return;
     var m=o.meta; $('wiret').textContent=wRunLabel(m);
     el.innerHTML='<div class="wnote">'+esc(m.source)+' · '+esc(wWhen(m.started))+(m.ended?' – '+esc(wWhen(m.ended)):' · still running')+
       ' · '+m.requests+' requests · sent '+wFmtB(m.sentBytes)+' · received '+wFmtB(m.recvBytes)+(m.cost!=null?' · $'+Number(m.cost).toFixed(4):'')+(m.cwd?' · '+esc(m.cwd):'')+'</div>'+
-      '<div class="wtabs"><button type="button" data-wtab="actions" class="'+(WIRE.tab==='actions'?'on':'')+'">Actions &amp; network</button>'+
-      '<button type="button" data-wtab="requests" class="'+(WIRE.tab==='requests'?'on':'')+'">Requests to the model ('+o.total+')</button></div><div id="wtabbody"></div>';
+      '<div class="wtabs"><button type="button" data-wtab="actions" class="'+(WV.tab==='actions'?'on':'')+'">Actions &amp; network</button>'+
+      '<button type="button" data-wtab="requests" class="'+(WV.tab==='requests'?'on':'')+'">Requests to the model ('+o.total+')</button></div><div id="wtabbody"></div>';
     var tb=$('wtabbody');
-    if(WIRE.tab==='actions') wActions(id, tb); else wRequests(id, tb, 0);
+    if(WV.tab==='actions') wActions(id, tb); else wRequests(id, tb, 0);
   }).catch(function(e){ el.innerHTML='<div class="wnote">'+esc(e.message)+'</div>'; });
 }
 function openWire(id, token){ $('wired').classList.add('on'); if(id) wireShow(id); else wireList(token); }
 function closeWire(){ $('wired').classList.remove('on'); }
 $('wireclose').addEventListener('click', closeWire);
-$('wireback').addEventListener('click', function(){ wireList(WIRE.token); });
+$('wireback').addEventListener('click', function(){ wireList(WV.token); });
 $('wired').addEventListener('click', function(e){
   if(e.target===this){ closeWire(); return; }
   var b=e.target.closest('[data-wid]'); if(b){ wireShow(b.dataset.wid); return; }
-  var t=e.target.closest('[data-wtab]'); if(t){ WIRE.tab=t.dataset.wtab; wireShow(WIRE.id, WIRE.tab); return; }
-  var m=e.target.closest('[data-wmore]'); if(m){ m.disabled=true; wRequests(WIRE.id, $('wtabbody'), +m.dataset.wmore); return; }
+  var t=e.target.closest('[data-wtab]'); if(t){ WV.tab=t.dataset.wtab; wireShow(WV.id, WV.tab); return; }
+  var m=e.target.closest('[data-wmore]'); if(m){ m.disabled=true; wRequests(WV.id, $('wtabbody'), +m.dataset.wmore); return; }
   if(e.target.closest('[data-wall]')) wireList('');
 });
 $('wired').addEventListener('change', function(e){
   if(!e.target.hasAttribute('data-wtog')) return;
   var on=e.target.checked;
   fetch('wire/settings', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({enabled:on})})
-    .then(function(r){ return r.json(); }).then(function(){ wireList(WIRE.token); }, function(){ e.target.checked=!on; });
+    .then(function(r){ return r.json(); }).then(function(){ wireList(WV.token); }, function(){ e.target.checked=!on; });
 });
 document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('wired').classList.contains('on')){ e.stopPropagation(); closeWire(); } }, true);
 document.addEventListener('click', function(e){ var a=e.target.closest && e.target.closest('#agv a[data-wire]'); if(a){ e.preventDefault(); openWire(a.dataset.wire); } });
