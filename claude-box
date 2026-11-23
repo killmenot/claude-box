@@ -197,6 +197,19 @@ mkdir -p ./home
 
 compose_files=(-f docker-compose.yml)
 [ "$no_proxy" = 1 ] && compose_files+=(-f docker-compose.no-proxy.yml)
+# Network mode: on Linux (incl. WSL2) the container shares the host network directly (Tailscale,
+# DBs). Docker Desktop on macOS does NOT map host-mode ports to the real machine, so there we
+# swap to bridge + explicit ports (docker-compose.ports.yml). WEB_BIND overrides the auto choice.
+bind="$(env_get WEB_BIND)"; bind="${bind:-auto}"
+bind_ports=0
+case "$bind" in
+  ports) bind_ports=1 ;;
+  host)  bind_ports=0 ;;
+  auto)  case "$(uname -s)" in Darwin*|MINGW*|MSYS*|CYGWIN*) bind_ports=1 ;; esac ;;
+  *)     echo "claude-box: WEB_BIND must be auto, host or ports (got: $bind)" >&2; exit 1 ;;
+esac
+bind_name=$([ "$bind_ports" = 1 ] && echo "ports (bridge+mapping)" || echo "host")
+[ "$bind_ports" = 1 ] && compose_files+=(-f docker-compose.ports.yml)
 # A named instance is its own compose project too (the default project is the folder's name,
 # so two checkouts both called claude-box would otherwise be one project).
 name_set="$(env_get CLAUDE_BOX_NAME)"; name="$name_set"
@@ -278,6 +291,7 @@ WEB_TUNNEL="$([ "$tunnel" = 1 ] && echo 1 || true)" dc up -d web
 echo
 echo "claude-box is up:"
 echo "  ${url}${url_note}"
+echo "  network: ${bind_name}"
 [ -n "$(env_get WEB_TERMINAL_PASSWORD)" ] && echo "  login: ${login}"
 
 if [ "$tunnel" = 1 ]; then

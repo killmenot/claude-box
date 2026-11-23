@@ -96,6 +96,24 @@ bash "$repo/claude-box" --stop </dev/null >"$tmp/out" 2>&1; rc=$?
 check "owner guard: foreign container refuses to stop"  1 "$rc"
 check "owner guard: explains and names no rm"           1 "$(grep -c 'belongs to another claude-box' "$tmp/out")"
 check "owner guard: no rm attempted"                    0 "$(grep -c 'rm -sf web' "$tmp/docker.log")"
+# network mode: auto on Linux stays host; WEB_BIND=ports adds the overlay
+printf '#!/bin/sh
+echo "docker $*" >> "%s/docker.log"
+exit 0
+' "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
+printf 'PROJECT_DIR=%s
+WEB_TERMINAL_PASSWORD=abcdefgh
+' "$HOME/workspace" > "$repo/.env"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" </dev/null >/dev/null 2>&1
+check "linux auto: no ports overlay"               0 "$(grep -c 'docker-compose.ports.yml' "$tmp/docker.log")"
+printf 'PROJECT_DIR=%s
+WEB_TERMINAL_PASSWORD=abcdefgh
+WEB_BIND=ports
+' "$HOME/workspace" > "$repo/.env"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" </dev/null >/dev/null 2>&1
+check "WEB_BIND=ports: overlay passed to compose"  2 "$(grep -c 'docker-compose.ports.yml' "$tmp/docker.log" | tr -d ' ')"
 bash "$repo/claude-box" --bogus </dev/null >/dev/null 2>&1; rc=$?
 check "unknown option: exit 2"                     2 "$rc"
 
