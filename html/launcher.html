@@ -939,6 +939,8 @@ var VOICE=(function(){
   var mobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   var lang=ls('cb.voiceLang')||'ru-RU';
   var V={supported:!!SR, active:null, rec:null, base:'', finals:'', want:false};
+  var SILENCE_MS=10000, quiet=null;   // no speech this long -> the mic turns itself off
+  function hush(){ clearTimeout(quiet); quiet=V.active?setTimeout(function(){ V.stop(true); }, SILENCE_MS):null; }
   V.lang=function(){ return lang; };
   V.label=function(){ for(var i=0;i<LANGS.length;i++) if(LANGS[i][0]===lang) return LANGS[i][1]; return lang; };
   V.cycleLang=function(){
@@ -965,9 +967,10 @@ var VOICE=(function(){
         var res=e.results[i], t=res[0].transcript;
         if(res.isFinal) V.finals+=(V.finals?' ':'')+t.trim(); else interim+=t;
       }
-      commit(p, ''); show(p, interim.trim());
+      commit(p, ''); show(p, interim.trim()); hush();
       p.lastInterim=interim.trim();
     };
+    r.onspeechstart=hush;
     r.onerror=function(e){
       if(e.error==='no-speech' || e.error==='aborted') return;
       V.want=false;
@@ -984,6 +987,7 @@ var VOICE=(function(){
     r.start();
   }
   function finish(p){
+    clearTimeout(quiet); quiet=null;
     if(p.lastInterim){ V.finals+=(V.finals?' ':'')+p.lastInterim; p.lastInterim=''; commit(p,''); }
     V.rec=null; V.active=null; V.want=false;
     p.mic.classList.remove('on'); p.voiceEl.classList.remove('on');
@@ -995,6 +999,7 @@ var VOICE=(function(){
     V.active=p; V.want=true; V.finals=''; V.base=p.ta.value; p.lastInterim='';
     p.mic.classList.add('on'); p.voiceEl.classList.add('on'); show(p,'');
     try{ startRec(p); }catch(e){ finish(p); note(p, esc('Voice input failed to start: '+e.message), true); }
+    hush();
   };
   // keep=true: the phrase being spoken right now is kept as text (stop by the user / before sending)
   V.stop=function(keep){
@@ -1006,6 +1011,8 @@ var VOICE=(function(){
     try{ r && r.stop(); }catch(_){}
   };
   V.toggle=function(p){ if(V.active===p) V.stop(true); else V.start(p); };
+  // another browser tab or a minimized window: stop listening (what was said stays in the composer)
+  document.addEventListener('visibilitychange', function(){ if(document.hidden && V.active) V.stop(true); });
   return V;
 })();
 
@@ -1309,6 +1316,7 @@ function openShell(dir){
   var p=makePane(key,{mode:'console', cwd:dir}); p.shell=dir; activate(key);
 }
 function showBlank(){
+  if(VOICE.active) VOICE.stop(true);
   if(INBOX.open) closeInbox(true);
   ACTIVE=null; Object.keys(PANES).forEach(function(k){ var q=PANES[k];
     if(q.el) q.el.classList.remove('on'); if(q.iframe) q.iframe.classList.remove('on'); });
@@ -2183,6 +2191,7 @@ function inboxLoad(){
 }
 function inboxPoll(){ clearTimeout(INBOX.timer); INBOX.timer=setTimeout(function(){ inboxLoad().then(inboxPoll); }, INBOX.open?8000:30000); }
 function openInbox(){
+  if(VOICE.active) VOICE.stop(true);
   INBOX.open=true; $('inboxv').classList.add('on'); $('inboxbtn').classList.add('on');
   $('app').classList.remove('drawer'); renderTop(); renderInbox(); inboxLoad(); inboxPoll();
 }
