@@ -921,7 +921,7 @@ function wsConnect(){
   var url=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+location.pathname.replace(/[^/]*$/,'')+'chat/ws';
   WS=new WebSocket(url);
   WS.onopen=function(){ WSOPEN=true; wsRetry=0;
-    Object.keys(WIRE).forEach(function(w){ var p=WIRE[w]; if(p.mode==='chat') openChat(p); }); };
+    Object.keys(WIRE).forEach(function(w){ var p=WIRE[w]; if(p && p.mode==='chat') openChat(p); }); };   // p: skip stale entries, one bad key must not blank every chat
   WS.onmessage=function(e){ var o; try{ o=JSON.parse(e.data); }catch(_){ return; } var p=WIRE[o.key]; if(p) onEvent(p,o); };
   WS.onclose=function(){ WSOPEN=false; setTimeout(wsConnect, Math.min(4000, 300*(++wsRetry))); };
 }
