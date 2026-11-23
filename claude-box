@@ -213,9 +213,14 @@ guard_owner() {
 
 port="$(env_get WEB_TERMINAL_PORT)"; port="${port:-7681}"
 tls_port="$(env_get WEB_TLS_PORT)"; tls_port="${tls_port:-8443}"
-# the address to open: https (secure context: clipboard + notifications); plain http only when TLS is off
-if [ "$(env_get WEB_TLS)" = 0 ]; then url="http://localhost:${port}"; url_note=""
-else url="https://localhost:${tls_port}"; url_note="   (self-signed; enables clipboard and notifications)"; fi
+# the address to open: what the UI actually listens on (WEB_TERMINAL_INTERFACE), not just localhost.
+# https is the default (secure context: clipboard and notifications); plain http only when TLS is off.
+iface="$(env_get WEB_TERMINAL_INTERFACE)"; iface="${iface:-127.0.0.1}"
+host="$iface"
+[ "$iface" = 127.0.0.1 ] && host="localhost"
+[ "$iface" = 0.0.0.0 ] && host="$(hostname -I 2>/dev/null | awk '{print $1}')" && host="${host:-localhost}"
+if [ "$(env_get WEB_TLS)" = 0 ]; then url="http://${host}:${port}"; url_note=""
+else url="https://${host}:${tls_port}"; url_note="   (self-signed; enables clipboard and notifications)"; fi
 login="$(env_get WEB_TERMINAL_USER)"; login="${login:-claude}"
 
 case "$action" in
