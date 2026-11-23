@@ -93,3 +93,22 @@ test('sidecar: the https listener starts even when the cert appears after the mo
   });
   assert.match(out, /sidecar https:\/\/127\.0\.0\.1:\d+/, out);
 });
+
+test('pickTtydPort: finds the first free loopback port, explicit TTYD_PORT wins', async () => {
+  const net = require('net');
+  const { pickTtydPort } = require('../scripts/web-serve.js');
+  const base = Number(process.env.WEB_TERMINAL_PORT || '7681') + 1;   // the search starts here
+  const holders = [];
+  for (const p of [base, base + 1]) {                                   // hold the first two candidates
+    const srv = net.createServer();
+    await new Promise((res) => { srv.once('error', res); srv.listen(p, '127.0.0.1', res); });
+    holders.push(srv);                                                  // a failed listen = already busy
+  }
+  process.env.TMUX_TMPDIR = tmp;
+  delete process.env.TTYD_PORT;
+  assert.strictEqual(await pickTtydPort(), String(base + 2));           // skips past the busy ones
+  process.env.TTYD_PORT = '7777';
+  assert.strictEqual(await pickTtydPort(), '7777');                    // explicit wins
+  delete process.env.TTYD_PORT;
+  for (const srv of holders) if (srv.listening) srv.close();
+});
