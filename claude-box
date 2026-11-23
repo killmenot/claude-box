@@ -178,6 +178,11 @@ first_run() {
     cp "$REPO/.env.example" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
     echo "Created $ENV_FILE from .env.example (tokens, proxy and other settings live there)."
+    if [ -z "$(env_get CLAUDE_CODE_OAUTH_TOKEN)" ] && [ -z "$(env_get ANTHROPIC_BASE_URL)" ]; then
+      echo "  Claude auth is not configured. Either set CLAUDE_CODE_OAUTH_TOKEN (Anthropic), or"
+      echo "  ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + ANTHROPIC_DEFAULT_*_MODEL (GLM / any"
+      echo "  Anthropic-compatible provider) — see README \"Using GLM\"."
+    fi
     setup_instance
   fi
   # the container must run as this host user, or it cannot write the ./home bind mount
