@@ -483,6 +483,18 @@ function transcriptExtras(chat) {
 
 // ---------- per-socket handling ----------
 function sanitizeName(s) { return String(s || '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 40) || 'chat'; }
+// Launch directory of a transcript: the registry stores Claude's CURRENT cwd (it drifts deeper
+// as the session cd-s around), while the transcript lives in the project dir of the LAUNCH
+// directory — the same mismatch the console resume walks up for (web-menu.sh resume_cwd). Without
+// this, getSessionMessages({dir}) finds nothing and an old session opens empty.
+function launchDir(cid, cwd) {
+  const enc = (d) => String(d).replace(/[^a-zA-Z0-9]/g, '-');
+  const has = (d) => { try { return fs.existsSync(path.join(PROJECTS, enc(d), cid + '.jsonl')); } catch (_) { return false; } };
+  if (!cwd || has(cwd)) return cwd;
+  for (let d = path.dirname(cwd); d && d !== path.parse(d).root; d = path.dirname(d)) if (has(d)) return d;
+  return cwd;
+}
+
 async function chatFor(msg) {
   if (msg.token) {
     const rec = await registry.get(msg.token);
@@ -490,7 +502,8 @@ async function chatFor(msg) {
     const ex = BY_CID.get(rec.claudeSessionId);
     if (ex) return ex;
     for (const c of CHATS) if (c.token === msg.token) return c;
-    return new Chat({ cid: rec.claudeSessionId, cwd: rec.cwd, name: rec.tmuxSession || rec.name || ('chat-' + msg.token), token: msg.token });
+    return new Chat({ cid: rec.claudeSessionId, cwd: launchDir(rec.claudeSessionId, rec.cwd) || rec.cwd,
+      name: rec.tmuxSession || rec.name || ('chat-' + msg.token), token: msg.token });
   }
   const cwd = msg.cwd && path.resolve(msg.cwd);
   if (!cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('folder not found: ' + msg.cwd);
@@ -816,5 +829,5 @@ async function sendTo(token, text) {
   return { via: 'chat' };
 }
 
-module.exports = { handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+module.exports = { launchDir, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };
