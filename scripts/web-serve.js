@@ -20,15 +20,29 @@ const warn = (...a) => console.error('claude-box web:', ...a);
 
 const PORT = env.WEB_TERMINAL_PORT || '7681';
 const IFACE = env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
-// ttyd (the console) lives on loopback NEXT to the UI port unless pinned: every instance on a
-// shared daemon gets its own pair without manual ports (WEB_TERMINAL_PORT + 1 = the old default 7682).
-const TTYD_PORT = env.TTYD_PORT || String(Number(env.WEB_TERMINAL_PORT || 7681) + 1);
+// ttyd (the console) lives on loopback. When TTYD_PORT is not pinned, a free loopback port is
+// FOUND at startup instead of guessed: several boxes share one daemon, and their UI ports are
+// arbitrary — a "+1" guess collides with another instance's UI port and crash-loops the container.
+const net = require('net');
+function probeFree(port) {
+  return new Promise((res) => {
+    const srv = net.createServer();
+    srv.once('error', () => res(false));
+    srv.listen(port, '127.0.0.1', () => srv.close(() => res(true)));
+  });
+}
+async function pickTtydPort() {
+  if (env.TTYD_PORT) return env.TTYD_PORT;
+  const base = Number(PORT) + 1;
+  for (let p = base; p < base + 50; p++) if (await probeFree(p)) return String(p);
+  return String(base);      // nothing free in range: let ttyd fail visibly, same as before
+}
 const TLS_PORT = env.WEB_TLS_PORT || '8443';
 const USER = env.WEB_TERMINAL_USER || 'claude';
 const PW = env.WEB_TERMINAL_PASSWORD || '';
 const NGROK_TOKEN = env.NGROK_AUTHTOKEN || '';
 const RESTORE = (env.WEB_RESTORE_SESSIONS || '1') !== '0';
-Object.assign(env, { WEB_TERMINAL_PORT: PORT, WEB_TERMINAL_INTERFACE: IFACE, TTYD_PORT, WEB_TLS_PORT: TLS_PORT });
+Object.assign(env, { WEB_TERMINAL_PORT: PORT, WEB_TERMINAL_INTERFACE: IFACE, WEB_TLS_PORT: TLS_PORT });
 
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return null; } };
 function writeJson(f, o) { const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(o, null, 2)); fs.renameSync(t, f); }
@@ -140,9 +154,9 @@ function startTunnel() {
 }
 
 // ---------- 4-6. run ----------
-function main() {
+async function main() {
   try {
-    run();
+    await run();
   } catch (e) {
     if (e && /EACCES/.test(String(e.code || e.message))) {
       warn(`${e.message}`);
@@ -153,11 +167,15 @@ function main() {
     throw e;
   }
 }
-function run() {
+async function run() {
   if (IFACE !== '127.0.0.1' && !PW) {
     warn(`WARNING: listening on ${IFACE} WITHOUT a password — an open writable shell exposed to the outside!`);
     warn('         Set WEB_TERMINAL_PASSWORD in .env.');
   }
+  // pick the ttyd port BEFORE the sidecar loads: the sidecar reads TTYD_PORT from the env at
+  // require time (it proxies /term there)
+  env.TTYD_PORT = await pickTtydPort();
+  const TTYD_PORT = env.TTYD_PORT;
   // load the sidecar while the web login is still in the environment (it reads it at load),
   // then take the secrets out of the environment for everything spawned from here on
   const sidecar = require('./web-sidecar.js');
@@ -212,5 +230,5 @@ function run() {
   }
 }
 
-module.exports = { seedDefaults, dropSecrets, SECRET_ENV };
+module.exports = { seedDefaults, pickTtydPort, dropSecrets, SECRET_ENV };
 if (require.main === module) main();
