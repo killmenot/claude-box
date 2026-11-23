@@ -79,7 +79,19 @@ check "--no-proxy: proxy overlay used"             1 "$(grep -c 'up -d web' "$tm
 check "--no-proxy: overlay file passed"            2 "$(grep -c 'docker-compose.no-proxy.yml' "$tmp/docker.log")"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --stop </dev/null >/dev/null 2>&1
-check "--stop: removes the web container"          "docker compose -f docker-compose.yml rm -sf web" "$(cat "$tmp/docker.log")"
+check "--stop: removes the web container"          1 "$(grep -c 'compose -f docker-compose.yml rm -sf web' "$tmp/docker.log")"
+
+# owner guard: a container started by ANOTHER claude-box (different working dir) must not be stopped
+printf '#!/bin/sh
+if [ "$1" = inspect ]; then echo /other/box; exit 0; fi
+echo "docker $*" >> "%s/docker.log"
+exit 0
+' "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" --stop </dev/null >"$tmp/out" 2>&1; rc=$?
+check "owner guard: foreign container refuses to stop"  1 "$rc"
+check "owner guard: explains and names no rm"           1 "$(grep -c 'belongs to another claude-box' "$tmp/out")"
+check "owner guard: no rm attempted"                    0 "$(grep -c 'rm -sf web' "$tmp/docker.log")"
 bash "$repo/claude-box" --bogus </dev/null >/dev/null 2>&1; rc=$?
 check "unknown option: exit 2"                     2 "$rc"
 
