@@ -13,11 +13,11 @@ services:
     labels:
       - claude-box.role=web
       - claude-box.instance=${CLAUDE_BOX_NAME:-claude-box}
-    # Run as the HOST user (BOX_UID/BOX_GID, auto-filled in .env on the first start): the ./home
-    # bind mount is owned by the host user, so uid 1000 from the image cannot write into it when
-    # the host user is not uid 1000 (a second user, macOS). HOME is pinned because a numeric uid
-    # has no /etc/passwd entry in the container.
-    user: "${BOX_UID:-1000}:${BOX_GID:-1000}"
+    # Starts as root only so the entrypoint can name BOX_UID (the host user, auto-filled in .env
+    # by claude-box) in /etc/passwd, then immediately drops to it (web-entry.sh). Everything runs
+    # as the host user, so the ./home bind mount stays writable even when the host user is not
+    # uid 1000 (a second user, macOS).
+    user: "0:0"
     init: true                # tini as PID1: forwards SIGTERM to the entrypoint + reaps zombies
     restart: unless-stopped   # come back after a docker/host restart (sessions are restored, see web-serve.js)
     stop_grace_period: 15s    # give Claude in tmux time to save before the container is torn down

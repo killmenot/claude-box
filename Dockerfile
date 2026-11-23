@@ -98,6 +98,10 @@ COPY scripts/notify.sh /usr/local/bin/claude-notify
 COPY scripts/tmux.conf /etc/tmux.conf
 RUN chmod +x /usr/local/bin/claude-web-menu /usr/local/bin/claude-notify
 
+# Entry wrapper: names the run uid in /etc/passwd (see web-entry.sh), then drops to it
+COPY scripts/web-entry.sh /usr/local/bin/claude-web-entry
+RUN chmod +x /usr/local/bin/claude-web-entry
+
 # Shared defaults (settings + MCP) — seeded into ~/.claude at startup (see web-serve.js)
 COPY claude-defaults/ /opt/claude-defaults/
 
@@ -107,4 +111,4 @@ ENV PATH=/home/node/.local/bin:$PATH
 
 WORKDIR /workspace
 USER node
-ENTRYPOINT ["/usr/local/bin/claude-web-serve"]
+ENTRYPOINT ["/usr/local/bin/claude-web-entry"]
