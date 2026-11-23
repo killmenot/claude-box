@@ -276,7 +276,11 @@ function clone(url, name, dir) {
   const id = 'j' + (++jobSeq);
   const job = { id, url: url.replace(/\/\/[^@/]+@/, '//'), name: dirName, path: target, state: 'running', error: '', started: Date.now() };
   JOBS.set(id, job);
-  execFile('git', ['clone', '--', url, target],
+  // Non-interactive: ssh has no tty, so a host-key or passphrase prompt would kill the clone
+  // (the confusing "and the repository exists" error). accept-new = trust on first use — a
+  // CHANGED host key still fails; BatchMode = fail fast instead of hanging on prompts.
+  const sshArgs = ['-c', 'core.sshCommand=ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes'];
+  execFile('git', sshArgs.concat(['clone', '--', url, target]),
     { cwd: ROOT, timeout: 30 * 60000, maxBuffer: 8 << 20, env: Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0' }) },
     (e, _out, err) => {
       if (e) { job.state = 'error'; job.error = (String(err || e.message).trim().split('\n').pop() || 'clone failed').slice(0, 300); }
