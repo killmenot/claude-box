@@ -20,7 +20,9 @@ const warn = (...a) => console.error('claude-box web:', ...a);
 
 const PORT = env.WEB_TERMINAL_PORT || '7681';
 const IFACE = env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
-const TTYD_PORT = env.TTYD_PORT || '7682';
+// ttyd (the console) lives on loopback NEXT to the UI port unless pinned: every instance on a
+// shared daemon gets its own pair without manual ports (WEB_TERMINAL_PORT + 1 = the old default 7682).
+const TTYD_PORT = env.TTYD_PORT || String(Number(env.WEB_TERMINAL_PORT || 7681) + 1);
 const TLS_PORT = env.WEB_TLS_PORT || '8443';
 const USER = env.WEB_TERMINAL_USER || 'claude';
 const PW = env.WEB_TERMINAL_PASSWORD || '';
