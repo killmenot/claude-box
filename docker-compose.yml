@@ -13,6 +13,11 @@ services:
     labels:
       - claude-box.role=web
       - claude-box.instance=${CLAUDE_BOX_NAME:-claude-box}
+    # Run as the HOST user (BOX_UID/BOX_GID, auto-filled in .env on the first start): the ./home
+    # bind mount is owned by the host user, so uid 1000 from the image cannot write into it when
+    # the host user is not uid 1000 (a second user, macOS). HOME is pinned because a numeric uid
+    # has no /etc/passwd entry in the container.
+    user: "${BOX_UID:-1000}:${BOX_GID:-1000}"
     init: true                # tini as PID1: forwards SIGTERM to the entrypoint + reaps zombies
     restart: unless-stopped   # come back after a docker/host restart (sessions are restored, see web-serve.js)
     stop_grace_period: 15s    # give Claude in tmux time to save before the container is torn down
@@ -21,6 +26,7 @@ services:
       - ./.env                # secrets + settings (token, proxy, PROJECT_DIR, web login/password)
     environment:
       - WEB_TUNNEL            # the host passes =1 when running `claude-box --tunnel`
+      - HOME=/home/node       # the bind mount's path; a numeric uid gets no HOME from passwd
     volumes:
       # working folder (shown as /workspace); the path is set in .env via PROJECT_DIR
       - ${PROJECT_DIR}:/workspace

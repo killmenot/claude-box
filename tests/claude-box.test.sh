@@ -36,6 +36,8 @@ check "first run: login defaults to claude"        claude "$(val WEB_TERMINAL_US
 check "first run: password saved"                  secret123 "$(val WEB_TERMINAL_PASSWORD)"
 check "first run: template comment replaced, no duplicate" 1 "$(grep -c 'WEB_TERMINAL_PASSWORD' "$repo/.env")"
 check "first run: other settings kept"             7681 "$(val WEB_TERMINAL_PORT)"
+check "first run: container uid saved (BOX_UID)"    "$(id -u)" "$(val BOX_UID)"
+check "first run: container gid saved (BOX_GID)"    "$(id -g)" "$(val BOX_GID)"
 check "first run: password not echoed"             0 "$(printf '%s' "$out" | grep -c secret123)"
 check "first run: image built"                     1 "$(grep -c 'compose -f docker-compose.yml build' "$tmp/docker.log")"
 check "first run: web started"                     1 "$(grep -c 'compose -f docker-compose.yml up -d web' "$tmp/docker.log")"
