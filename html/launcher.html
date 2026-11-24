@@ -237,6 +237,15 @@
   .ftools select{padding:8px 8px;border:1px solid var(--line);border-radius:9px;font:13.5px var(--sans);background:var(--panel);color:var(--ink)}
   .fform{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;padding:10px;border:1px solid var(--line);border-radius:11px;background:var(--paper)}
   .fform .lbl{font-weight:600;font-size:13.5px;margin-right:4px}
+  .rpick{flex:1 1 100%;max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
+  .rpick:empty{display:none}
+  .rpick .ri{display:flex;align-items:center;gap:10px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:13px}
+  .rpick .ri:last-child{border-bottom:0}
+  .rpick .ri:hover{background:var(--hover)}
+  .rpick .ri .rn{flex:1;min-width:0}
+  .rpick .ri .rn b{font-weight:600} .rpick .ri .rn small{display:block;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rpick .ri .lock{color:var(--mute);font-size:11px}
+  .rpick .note2{padding:9px 10px;color:var(--mute);font-size:12.5px}
   .job{display:flex;align-items:center;gap:10px;margin:0 0 8px;padding:9px 12px;border-radius:10px;background:var(--paper);font-size:13.5px}
   .job .u{color:var(--mute);font:12px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
   .job.err{background:var(--del);color:var(--delt)}
@@ -255,6 +264,14 @@
   .frow .nm b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .frow .nm small{display:block;color:var(--mute);font:11.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .frow .ss,.frow .wh{color:var(--slate);font-size:13px}
+  .frow .fsess{display:flex;flex-wrap:wrap;gap:4px 6px;margin:4px 0 6px}
+  .frow .chip{display:inline-flex;align-items:center;gap:5px;max-width:240px;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:var(--panel,transparent);color:var(--body,inherit);font:12px var(--sans,inherit);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .frow .chip:hover{border-color:var(--slate)}
+  .frow .chip.more-s{color:var(--mute)}
+  .sdot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--mute);flex:0 0 7px}
+  .sdot.live{background:var(--live)} .sdot.wait{background:var(--wait)} .sdot.work{background:var(--work)}
+  .frow .nm .k{font:600 11.5px var(--mono);color:var(--slate);margin-right:6px}
+  .frow .nm .badge{margin-left:8px;font-size:11px;font-weight:500;color:var(--mute)}
   .frow .go{padding:6px 10px;font-size:12.5px;visibility:hidden}
   .frow:hover .go{visibility:visible}
   .frow .more{display:inline-block;background:transparent;border:0;border-radius:6px;color:var(--slate);font-size:15px;cursor:pointer;padding:3px 6px}
@@ -437,6 +454,51 @@
   #wired details.wact.err .an{color:#b3261e}
   #wired .ilnk{border:0;background:none;color:var(--slate);font:600 12.5px var(--sans);cursor:pointer;padding:4px 0}
   @media (max-width:760px){ #wired{padding:0} #wired .wbox{border-radius:0} #wired .wrun{flex-wrap:wrap;row-gap:2px} #wired .wrun .mt{flex:1 1 100%;padding-left:62px;white-space:normal} }
+  /* first visit: pick a login, then (optionally) connect GitHub */
+  #setupw{position:fixed;inset:0;z-index:80;background:var(--paper);display:none;align-items:flex-start;justify-content:center;padding:12vh 16px 16px;overflow:auto}
+  #setupw.on{display:flex}
+  #setupw .sbox{width:min(440px,100%)}
+  #setupw h2{margin:6px 0 6px;font-size:22px;color:var(--ink)}
+  #setupw p{color:var(--slate);margin:0 0 16px;font-size:14px}
+  #setupw .ssteps{display:flex;gap:14px;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  #setupw .ssteps .on{color:var(--iris)}
+  #setupw .acts{display:flex;gap:8px;margin-top:18px}
+  .pwform{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+  .pwform label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--slate)}
+  .pwform label.chk{flex-direction:row;align-items:center;gap:8px}
+  .pwform input:not([type=checkbox]){font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--body)}
+  .pwform .btn{align-self:flex-start}
+  .ferr{color:var(--err);font-size:13px;min-height:0}
+  .ferr:empty{display:none}
+  .gitbox{display:flex;flex-direction:column;gap:8px;font-size:13.5px}
+  .gitbox .ok{color:var(--live)}
+  .gitbox .gcode{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .gitbox .gcode b{font:600 22px var(--mono,monospace);letter-spacing:.08em;color:var(--ink);padding:4px 10px;border:1px dashed var(--line);border-radius:8px}
+  .gitbox .row2{display:flex;gap:8px;flex-wrap:wrap}
+  .gitbox .sub{color:var(--mute);font-size:12.5px}
+  #setd details{margin-top:4px} #setd details summary{cursor:pointer;font-size:13px;color:var(--iris)}
+  #taskd{position:fixed;inset:0;z-index:60;background:rgba(14,17,22,.38);display:none;align-items:flex-start;justify-content:center;padding:8vh 16px 16px}
+  #taskd.on{display:flex}
+  #taskd .tbox{width:min(620px,100%);max-height:84vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28)}
+  #taskd .thead{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);font-size:15px}
+  #taskd .tbody{padding:12px 16px 16px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+  #taskd #tq{width:100%;box-sizing:border-box;font-size:14px}
+  #taskd h5{margin:6px 0 2px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute)}
+  #taskd .ti{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:8px;background:transparent;color:var(--body);font:inherit;font-size:13.5px;cursor:pointer}
+  #taskd .ti:hover,#taskd .ti:focus-visible{background:var(--hover);outline:none}
+  #taskd .ti .k{font:600 12.5px var(--mono,monospace);color:var(--ink)}
+  #taskd .ti .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #taskd .ti .st{flex:0 0 auto;color:var(--mute);font-size:12px}
+  #taskd .ti.new{color:var(--iris);font-weight:600}
+  #taskd .muted{color:var(--mute);font-size:12.5px;padding:4px 10px}
+  #taskd .warn{background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--wait);border-radius:8px;padding:8px 10px;font-size:12.5px;color:var(--slate)}
+  #taskd #tdrepos{font-size:12.5px;color:var(--slate);display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;border-top:1px solid var(--line);padding-top:10px}
+  #taskd #tdrepos .lbl{font-weight:600;color:var(--ink)}
+  #taskd #tdchips{display:contents}
+  #taskd .rchip{display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--paper);font-size:12.5px;color:var(--body)}
+  #taskd .rchip button{border:0;background:transparent;color:var(--mute);cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+  #taskd #tdrq{flex:1 1 180px;min-width:160px;font-size:13px}
+  #taskd #tdrlist{max-height:220px}
   #setd{position:fixed;inset:0;z-index:60;background:rgba(14,17,22,.38);display:none;align-items:flex-start;justify-content:center;padding:10vh 16px 16px}
   #setd.on{display:flex}
   #setd .tbox{width:min(460px,100%);max-height:80vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28)}
@@ -689,6 +751,8 @@
  L881.999939,845L868,843l-92-70l-36-31l-80-66.999939h-5V682l18,27.000061L771,856l5,45l-7,13.999939L743,924l-27-5l-58-80l-59-91
  l-48-81l-5,4l-29,302l-13,15L474.0000305,1000z"/> </g> </svg><span>claude-<b>box</b></span></div></div>
   <button id="newbtn" class="navbtn" type="button"><span class="ico">＋</span>New session</button>
+  <button id="taskbtn" class="navbtn" type="button" title="A Jira issue (or just a title) gets its own folder, branch and session"><span class="ico">＋</span>New task</button>
+  <button id="tmpbtn" class="navbtn" type="button" title="A throwaway session in a fresh folder under /workspace/tmp"><span class="ico">＋</span>New temp session</button>
   <button id="termbtn" class="navbtn" type="button" title="bash in the container (gh auth login, git, …)"><span class="ico" style="font:600 12px var(--mono)">&gt;_</span>Terminal</button>
   <button id="inboxbtn" class="navbtn" type="button" title="Sessions that need a look: questions, permissions, problems, finished work"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/></svg></span>Inbox<span class="ibadge hidden" id="ibadge"></span></button>
   <div class="searchbox">
@@ -727,6 +791,20 @@
       <a class="btn ghost hidden" id="wiredl" download>Download JSON</a><button class="btn ghost" type="button" id="wireclose">Close</button></div>
     <div class="wbody" id="wirebody"></div>
   </div></div>
+  <div id="setupw" role="dialog" aria-modal="true" aria-label="Set up claude-box"><div class="sbox">
+    <div class="ssteps"><span data-st="1">1 · Login</span><span data-st="2">2 · GitHub</span></div>
+    <div id="setupbody"></div>
+  </div></div>
+  <div id="taskd" role="dialog" aria-label="New task"><div class="tbox">
+    <div class="thead"><b>New task</b><button class="btn ghost" type="button" id="taskclose">Close</button></div>
+    <div class="tbody">
+      <div id="tjnote"></div>
+      <input class="finput" id="tq" placeholder="Find a Jira issue (words or key), or type a title" autocomplete="off">
+      <div id="tdlist"></div>
+      <div id="tdrepos"><span class="lbl">Repos for this task</span><span id="tdchips"></span>
+        <input class="finput" id="tdrq" placeholder="Add a repo: type to search GitHub" autocomplete="off"><div class="rpick" id="tdrlist"></div></div>
+    </div>
+  </div></div>
   <div id="setd" role="dialog" aria-label="Settings"><div class="tbox">
     <div class="thead"><b>Settings</b><button class="btn ghost" type="button" id="setclose">Close</button></div>
     <div class="tbody" id="setbody"></div>
@@ -744,12 +822,31 @@
     <div id="inboxv"><div class="iin" id="ibody"></div></div>
     <div id="blank"><div class="inner">
       <div class="fhead"><h2>Workspace</h2><span class="root" id="wsroot"></span></div>
-      <section id="tasksec">
-        <div class="shead"><h3>Tasks</h3>
-          <input id="tfilter" class="finput" type="search" placeholder="Filter tasks" autocomplete="off">
-          <label class="tarch"><input type="checkbox" id="tshowarch"> archived</label>
-          <button class="btn ghost" type="button" id="trepobtn">Repos</button>
-          <button class="btn" type="button" id="tnew">＋ New task</button></div>
+      <!-- tasks are listed as folders under tasks/ in the file list below; this stays as the data holder -->
+      <section id="tasksec" class="hidden">
+        <input id="tfilter" type="hidden"><input type="checkbox" id="tshowarch" hidden>
+        <div id="tlist"></div>
+      </section>
+      <div id="fm">
+      <div class="fcrumbs" id="fcrumbs"></div>
+      <div class="ftools">
+        <input id="ffilter" class="finput" type="search" placeholder="Filter" autocomplete="off">
+        <button class="btn" type="button" id="fstart" title="Start a Claude session in this folder">▸ Start session in this dir</button>
+        <button class="btn ghost" type="button" id="fnew">＋ Folder</button>
+        <button class="btn ghost" type="button" id="fupbtn" title="Upload files here (or drop them on the list)">⇪ Upload</button>
+        <button class="btn ghost" type="button" id="fclone">Clone from Git</button>
+        <input type="file" id="fupload" multiple hidden>
+      </div>
+      <div class="fbar hidden" id="fsel"></div>
+      <div class="fbar clip hidden" id="fclip"></div>
+      <form class="fform hidden" id="fnewform"><span class="lbl">New folder</span>
+        <input class="finput" id="fnewname" placeholder="folder-name" autocomplete="off">
+        <button class="btn" type="submit">Create</button><button class="btn ghost" type="button" data-x>Cancel</button></form>
+      <form class="fform hidden" id="fcloneform"><span class="lbl">Clone</span>
+        <input class="finput" id="fcloneurl" placeholder="Search your GitHub repos, or paste a git URL" autocomplete="off">
+        <input class="finput" id="fclonename" placeholder="folder (optional)" style="flex:0 1 200px" autocomplete="off">
+        <button class="btn" type="submit">Clone</button><button class="btn ghost" type="button" data-x>Cancel</button>
+        <div class="rpick" id="frepos"></div></form>
         <form class="fform hidden" id="tnewform"><span class="lbl">New task</span>
           <input class="finput" id="tkey" placeholder="Jira key (optional)" style="flex:0 1 150px" autocomplete="off">
           <input class="finput" id="ttitle" placeholder="What is the task?" autocomplete="off">
@@ -763,28 +860,6 @@
           <div id="rjobs"></div>
           <p class="fnote" style="margin:0">Every task gets its own clone of the repos it needs, on a branch named after the task. Base repos live in <code>repos/</code> and are never edited directly.</p>
         </div>
-        <div class="ftable" id="tlist"><div class="empty">loading…</div></div>
-      </section>
-      <div id="fm">
-      <div class="fcrumbs" id="fcrumbs"></div>
-      <div class="ftools">
-        <input id="ffilter" class="finput" type="search" placeholder="Filter" autocomplete="off">
-        <button class="btn" type="button" id="fstart" title="Start a Claude session in this folder">▸ Start session here</button>
-        <button class="btn ghost" type="button" id="fterm" title="bash in this folder (gh auth login, git, …)">&gt;_ Terminal</button>
-        <button class="btn ghost" type="button" id="fnew">＋ Folder</button>
-        <button class="btn ghost" type="button" id="fupbtn" title="Upload files here (or drop them on the list)">⇪ Upload</button>
-        <button class="btn ghost" type="button" id="fclone">Clone from Git</button>
-        <input type="file" id="fupload" multiple hidden>
-      </div>
-      <div class="fbar hidden" id="fsel"></div>
-      <div class="fbar clip hidden" id="fclip"></div>
-      <form class="fform hidden" id="fnewform"><span class="lbl">New folder</span>
-        <input class="finput" id="fnewname" placeholder="folder-name" autocomplete="off">
-        <button class="btn" type="submit">Create</button><button class="btn ghost" type="button" data-x>Cancel</button></form>
-      <form class="fform hidden" id="fcloneform"><span class="lbl">Clone</span>
-        <input class="finput" id="fcloneurl" placeholder="https://github.com/org/repo.git  or  git@github.com:org/repo.git" autocomplete="off">
-        <input class="finput" id="fclonename" placeholder="folder (optional)" style="flex:0 1 200px" autocomplete="off">
-        <button class="btn" type="submit">Clone</button><button class="btn ghost" type="button" data-x>Cancel</button></form>
       <div id="fup"></div>
       <div id="fjobs"></div>
       <div class="ftable" id="dirs"><div class="empty">loading…</div></div>
@@ -1540,8 +1615,18 @@ function openSettings(){
   $('setbody').innerHTML=setGroup('pmode','Permissions','For every chat; open chats switch right away.', PMODES, PMODEHINT, PMODE)+
     setGroup('tools','Tool calls in chat','How tool calls show in the conversation.', tl, TOOLHINT, toolMode)+
     '<h4>Model traffic</h4><div class="sub">Off by default. When on, every session records what went to the model and back, the commands and file changes it made, and the hosts it connected to.</div>'+
-    '<button class="btn" type="button" id="setwire">Model traffic settings &amp; records</button>';
+    '<button class="btn" type="button" id="setwire">Model traffic settings &amp; records</button>'+
+    '<h4>Access</h4><div class="sub" id="setacc">…</div>'+
+    '<details id="setpw"><summary>Change login or password</summary></details>'+
+    '<h4>GitHub</h4><div class="sub">Clone, push and pull requests go through this account (gh).</div><div class="gitbox" id="setgit"></div>';
   $('setd').classList.add('on');
+  loadAuth().then(function(a){
+    $('setacc').innerHTML=a.configured?'Login: <b>'+esc(a.user)+'</b>'+(a.fromEnv?' (from .env; a password set here replaces it)':'')+
+      '. Other devices, the phone and the public tunnel ask for it.':'No login yet.';
+    var f=pwForm(!a.configured, function(){ loadAuth().then(function(b){ $('setacc').innerHTML='Login: <b>'+esc(b.user)+'</b>. Saved.'; $('setpw').open=false; }); });
+    $('setpw').appendChild(f);
+  });
+  gitBox($('setgit'));
 }
 function closeSettings(){ $('setd').classList.remove('on'); }
 $('setbtn').addEventListener('click', openSettings);
@@ -1551,6 +1636,96 @@ $('setbody').addEventListener('change', function(e){
   var t=e.target; if(t.name==='pmode') setPMode(t.value); else if(t.name==='tools') setToolMode(t.value);
 });
 document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('setd').classList.contains('on')){ e.stopPropagation(); closeSettings(); } }, true);
+// ===== access and GitHub (web-auth.js, web-git.js)
+// The first visit comes in through the one-time link from ./claude-box; the wizard then asks for a
+// login and password (for other devices and the tunnel) and offers to connect GitHub.
+var AUTH={configured:true};
+function loadAuth(){ return fetch('auth/state').then(function(r){ return r.ok?r.json():{}; }).catch(function(){ return {}; })
+  .then(function(o){ AUTH=o||{}; return AUTH; }); }
+function pwForm(first, done){
+  var f=el('form','pwform');
+  f.innerHTML=(first?'':'<label>Current password<input type="password" name="current" autocomplete="current-password" required></label>')+
+    '<label>Login<input name="user" autocomplete="username" required value="'+esc(AUTH.user||'claude')+'"></label>'+
+    '<label>New password<input type="password" name="password" autocomplete="new-password" minlength="8" required></label>'+
+    '<label>Repeat the password<input type="password" name="password2" autocomplete="new-password" minlength="8" required></label>'+
+    (first?'':'<label class="chk"><input type="checkbox" name="others"> Sign out every other browser and device</label>')+
+    '<div class="ferr"></div><button class="btn" type="submit">'+(first?'Save and continue':'Save')+'</button>';
+  f.addEventListener('submit', function(e){
+    e.preventDefault();
+    var v=function(n){ var i=f.elements[n]; return i?(i.type==='checkbox'?i.checked:i.value):''; }, err=f.querySelector('.ferr');
+    if(!/^[A-Za-z0-9._-]+$/.test(v('user').trim())){ err.textContent="Login: letters, digits, '.', '_' and '-' only."; return; }
+    if(v('password')!==v('password2')){ err.textContent='The passwords do not match.'; return; }
+    var b=f.querySelector('button[type=submit]'); b.disabled=true; err.textContent='';
+    fetch('auth/password',{method:'POST', headers:{'content-type':'application/json'},
+      body:JSON.stringify({user:v('user').trim(), password:v('password'), current:v('current'), signOutOthers:!!v('others')})})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(o){ b.disabled=false; if(!o.ok){ err.textContent=o.error||'Could not save.'; return; } f.reset(); done&&done(o); },
+            function(){ b.disabled=false; err.textContent='Could not reach the box.'; });
+  });
+  return f;
+}
+// GitHub status + the device-code sign-in, shared by the wizard and Settings
+function gitBox(box, onChange){
+  var poll=null;
+  box.innerHTML='<div class="sub">Checking…</div>';
+  function again(){ clearTimeout(poll); poll=setTimeout(refresh, 1500); }
+  function render(s){
+    var l=s.login||{};
+    if(s.gh===false){ box.innerHTML='<div class="sub">gh is not installed in the box.</div>'; return; }
+    if(l.state==='starting'){ box.innerHTML='<div class="sub">Asking GitHub for a code…</div>'; again(); return; }
+    if(l.state==='code'){
+      box.innerHTML='<div>Open <a href="'+esc(l.url)+'" target="_blank" rel="noopener">'+esc(l.url.replace(/^https:\/\//,''))+'</a> and enter this code:</div>'+
+        '<div class="gcode"><b>'+esc(l.code)+'</b><button class="btn ghost" type="button" data-g="copy">Copy</button>'+
+        '<button class="btn" type="button" data-g="open">Open GitHub</button></div>'+
+        '<div class="row2"><span class="sub">Waiting for you to confirm on GitHub…</span><button class="btn ghost" type="button" data-g="cancel">Cancel</button></div>';
+      box.dataset.code=l.code; box.dataset.url=l.url; again(); return;
+    }
+    if(s.account){
+      box.innerHTML='<div class="ok">✓ Connected as <b>'+esc(s.account)+'</b></div>'+
+        '<div class="sub">Commits are signed '+esc(s.name||'(no name)')+' &lt;'+esc(s.email||'no email')+'&gt;.</div>'+
+        '<div class="row2"><button class="btn ghost" type="button" data-g="logout">Disconnect</button></div>';
+      onChange&&onChange(s); return;
+    }
+    box.innerHTML=(l.state==='error'?'<div class="ferr">'+esc(l.error)+'</div>':'')+
+      '<div class="sub">Not connected. GitHub shows a code, you confirm it in the browser — no SSH keys or tokens to copy.</div>'+
+      '<div class="row2"><button class="btn" type="button" data-g="login">Connect GitHub</button></div>';
+  }
+  function refresh(){
+    if(!box.isConnected) return;
+    fetch('git/status').then(function(r){ return r.json(); }).then(render, function(){ box.innerHTML='<div class="ferr">Could not reach the box.</div>'; });
+  }
+  box.onclick=function(e){
+    var b=e.target.closest('[data-g]'); if(!b) return; var g=b.dataset.g;
+    if(g==='copy'){ copyText(box.dataset.code||'').then(function(){ b.textContent='Copied'; }, function(){}); return; }
+    if(g==='open'){ openExt(box.dataset.url); return; }
+    if(g==='logout' && !confirm('Disconnect GitHub? Clone and push stop working until you connect again.')) return;
+    b.disabled=true;
+    var op=g==='login'?'git/login':g==='cancel'?'git/login/cancel':'git/logout';
+    fetch(op,{method:'POST'}).then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(o){ if(o && o.error && g==='logout') alert('Could not disconnect: '+o.error); refresh(); }, refresh);
+  };
+  refresh();
+}
+function openSetup(){
+  var w=$('setupw'), body=$('setupbody');
+  function step(n){ [].forEach.call(w.querySelectorAll('[data-st]'), function(s){ s.classList.toggle('on', +s.dataset.st===n); }); }
+  function finish(){ w.classList.remove('on'); }
+  step(1);
+  body.innerHTML='<h2>Welcome to claude-box</h2><p>You are signed in on this browser with the one-time link. '+
+    'Pick a login and password: your phone, other computers and the public tunnel will ask for them.</p>';
+  body.appendChild(pwForm(true, function(){
+    loadAuth(); step(2);
+    body.innerHTML='<h2>Connect GitHub</h2><p>Optional. Lets Claude clone your repos, push branches and open pull requests. '+
+      'You can do it later in Settings.</p><div class="gitbox" id="setupgit"></div>'+
+      '<div class="acts"><button class="btn" type="button" id="setupdone">Done</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
+    gitBox($('setupgit'), function(){ $('setupskip').classList.add('hidden'); });
+    $('setupdone').onclick=finish; $('setupskip').onclick=finish;
+  }));
+  w.classList.add('on');
+  var u=body.querySelector('input[name=user]'); if(u) u.focus();
+}
+loadAuth().then(function(a){ if(a && a.configured===false) openSetup(); });
+
 // ===== model traffic: what a session sent to the model, got back, and did (web-wire.js)
 // Recording is off by default (Settings). A run = one agent process: a chat session from start to
 // stop, one Inbox check, one Today panel run.
@@ -2360,6 +2535,7 @@ menuEl.addEventListener('click', function(e){
   var b=e.target.closest('button'); if(!b) return;
   if(menuEl.dataset.mode==='folder'){ var fa=b.getAttribute('data-fa'); closeMenu(); folderAction(fa, menuEl.dataset.name, menuEl.dataset.path); return; }
   if(menuEl.dataset.mode==='task'){ var ta=b.getAttribute('data-ta'); closeMenu(); taskAction(ta, menuEl.dataset.slug); return; }
+  if(menuEl.dataset.mode==='sess'){ var st=b.getAttribute('data-tok'); closeMenu(); if(st) openSession(st); return; }
   var tok=menuEl.dataset.tok; closeMenu();
   if(b.getAttribute('data-act')==='rename'){ renameSession(tok); return; }
   if(b.getAttribute('data-act')==='wire'){ openWire(null, tok); return; }
@@ -2460,6 +2636,16 @@ var IC_GIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-wi
 var IC_FILE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>';
 var IC_UP='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 11l6-6 6 6"/></svg>';
 // sessions in a folder (and its subfolders); for the workspace root only the ones started at the root itself
+// folder sizes come after the listing (du in the background, web-workspace.js sizes()); abs path -> bytes|null
+var FSIZES={};
+function entSize(d){ return d.dir?FSIZES[d.path]:d.size; }
+function loadSizes(){
+  var rel=FREL, root=WSDATA.path;
+  wsGet('workspace/sizes?p='+encodeURIComponent(rel)).then(function(o){
+    Object.keys(o||{}).forEach(function(n){ FSIZES[root+'/'+n]=o[n]; });
+    if(FREL===rel) renderDirs();
+  }).catch(function(){});
+}
 function sessCount(p){ var root=(p===WSDATA.root);
   return ROWS.filter(function(s){ return s.cwd===p || (!root && (s.cwd||'').indexOf(p+'/')===0); }).length; }
 function fjoin(a,b){ return a?a+'/'+b:b; }
@@ -2471,7 +2657,7 @@ function loadDirs(){
     WSDATA={root:o.root, rel:o.rel, path:o.path, entries:o.entries, jobs:o.jobs, dirs:o.entries.filter(function(e){ return e.dir; })};
     $('wsroot').textContent=o.root||'';
     Object.keys(FSEL).forEach(function(k){ if(!o.entries.some(function(e){ return fjoin(FREL,e.name)===k; })) delete FSEL[k]; });
-    renderDirs(); renderJobs();
+    renderDirs(); renderJobs(); loadSizes();
   }).catch(function(e){
     if(FREL){ FREL=fparent(FREL); syncUrl(); return loadDirs(); }       // the folder is gone: go up
     $('dirs').innerHTML='<div class="empty">Failed to list the folder: '+esc(e.message)+'</div>';
@@ -2493,7 +2679,8 @@ function fchrome(){
   var parts=FREL?FREL.split('/'):[], h='<button type="button" data-rel="">Workspace</button>', acc='';
   parts.forEach(function(p){ acc=fjoin(acc,p); h+='<span class="sep">›</span><button type="button" data-rel="'+esc(acc)+'">'+esc(p)+'</button>'; });
   $('fcrumbs').innerHTML=h;
-  $('tasksec').classList.toggle('hidden', !!FREL);
+  // the workspace root holds projects: no session and no loose uploads right in it
+  $('fstart').classList.toggle('hidden', !FREL); $('fupbtn').classList.toggle('hidden', !FREL);
 }
 function fselected(){ return Object.keys(FSEL); }
 // The file manager is one module (#fm). The dashboard shows it under Tasks; a session's "Files"
@@ -2517,11 +2704,11 @@ function renderDirs(){
   es.sort(function(a,b){
     if(a.dir!==b.dir) return a.dir?-1:1;
     if(FSORT==='name') return a.name.localeCompare(b.name, undefined, {numeric:true, sensitivity:'base'});
-    if(FSORT==='sessions' && a.dir) return (sessCount(b.path)-sessCount(a.path)) || (b.mtime-a.mtime);
+    if(FSORT==='size' || FSORT==='sessions') return (entSize(b)||0)-(entSize(a)||0) || (b.mtime-a.mtime);
     return b.mtime-a.mtime;
   });
   var h='<div class="fth"><span></span><span data-s="name"'+(FSORT==='name'?' class="on"':'')+'>Name</span>'+
-        '<span data-s="sessions"'+(FSORT==='sessions'?' class="on"':'')+'>Sessions · size</span>'+
+        '<span data-s="size"'+(FSORT==='size'||FSORT==='sessions'?' class="on"':'')+'>Size</span>'+
         '<span data-s="recent"'+(FSORT==='recent'?' class="on"':'')+'>Modified</span><span></span><span></span></div>';
   if(FREL) h+='<div class="frow up dir" data-rel="'+esc(fparent(FREL))+'" data-up="1"><span class="ic">'+IC_UP+'</span><span class="nm"><b>..</b></span><span></span><span></span><span></span><span></span></div>';
   es.forEach(function(d){ h+=rowHtml(d); });
@@ -2530,17 +2717,44 @@ function renderDirs(){
   $('dirs').classList.toggle('selecting', fselected().length>0);
   renderSelBar();
 }
+// sessions started in a folder (or below it), newest first: shown right in the folder's row
+function sessIn(p){ var root=(p===WSDATA.root);
+  return ROWS.filter(function(s){ return s.cwd===p || (!root && (s.cwd||'').indexOf(p+'/')===0); })
+    .sort(function(a,b){ return (b.lastActivity||0)-(a.lastActivity||0); }); }
+var CHIPS_MAX=3;
+function chipsHtml(ss){
+  if(!ss.length) return '';
+  return '<span class="fsess">'+ss.slice(0,CHIPS_MAX).map(function(s){
+    return '<button type="button" class="chip" data-tok="'+esc(s.token)+'" title="'+esc(dispName(s)+' · '+(s.cwd||''))+'"><i class="sdot '+statusClass(s)+'"></i>'+esc(dispName(s))+'</button>';
+  }).join('')+(ss.length>CHIPS_MAX?'<button type="button" class="chip more-s" data-act="sessmenu">+'+(ss.length-CHIPS_MAX)+'</button>':'')+'</span>';
+}
+// a task's folder (tasks/<slug>) as the tasks API describes it, or undefined
+function taskAt(path){ var ts=(TDATA&&TDATA.tasks)||[]; for(var i=0;i<ts.length;i++) if(ts[i].path===path) return ts[i]; }
 function rowHtml(d){
   var rel=fjoin(FREL,d.name), g=d.git, sub='', cut=FCLIP&&FCLIP.op==='cut'&&FCLIP.items.indexOf(rel)>=0;
-  if(g) sub=esc(g.branch||'')+(g.remote?' · '+esc(g.remote.replace(/^(https?:\/\/|ssh:\/\/|git@)/,'').replace(/\.git$/,'')):'');
-  var n=d.dir?sessCount(d.path):0;
-  return '<div class="frow '+(d.dir?'dir':'file')+(FSEL[rel]?' sel':'')+(cut?' cut':'')+'" draggable="true" data-rel="'+esc(rel)+'" data-path="'+esc(d.path)+'">'+
+  var tk=d.dir?taskAt(d.path):null, ss=d.dir?sessIn(d.path):[], n=ss.length, title=esc(d.name)+(d.link?' ↪':'');
+  if(tk){
+    var rp=(tk.repos||[]).map(function(r){ return r.name; }).join(', ');
+    sub=(rp?esc(rp)+' · ':'')+esc(tk.branch||'')+(tk.archived?' · archived':'');
+    title=(tk.key?'<span class="k">'+esc(tk.key)+'</span>':'')+esc(tk.title||d.name)+
+      (tk.state && tk.state!=='clean'?'<span class="badge">'+esc(TSTATE[tk.state]||tk.state)+'</span>':'');
+  } else if(g) sub=esc(g.branch||'')+(g.remote?' · '+esc(g.remote.replace(/^(https?:\/\/|ssh:\/\/|git@)/,'').replace(/\.git$/,'')):'');
+  return '<div class="frow '+(d.dir?'dir':'file')+(tk?' task':'')+(FSEL[rel]?' sel':'')+(cut?' cut':'')+'" draggable="true" data-rel="'+esc(rel)+'" data-path="'+esc(d.path)+'">'+
     '<span class="ic"><input type="checkbox" class="fck"'+(FSEL[rel]?' checked':'')+' tabindex="-1">'+(d.dir?(g?IC_GIT:IC_FOLDER):IC_FILE)+'</span>'+
-    '<span class="nm"><b>'+esc(d.name)+(d.link?' ↪':'')+'</b>'+(sub?'<small>'+sub+'</small>':'')+'</span>'+
-    '<span class="ss">'+(d.dir?(n?n+' session'+(n>1?'s':''):'—'):fmtBytes(d.size))+'</span>'+
+    '<span class="nm"><b>'+title+'</b>'+(sub?'<small>'+sub+'</small>':'')+chipsHtml(ss)+'</span>'+
+    '<span class="ss"'+(d.dir&&n?' title="'+n+' session'+(n>1?'s':'')+'"':'')+'>'+(d.dir?(FSIZES[d.path]===undefined?'…':fmtBytes(FSIZES[d.path])):fmtBytes(d.size))+'</span>'+
     '<span class="wh">'+(d.mtime?fmt(Math.floor(d.mtime/1000)):'')+'</span>'+
     (d.dir?'<button class="btn go" type="button" data-act="start">Start session</button>':'<span></span>')+
     '<button class="more" type="button" data-act="menu" title="More">⋯</button></div>';
+}
+// "+N" in a folder row: every session there, newest first, in the small menu
+function openSessMenu(path, anchor){
+  menuEl.innerHTML=sessIn(path).map(function(s){
+    return '<button type="button" data-tok="'+esc(s.token)+'"><i class="sdot '+statusClass(s)+'"></i> '+esc(dispName(s))+'</button>'; }).join('');
+  menuEl.dataset.mode='sess'; menuEl.style.display='block';
+  var r=anchor.getBoundingClientRect(), w=menuEl.offsetWidth, hh=menuEl.offsetHeight;
+  menuEl.style.left=Math.max(8, Math.min(r.left, innerWidth-w-8))+'px';
+  menuEl.style.top=(r.bottom+hh+8<innerHeight ? r.bottom+4 : Math.max(8, r.top-hh-4))+'px';
 }
 function renderSelBar(){
   var sel=fselected(), b=$('fsel');
@@ -2635,8 +2849,11 @@ $('dirs').addEventListener('click', function(e){
   var rel=row.getAttribute('data-rel'), act=e.target.closest('[data-act]');
   if(row.getAttribute('data-up')){ fnav(rel); return; }
   if(e.target.classList.contains('fck')){ ftoggle(rel, e.target.checked); return; }
-  if(act && act.getAttribute('data-act')==='menu'){ e.stopPropagation(); openFolderMenu(rel, act); return; }
-  if(act && act.getAttribute('data-act')==='start'){ startIn(row.getAttribute('data-path')); return; }
+  var chip=e.target.closest('.chip[data-tok]'); if(chip){ openSession(chip.getAttribute('data-tok')); return; }
+  var tk=row.classList.contains('task') && taskAt(row.getAttribute('data-path'));
+  if(act && act.getAttribute('data-act')==='sessmenu'){ e.stopPropagation(); openSessMenu(row.getAttribute('data-path'), act); return; }
+  if(act && act.getAttribute('data-act')==='menu'){ e.stopPropagation(); if(tk) openTaskMenu(tk.slug, act); else openFolderMenu(rel, act); return; }
+  if(act && act.getAttribute('data-act')==='start'){ if(tk) openTask(tk); else startIn(row.getAttribute('data-path')); return; }
   if(e.shiftKey){ frange(rel); return; }
   if(e.metaKey||e.ctrlKey||fselected().length){ ftoggle(rel); return; }
   if(row.classList.contains('dir')) fnav(rel); else fopen(rel);
@@ -2701,9 +2918,10 @@ document.addEventListener('keydown', function(e){
 var FDRAG=null;
 function isInternal(e){ var t=e.dataTransfer&&e.dataTransfer.types; return !!t && [].indexOf.call(t,'application/x-cb-items')>=0; }
 function dropTarget(e){
-  var c=e.target.closest('.fcrumbs button[data-rel]'); if(c) return {el:c, rel:c.getAttribute('data-rel')};
+  // files from the computer never land loose in the workspace root: only into a folder there
+  var c=e.target.closest('.fcrumbs button[data-rel]'); if(c) return hasFiles(e) && !c.getAttribute('data-rel') ? null : {el:c, rel:c.getAttribute('data-rel')};
   var r=e.target.closest('.frow.dir'); if(r && !(FDRAG && FDRAG.indexOf(r.getAttribute('data-rel'))>=0)) return {el:r, rel:r.getAttribute('data-rel')};
-  if(hasFiles(e) && e.target.closest('#dirs')) return {el:$('dirs'), rel:FREL};
+  if(hasFiles(e) && FREL && e.target.closest('#dirs')) return {el:$('dirs'), rel:FREL};
   return null;
 }
 function clearDrop(){ [].forEach.call(document.querySelectorAll('.dropin'), function(x){ x.classList.remove('dropin'); }); }
@@ -2779,7 +2997,32 @@ function fupload(list, dir, overwrite){
 function showForm(id){ ['fnewform','fcloneform'].forEach(function(f){ $(f).classList.toggle('hidden', f!==id || !$(f).classList.contains('hidden')); });
   if(!$(id).classList.contains('hidden')) $(id).querySelector('input').focus(); }
 $('fnew').addEventListener('click', function(){ showForm('fnewform'); });
-$('fclone').addEventListener('click', function(){ showForm('fcloneform'); });
+$('fclone').addEventListener('click', function(){ showForm('fcloneform'); if(!$('fcloneform').classList.contains('hidden')) loadRepos(); });
+// the clone picker: repos this GitHub account can reach (web-git.js), filtered by what is typed
+var GHREPOS=null;
+function loadRepos(){
+  if(GHREPOS){ renderRepoPick(); return; }
+  $('frepos').innerHTML='<div class="note2">Loading your GitHub repos…</div>';
+  fetch('git/repos').then(function(r){ return r.json().then(function(o){ if(!r.ok) throw new Error(o.error||'failed'); return o; }); })
+    .then(function(o){ GHREPOS=o.repos||[]; renderRepoPick(); },
+      function(){ $('frepos').innerHTML='<div class="note2">Connect GitHub (Settings → GitHub) to pick from your repos. A pasted URL works anyway.</div>'; });
+}
+function renderRepoPick(){
+  var q=$('fcloneurl').value.trim().toLowerCase();
+  if(/^(https?:\/\/|ssh:\/\/|git@)/.test(q)){ $('frepos').innerHTML=''; return; }   // a URL: just clone it
+  var hit=(GHREPOS||[]).filter(function(r){ return !q || (r.name+' '+r.desc).toLowerCase().indexOf(q)>=0; }).slice(0,60);
+  $('frepos').innerHTML=hit.length?hit.map(function(r){
+    return '<div class="ri" data-url="'+esc(r.url)+'"><span class="rn"><b>'+esc(r.name)+'</b>'+(r.private?' <span class="lock">private</span>':'')+
+      (r.desc?'<small>'+esc(r.desc)+'</small>':'')+'</span><span class="wh">'+(r.pushed?fmt(Math.floor(Date.parse(r.pushed)/1000)):'')+'</span>'+
+      '<button class="btn" type="button" data-clone>Clone</button></div>'; }).join('')
+    :'<div class="note2">'+(GHREPOS&&GHREPOS.length?'No repo matches.':'No repos on this GitHub account.')+'</div>';
+}
+$('fcloneurl').addEventListener('input', function(){ if(GHREPOS) renderRepoPick(); });
+$('frepos').addEventListener('click', function(e){
+  var row=e.target.closest('.ri'); if(!row) return;
+  $('fcloneurl').value=row.getAttribute('data-url');
+  if(e.target.closest('[data-clone]')) $('fcloneform').requestSubmit(); else renderRepoPick();
+});
 [].forEach.call(document.querySelectorAll('.fform [data-x]'), function(b){ b.addEventListener('click', function(){ b.closest('form').classList.add('hidden'); }); });
 $('fnewform').addEventListener('submit', function(e){
   e.preventDefault(); var name=$('fnewname').value.trim(); if(!name) return;
@@ -2790,7 +3033,7 @@ $('fcloneform').addEventListener('submit', function(e){
   e.preventDefault(); var url=$('fcloneurl').value.trim(); if(!url) return;
   wsPost('clone',{url:url, name:$('fclonename').value.trim(), dir:FREL}).then(function(o){
     AUTOSTART[o.id]=1;                                   // start a session there once the clone is done
-    $('fcloneurl').value=''; $('fclonename').value=''; $('fcloneform').classList.add('hidden');
+    $('fcloneurl').value=''; $('fclonename').value=''; $('fcloneform').classList.add('hidden'); $('frepos').innerHTML='';
     return loadDirs();
   }).catch(function(err){ alert('Could not clone: '+err.message); });
 });
@@ -2813,7 +3056,6 @@ function renderJobs(){
   clearTimeout(jobTimer); if(running) jobTimer=setTimeout(loadDirs, 1500);
 }
 $('termbtn').addEventListener('click', function(){ openShell('/workspace'); });
-$('fterm').addEventListener('click', function(){ openShell(fabs(FREL)); });
 $('fjobs').addEventListener('click', function(e){ var b=e.target.closest('[data-start]'); if(b) startIn(b.getAttribute('data-start')); });
 
 // entry "⋯" menu (shares the floating #menu with the session rows)
@@ -2853,7 +3095,7 @@ function tPost(op, body){
 function loadTasks(){
   return fetch('tasks').then(function(r){ return r.ok?r.json():Promise.reject(); }).then(function(o){
     TDATA=o; TBYSLUG={}; (o.tasks||[]).forEach(function(t){ TBYSLUG[t.slug]=t; });
-    renderTasks(); renderRepos();
+    renderTasks(); renderRepos(); if(WSDATA.entries) renderDirs();
   }).catch(function(){ $('tlist').innerHTML='<div class="empty">Tasks are not available.</div>'; });
 }
 function renderTasks(){
@@ -2904,7 +3146,7 @@ function taskPrompt(t){
     '\n\nThis folder is the task workspace'+(rp?' with its own clones: '+rp:'')+'. '+
     'Read the task first'+(t.key?' (Jira tools for '+t.key+')':'')+', then propose a plan.';
 }
-function openTask(t){
+function openTask(t, extra){
   if(!t) return;
   if(t.archived){ tPost('reopen',{slug:t.slug}).then(function(o){ TBYSLUG[o.slug]=o; openTask(o); loadTasks(); })
     .catch(function(e){ alert('Could not reopen the task: '+e.message); }); return; }
@@ -2912,7 +3154,7 @@ function openTask(t){
   if(ss.length){ openSession(ss[0].token); return; }
   if(!CHAT_ON){ newConsole(); return; }
   newChat(t.path);
-  var p=PANES[ACTIVE]; if(p && p.ta && !p.ta.value){ p.ta.value=taskPrompt(t); p.ta.dispatchEvent(new Event('input')); p.ta.focus(); }
+  var p=PANES[ACTIVE]; if(p && p.ta && !p.ta.value){ p.ta.value=(extra?extra+'\n\n':'')+taskPrompt(t); p.ta.dispatchEvent(new Event('input')); p.ta.focus(); }
 }
 function openTaskMenu(slug, anchor){
   var t=TBYSLUG[slug]; if(!t) return;
@@ -2960,9 +3202,6 @@ $('tlist').addEventListener('click', function(e){
 });
 $('tfilter').addEventListener('input', renderTasks);
 $('tshowarch').addEventListener('change', renderTasks);
-$('tnew').addEventListener('click', function(){ $('repopanel').classList.add('hidden'); $('tnewform').classList.toggle('hidden');
-  if(!$('tnewform').classList.contains('hidden')) $('ttitle').focus(); });
-$('trepobtn').addEventListener('click', function(){ $('tnewform').classList.add('hidden'); $('repopanel').classList.toggle('hidden'); });
 $('tnewform').querySelector('[data-x]').addEventListener('click', function(){ $('tnewform').classList.add('hidden'); PENDING_TASK=null; });
 $('tnewform').addEventListener('submit', function(e){
   e.preventDefault();
@@ -2982,6 +3221,145 @@ $('raddurl').addEventListener('submit', function(e){ e.preventDefault(); var u=$
   tPost('repo-add',{url:u}).then(function(){ $('rurl').value=''; loadTasks(); }).catch(function(err){ alert('Could not add: '+err.message); }); });
 $('raddfrom').addEventListener('submit', function(e){ e.preventDefault(); var f=$('rfrom').value; if(!f) return;
   tPost('repo-add',{from:f}).then(loadTasks).catch(function(err){ alert('Could not add: '+err.message); }); });
+// ===== New task (sidebar): pick a Jira issue, find one, create one, or just a title
+// My issues come from the Today panel's last snapshot (instant); "Search Jira" is a short read-only
+// run through the Jira connector (web-panel.js jiraSearch); a new issue is created by the agent
+// in the task's session, first thing (its draft says so).
+var TD={mine:[], recent:[], recentBusy:false, found:null, foundQ:'', busy:false, connected:null, seq:0, timer:null, poll:null};
+// "[ABC-12](https://…/browse/ABC-12)" -> {key:'ABC-12', url:…} (the panel's model writes keys like that)
+function jiraItem(i){
+  var raw=String((i&&i.key)||''), m=/([A-Z][A-Z0-9_]+-\d+)/.exec(raw), u=/\((https?:\/\/[^)\s]+)\)/.exec(raw);
+  return {key:m?m[1]:raw, title:String((i&&i.title)||''), status:String((i&&i.status)||''), url:(i&&i.url)||(u?u[1]:'')};
+}
+function jiraMatch(i, ql){ return !ql || (i.key+' '+i.title).toLowerCase().indexOf(ql)>=0; }
+function openTaskDialog(){
+  $('taskd').classList.add('on'); $('tq').value=''; TD.found=null; TD.foundQ=''; TDR=[]; $('tdrq').value='';
+  renderTaskDialog(); $('tq').focus();
+  fetch('panel').then(function(r){ return r.json(); }).then(function(o){
+    var a=(o&&o.agent)||{}; TD.mine=(a.jira||[]).map(jiraItem); TD.connected=a.sources?!!a.sources.jira:null; renderTaskDialog();
+  }).catch(function(){});
+  loadRecentJira();
+  loadTasks().then(renderTaskDialog);
+}
+// the instant list: recent issues of my projects, refreshed by the server in the background
+function loadRecentJira(){
+  clearTimeout(TD.poll);
+  fetch('panel/jira/recent').then(function(r){ return r.json(); }).then(function(o){
+    TD.recent=(o.issues||[]).map(jiraItem); TD.recentBusy=!!o.refreshing; if(o.connected===false) TD.connected=false;
+    renderTaskDialog();
+    if(o.refreshing && $('taskd').classList.contains('on')) TD.poll=setTimeout(loadRecentJira, 3000);
+  }).catch(function(){});
+}
+function closeTaskDialog(){ $('taskd').classList.remove('on'); clearTimeout(TD.timer); clearTimeout(TD.poll); }
+function tdRow(i, act){
+  return '<button type="button" class="ti" data-tact="'+act+'" data-key="'+esc(i.key||'')+'" data-title="'+esc(i.title||'')+'" data-url="'+esc(i.url||'')+'">'+
+    '<span class="tt"><b class="k">'+esc(i.key||'')+'</b>: '+esc(i.title||'')+'</span><span class="st">'+esc(i.status||'')+'</span></button>';
+}
+// the deep search starts by itself once typing pauses; only the newest answer is shown
+function queueJiraSearch(){
+  clearTimeout(TD.timer);
+  var q=$('tq').value.trim();
+  if(q.length<2 || q===TD.foundQ) return;
+  TD.timer=setTimeout(function(){
+    var my=++TD.seq; TD.busy=true; renderTaskDialog();
+    fetch('panel/jira?q='+encodeURIComponent(q)).then(function(r){ return r.json().then(function(o){ if(!r.ok) throw new Error(o.error||'failed'); return o; }); })
+      .then(function(o){ if(my!==TD.seq) return; TD.found=(o.issues||[]).map(jiraItem); TD.foundQ=q; if(o.connected===false) TD.connected=false; },
+            function(){ if(my!==TD.seq) return; TD.found=[]; TD.foundQ=q; })
+      .then(function(){ if(my===TD.seq){ TD.busy=false; renderTaskDialog(); } });
+  }, 800);
+}
+function renderTaskDialog(){
+  var q=$('tq').value.trim(), ql=q.toLowerCase(), h='', seen={};
+  $('tjnote').innerHTML=TD.connected===false?'<div class="warn">Jira is not connected. Connect the Atlassian connector on '+
+    '<a href="#" data-ext="https://claude.ai/settings/connectors">claude.ai → Settings → Connectors</a>, then refresh the Today panel. '+
+    'Until then a task can still start from a title.</div>':'';
+  var mine=TD.mine.filter(function(i){ return jiraMatch(i, ql); });
+  mine.forEach(function(i){ seen[i.key]=1; });
+  h+='<h5>My issues in work</h5>'+(mine.length?mine.map(function(i){ return tdRow(i,'pick'); }).join('')
+    :'<div class="muted">'+(TD.mine.length?'None of them match.':'Nothing here yet (the Today panel collects them).')+'</div>');
+  var rec=TD.recent.filter(function(i){ return !seen[i.key] && jiraMatch(i, ql); });
+  rec.forEach(function(i){ seen[i.key]=1; });
+  if(rec.length || TD.recentBusy){
+    h+='<h5>Recent in my projects'+(TD.recentBusy?' · updating…':'')+'</h5>'+rec.slice(0, q?20:8).map(function(i){ return tdRow(i,'pick'); }).join('');
+  }
+  if(q){
+    var more=(TD.found && TD.foundQ===q)?TD.found.filter(function(i){ return !seen[i.key]; }):null;
+    h+='<h5>All of Jira'+(TD.busy?' · searching…':'')+'</h5>';
+    if(more) h+=more.length?more.map(function(i){ return tdRow(i,'pick'); }).join(''):'<div class="muted">Nothing more found.</div>';
+    else if(q.length<2) h+='<div class="muted">Type a bit more to search all of Jira.</div>';
+    else if(!TD.busy) h+='<div class="muted">Searching when you stop typing…</div>';
+    h+='<h5>New</h5><button type="button" class="ti new" data-tact="create">＋ Create a Jira issue “'+esc(q)+'” and start on it</button>'+
+      '<button type="button" class="ti" data-tact="plain">Just a task “'+esc(q)+'”, no Jira</button>';
+  }
+  var keep=$('tdlist').scrollTop; $('tdlist').innerHTML=h; $('tdlist').scrollTop=keep;
+  renderTdRepos();
+}
+// Repos for the task: picked from GitHub (or the base repos already in repos/). The server takes a
+// base repo from repos/ when it has one for that URL, otherwise clones it there once (web-tasks.js).
+var TDR=[];      // [{name, url?}] url = a GitHub repo, no url = an existing base repo by name
+function renderTdRepos(){
+  $('tdchips').innerHTML=TDR.map(function(r, i){ return '<span class="rchip">'+esc(r.name)+'<button type="button" data-rdel="'+i+'" title="Remove">×</button></span>'; }).join('');
+  var q=$('tdrq').value.trim().toLowerCase(), have={};
+  TDR.forEach(function(r){ have[(r.url||r.name).toLowerCase()]=1; });
+  if(!q){ $('tdrlist').innerHTML=''; return; }
+  var base=(TDATA.repos||[]).filter(function(r){ return !have[r.name.toLowerCase()] && r.name.toLowerCase().indexOf(q)>=0 &&
+    !(GHREPOS||[]).some(function(g){ return r.remote && r.remote.toLowerCase().indexOf(g.name.toLowerCase())>=0; }); })
+    .map(function(r){ return {name:r.name, desc:'already in repos/'}; });
+  var gh=(GHREPOS||[]).filter(function(r){ return !have[r.url.toLowerCase()] && (r.name+' '+r.desc).toLowerCase().indexOf(q)>=0; });
+  var rows=base.concat(gh).slice(0,30);
+  $('tdrlist').innerHTML=rows.length?rows.map(function(r){
+    return '<div class="ri" data-rname="'+esc(r.name)+'"'+(r.url?' data-rurl="'+esc(r.url)+'"':'')+'><span class="rn"><b>'+esc(r.name)+'</b>'+
+      (r.private?' <span class="lock">private</span>':'')+(r.desc?'<small>'+esc(r.desc)+'</small>':'')+'</span></div>'; }).join('')
+    :'<div class="note2">'+(GHREPOS?'No repo matches.':'Loading your GitHub repos…')+'</div>';
+}
+$('tdrq').addEventListener('focus', function(){
+  if(GHREPOS) return;
+  fetch('git/repos').then(function(r){ return r.json(); }).then(function(o){ GHREPOS=o.repos||[]; renderTdRepos(); },
+    function(){ GHREPOS=[]; renderTdRepos(); });
+});
+$('tdrq').addEventListener('input', renderTdRepos);
+$('tdrq').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); var r=$('tdrlist').querySelector('.ri'); if(r) r.click(); } });
+$('tdrepos').addEventListener('click', function(e){
+  var d=e.target.closest('[data-rdel]'); if(d){ TDR.splice(+d.dataset.rdel,1); renderTdRepos(); return; }
+  var r=e.target.closest('.ri'); if(!r) return;
+  TDR.push(r.dataset.rurl?{name:r.dataset.rname, url:r.dataset.rurl}:{name:r.dataset.rname});
+  $('tdrq').value=''; renderTdRepos(); $('tdrq').focus();
+});
+function tdStart(body, extra){
+  body.repos=TDR.map(function(r){ return r.url?{url:r.url}:r.name; });
+  $('tdlist').innerHTML='<div class="muted">Creating the task folder'+(TDR.length?' and cloning '+esc(TDR.map(function(r){ return r.name; }).join(', '))+' (a first clone can take a while)':'')+'…</div>';
+  tPost('open', body).then(function(t){
+    if(t.errors && t.errors.length) alert('Some repos could not be cloned:\n'+t.errors.join('\n'));
+    closeTaskDialog(); loadTasks(); openTask(t, extra);
+  }).catch(function(err){ alert('Could not create the task: '+err.message); renderTaskDialog(); });
+}
+$('tq').addEventListener('input', function(){ renderTaskDialog(); queueJiraSearch(); });
+$('tq').addEventListener('keydown', function(e){
+  if(e.key==='Enter'){ e.preventDefault(); var b=$('tdlist').querySelector('.ti'); if(b) b.click(); }
+});
+$('tdlist').addEventListener('click', function(e){
+  var b=e.target.closest('[data-tact]'); if(!b) return;
+  var a=b.dataset.tact, q=$('tq').value.trim();
+  if(a==='pick'){ tdStart({key:b.dataset.key, title:b.dataset.title, url:b.dataset.url}); return; }
+  if(a==='plain'){ tdStart({key:'', title:q}); return; }
+  if(a==='create'){ tdStart({key:'', title:q}, 'First create a Jira issue for this task with the summary “'+q+
+    '” (in the project my recent issues are in; ask me if that is unclear), tell me its key, then continue.'); return; }
+});
+$('tjnote').addEventListener('click', function(e){ var a=e.target.closest('[data-ext]'); if(a){ e.preventDefault(); openExt(a.dataset.ext); } });
+$('taskbtn').addEventListener('click', openTaskDialog);
+$('taskclose').addEventListener('click', closeTaskDialog);
+$('taskd').addEventListener('click', function(e){ if(e.target===this) closeTaskDialog(); });
+document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('taskd').classList.contains('on')){ e.stopPropagation(); closeTaskDialog(); } }, true);
+// New temp session: a fresh folder /workspace/tmp/<date-time>, a chat there
+$('tmpbtn').addEventListener('click', function(){
+  var d=new Date(), z=function(n){ return (n<10?'0':'')+n; };
+  var name=d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())+'-'+z(d.getHours())+z(d.getMinutes())+'-'+Math.random().toString(36).slice(2,5);
+  wsPost('mkdir',{name:'tmp', dir:''}).catch(function(){})                       // already there: fine
+    .then(function(){ return wsPost('mkdir',{name:name, dir:'tmp'}); })
+    .then(function(o){ if(CHAT_ON) newChat(o.path); else newConsole(); })
+    .catch(function(err){ alert('Could not create the temp folder: '+err.message); });
+});
+
 // deep link: /?task=PROJ-123&title=…&url=…&repos=a,b&text=… (from a task tracker, a bookmarklet, anything)
 // Such a link can come from any site, so it never acts on its own: the user sees what it would
 // do (create a task folder, clone repos, put text into the chat box) and confirms it first.

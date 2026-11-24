@@ -15,7 +15,11 @@ test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 // capture execFile instead of running git: the module grabs it from child_process at load time
 const cp = require('child_process');
 let captured = null;
-cp.execFile = (cmd, args, opts, cb) => { captured = { cmd, args, opts }; cb(null, '', ''); };
+cp.execFile = (cmd, args, opts, cb) => {
+  // du (folder sizes): 200 KB for a folder named "a", 4 KB for any other
+  if (cmd === 'du') { const p = args[args.length - 1]; cb(null, (p.endsWith('/a') ? 200 : 4) + '\t' + p + '\n', ''); return; }
+  captured = { cmd, args, opts }; cb(null, '', '');
+};
 
 const ws = require('../scripts/web-workspace.js');
 
@@ -39,4 +43,19 @@ test('clone: rejects URLs that are not git URLs (option smuggling)', () => {
 test('clone: refuses to overwrite an existing folder', () => {
   fs.mkdirSync(path.join(tmp, 'repo'));
   assert.throws(() => ws.clone('git@github.com:org/repo.git', 'repo'), /already exists/);
+});
+
+test('sizes: each folder gets its du total, tasks/ is listed at the root, repos/ is not', async () => {
+  fs.mkdirSync(path.join(tmp, 'sz', 'a'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'sz', 'b'), { recursive: true });
+  fs.writeFileSync(path.join(tmp, 'sz', 'a', 'f.bin'), Buffer.alloc(200 * 1024));
+  const s = await ws.sizes('sz');
+  assert.ok(s.a >= 200 * 1024, 'a holds the 200 KB file: ' + s.a);
+  assert.ok(s.b >= 0 && s.b < s.a);
+  fs.mkdirSync(path.join(tmp, 'tasks'), { recursive: true });
+  fs.mkdirSync(path.join(tmp, 'repos'), { recursive: true });
+  const names = ws.ls('').entries.map((e) => e.name);
+  assert.ok(names.includes('tasks'));
+  assert.ok(!names.includes('repos'));
+  await assert.rejects(() => ws.sizes('../etc'), /invalid path|outside/);
 });

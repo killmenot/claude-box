@@ -64,7 +64,9 @@ test('empty query -> []', async () => {
 
 test('sidecar /search route', async (t) => {
   const port = String(20000 + Math.floor(Math.random() * 20000));
-  Object.assign(process.env, { WEB_TERMINAL_PORT: port, WEB_TERMINAL_INTERFACE: '127.0.0.1', WEB_TERMINAL_PASSWORD: '' });
+  // a login is required now (no login = only the one-time key link); keep its store out of $HOME
+  Object.assign(process.env, { WEB_TERMINAL_PORT: port, WEB_TERMINAL_INTERFACE: '127.0.0.1', WEB_TERMINAL_PASSWORD: 'testpass1',
+    WEB_AUTH_DIR: require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'auth-')) });
   delete process.env.WEB_TLS_CERT; delete process.env.WEB_TLS_KEY;
   process.env.WEB_CHAT_MODULE = '/nonexistent';                          // no Agent SDK needed here
   process.env.WEB_WORKSPACE_MODULE = '/nonexistent';
@@ -72,7 +74,7 @@ test('sidecar /search route', async (t) => {
   const servers = require('../scripts/web-sidecar.js').start();
   console.error = errors;
   t.after(() => servers.forEach((s) => s.close()));
-  const get = (p) => new Promise((res, rej) => http.get('http://127.0.0.1:' + port + p, (r) => {
+  const get = (p) => new Promise((res, rej) => http.get('http://127.0.0.1:' + port + p, { auth: 'claude:testpass1' }, (r) => {
     let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => res(JSON.parse(b)));
   }).on('error', rej));
   for (let i = 0; i < 50; i++) { try { await get('/search?q='); break; } catch (_) { await new Promise((r) => setTimeout(r, 100)); } }

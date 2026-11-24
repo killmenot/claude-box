@@ -5,9 +5,11 @@
 #   claude-box --no-proxy  — run WITHOUT the proxy from .env (the host's direct egress)
 #   claude-box --stop      — stop the web UI (running Claude sessions are restored on the next start)
 #   claude-box --status    — is it running, where, which sessions
-#   claude-box --setup     — re-run the first-run setup (workspace folder, web login and password)
+#   claude-box --login     — print a fresh one-time sign-in link for the web UI (changes nothing else)
+#   claude-box --setup     — re-run the first-run setup (the workspace folder)
 #   claude-box --install   — print how to add claude-box to PATH (changes nothing)
-# The first start walks through the setup: .env, the workspace folder, the web login and password.
+# The first start creates .env and asks where projects live. The web login and password are set
+# in the browser: open the one-time link printed at the end, and the UI asks for them.
 set -euo pipefail
 
 # real path of the script (works via symlink and via PATH too) -> repository root
@@ -16,7 +18,7 @@ REPO="$(cd "$(dirname "$SELF")" && pwd -P)"
 ENV_FILE="$REPO/.env"
 PLACEHOLDER='/path/to/your/project'
 
-usage() { sed -n '2,10p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,12p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ---------------------------------------------------------------- arguments
 action=start; want_tunnel=0; no_proxy=0; force_setup=0
@@ -27,6 +29,7 @@ for a in "$@"; do
     --stop|--web-stop)        action=stop ;;
     --status|--web-status)    action=status ;;
     --setup)                  force_setup=1 ;;
+    --login)                  action=login ;;
     --install)                action=install ;;
     -h|--help)                action=help ;;
     --web|--build)            ;;   # kept for old habits: the web UI is the default and the image is always rebuilt (cached)
@@ -96,9 +99,11 @@ setup_workspace() {
     echo "  Run claude-box in a terminal to set it up, or set PROJECT_DIR in .env by hand." >&2
     exit 1
   fi
-  [ -z "$cur" ] || [ "$cur" = "$PLACEHOLDER" ] && cur="$HOME/workspace"
+  # default: a workspace/ folder next to this script (git-ignored)
+  [ -z "$cur" ] || [ "$cur" = "$PLACEHOLDER" ] && cur="$REPO/workspace"
   echo
-  echo "Workspace: the host folder your projects live in. It is mounted as /workspace in the box."
+  echo "Projects: the folder on this computer where your projects live (clones, task folders, files)."
+  echo "The box sees it as /workspace. Press Enter for the default."
   while :; do
     dir="$(expand_home "$(ask "  Workspace folder" "$cur")")"
     case "$dir" in /*) ;; *) echo "  Use an absolute path (or ~/...)." >&2; continue ;; esac
@@ -111,39 +116,6 @@ setup_workspace() {
     break
   done
   env_set PROJECT_DIR "$(cd "$dir" && pwd -P)"
-}
-
-setup_login() {
-  local user pw pw2
-  if [ "$force_setup" = 0 ] && [ -n "$(env_get WEB_TERMINAL_PASSWORD)" ]; then return 0; fi
-  if ! interactive; then
-    echo "⚠ The web UI has no password (WEB_TERMINAL_PASSWORD in .env); it listens on 127.0.0.1 only." >&2
-    return 0
-  fi
-  echo
-  echo "Web login: the browser asks for it before showing the UI (and it is required for --tunnel)."
-  while :; do
-    user="$(ask "  Login" "$(env_get WEB_TERMINAL_USER | grep . || echo claude)")"
-    case "$user" in *[!A-Za-z0-9._-]*|'') echo "  Letters, digits, '.', '_' and '-' only." >&2; continue ;; esac
-    break
-  done
-  while :; do
-    printf '  Password (Enter = generate one): ' >&2; IFS= read -rs pw || pw=""; echo >&2
-    if [ -z "$pw" ]; then
-      pw="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-20)"
-      echo "  Generated password: $pw"
-      echo "  (saved in $ENV_FILE — keep it somewhere safe)"
-      break
-    fi
-    # .env is parsed by docker compose: a quote, '$', '#' or whitespace would be mangled there
-    case "$pw" in *[[:space:]\'\"\$\#\\]*) echo "  Please avoid spaces, quotes, \$, # and \\ in the password." >&2; continue ;; esac
-    [ "${#pw}" -ge 8 ] || { echo "  At least 8 characters, please." >&2; continue; }
-    printf '  Repeat password: ' >&2; IFS= read -rs pw2 || pw2=""; echo >&2
-    [ "$pw" = "$pw2" ] && break
-    echo "  Passwords do not match." >&2
-  done
-  env_set WEB_TERMINAL_USER "$user"
-  env_set WEB_TERMINAL_PASSWORD "$pw"
 }
 
 # Several boxes can share one docker daemon (two users of one Mac, two checkouts) only if
@@ -188,7 +160,6 @@ first_run() {
   # the container must run as this host user, or it cannot write the ./home bind mount
   if [ -z "$(env_get BOX_UID)" ]; then env_set BOX_UID "$(id -u)"; env_set BOX_GID "$(id -g)"; fi
   setup_workspace
-  setup_login
 }
 
 # ---------------------------------------------------------------- docker
@@ -241,9 +212,24 @@ host="$iface"
 [ "$iface" = 0.0.0.0 ] && host="$(hostname -I 2>/dev/null | awk '{print $1}')" && host="${host:-localhost}"
 if [ "$(env_get WEB_TLS)" = 0 ]; then url="http://${host}:${port}"; url_note=""
 else url="https://${host}:${tls_port}"; url_note="   (self-signed; enables clipboard and notifications)"; fi
-login="$(env_get WEB_TERMINAL_USER)"; login="${login:-claude}"
+# A one-time sign-in link: the key goes to ./home/.claude (the box's own home, private), the
+# browser that opens the link within 15 minutes is signed in and the key is used up.
+signin_link() {
+  local key
+  mkdir -p ./home/.claude
+  key="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32)"
+  ( umask 077; printf '%s\n' "$key" > ./home/.claude/web-login-key )
+  printf '%s/?key=%s' "$url" "$key"
+}
+# a login exists: set in the UI (web-auth.json) or the old WEB_TERMINAL_PASSWORD in .env
+has_login() { [ -n "$(env_get WEB_TERMINAL_PASSWORD)" ] || grep -q '"hash"' ./home/.claude/web-auth.json 2>/dev/null; }
 
 case "$action" in
+  login)
+    echo "Sign in to claude-box (one-time link, valid 15 minutes):"
+    echo "  $(signin_link)"
+    exit 0
+    ;;
   stop)
     guard_owner
     dc rm -sf web
@@ -279,9 +265,9 @@ dc build \
 tunnel=0
 if [ "$want_tunnel" = 1 ]; then
   # fail closed: a public shell without a password is not allowed (the container checks it too)
-  if [ -z "$(env_get WEB_TERMINAL_PASSWORD)" ]; then
-    echo "✗ Tunnel not started: WEB_TERMINAL_PASSWORD is not set in .env (run claude-box --setup)."
-    echo "  Bringing up the web UI locally, without public access."
+  if ! has_login; then
+    echo "✗ Tunnel not started: there is no login yet. Open the link below, set a login and password,"
+    echo "  then run claude-box --tunnel again. Bringing up the web UI locally, without public access."
   else
     tunnel=1
   fi
@@ -292,7 +278,10 @@ echo
 echo "claude-box is up:"
 echo "  ${url}${url_note}"
 echo "  network: ${bind_name}"
-[ -n "$(env_get WEB_TERMINAL_PASSWORD)" ] && echo "  login: ${login}"
+echo
+if has_login; then echo "Sign in with your login and password, or on this computer with this one-time link (15 min):"
+else echo "Open this one-time link to sign in (15 min); the page then asks you to pick a login and password:"; fi
+echo "  $(signin_link)"
 
 if [ "$tunnel" = 1 ]; then
   if [ -n "$(env_get NGROK_AUTHTOKEN)" ]; then echo "Bringing up a public tunnel (ngrok)…"
@@ -306,6 +295,6 @@ if [ "$tunnel" = 1 ]; then
     [ -n "$u" ] && { url="$u"; break; }
     sleep 0.5
   done
-  if [ -n "$url" ]; then echo "🌍 Public access: ${url}  (login: ${login})"
+  if [ -n "$url" ]; then echo "🌍 Public access: ${url}  (sign in with your login and password)"
   else echo "⚠ Tunnel not visible yet. Check: docker compose logs web"; fi
 fi

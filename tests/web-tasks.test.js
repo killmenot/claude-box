@@ -91,3 +91,12 @@ test('tasks without a Jira key get a local id; unknown repos are reported, not f
 });
 
 test.after(() => fs.rmSync(W, { recursive: true, force: true }));
+
+test('a repo picked by URL: remotes compare by host/owner/name, a bad URL is reported, not cloned', async () => {
+  assert.strictEqual(tasks.remoteId('https://x:tok@github.com/Org/Repo.git'), 'github.com/org/repo');
+  assert.strictEqual(tasks.remoteId('git@github.com:org/repo'), 'github.com/org/repo');
+  const t = await tasks.open({ title: 'url repo check', repos: [{ url: 'file:///etc' }] });
+  assert.strictEqual(t.errors.length, 1);
+  assert.match(t.errors[0], /unsupported git URL/);
+  assert.strictEqual((t.repos || []).length, 0);
+});

@@ -126,7 +126,9 @@ function pollUrl(read) {
 function startTunnel() {
   try { fs.writeFileSync(TUNNEL_URL_FILE, ''); } catch (_) {}
   if (env.WEB_TUNNEL !== '1') return null;
-  if (!PW) { warn('✗ Tunnel not started: WEB_TERMINAL_PASSWORD is not set — a public shell without a password is not allowed.'); return null; }
+  // a password from the UI (web-auth.json) or the old one from .env
+  const hasLogin = PW || require('./web-auth.js').makeStore({ dir: CLAUDE_DIR }).configured();
+  if (!hasLogin) { warn('✗ Tunnel not started: no login yet. Open the UI, set a login and password (first visit or Settings → Access), then start the tunnel again.'); return null; }
   const target = `http://127.0.0.1:${PORT}`;
   if (NGROK_TOKEN) {
     // --inspect=false: the local inspector (127.0.0.1:4040 on the HOST network) would otherwise
