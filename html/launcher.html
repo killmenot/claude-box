@@ -559,6 +559,8 @@
   a.mdimg.broken{line-height:1.4;padding:6px 10px;font-size:12px;color:var(--mute)}
   .note{margin:10px 0;color:var(--mute);font-size:13px;text-align:center}
   .note.older{cursor:pointer;opacity:.8}
+  .chat .loading{color:var(--mute);font-size:13px;padding:22px 0;text-align:center;animation:pulse 1.2s ease-in-out infinite}
+  .note.older.loading{animation:pulse 1.2s ease-in-out infinite}
   .note.older:hover{color:var(--body)}
   .note.err{color:var(--err)}
   .note pre{text-align:left}
@@ -1123,6 +1125,7 @@ function buildChat(p){
     '<button class="sendbtn go" type="button" title="Send (Enter)" disabled>↑</button></div></div></div></div>';
   views.appendChild(c);
   p.el=c; p.log=c.querySelector('.log'); p.inner=c.querySelector('.inner');
+  p.inner.appendChild(el('div','loading','Loading session…'));   // the history reply clears it
   p.log.addEventListener('scroll', function(){ checkOlder(p); }, {passive:true});
   p.ta=c.querySelector('textarea'); p.go=c.querySelector('.go'); p.stopb=c.querySelector('.stopbtn');
   p.stat=c.querySelector('.stat'); p.ctxm=c.querySelector('.ctxm');
@@ -1440,11 +1443,11 @@ function setOlder(p, more, items){
 }
 function loadOlder(p){
   if(!p.more || p.loadingOlder || !p.oldest || !p.ready) return;
-  p.loadingOlder=true; if(p.olderEl) p.olderEl.textContent='Loading earlier messages…';
+  p.loadingOlder=true; if(p.olderEl){ p.olderEl.textContent='Loading earlier messages…'; p.olderEl.classList.add('loading'); }
   wsSend({op:'older', key:p.wire, before:p.oldest});
 }
 function checkOlder(p){ if(p.more && !p.loadingOlder && p.log.scrollTop<400) loadOlder(p); }
-function olderIn(p, o){
+function olderIn(p, o){ if(p.olderEl) p.olderEl.classList.remove('loading');
   var real=p.inner, tmp=document.createElement('div'), live=p.r.live, cur=p.r.cur, echo=p.r.pendingEcho;
   p.inner=tmp; p.prepending=true; p.r.live=[]; p.r.pendingEcho=[];
   try{ (o.items||[]).forEach(function(m){ renderItem(p,m); }); }
