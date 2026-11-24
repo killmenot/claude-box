@@ -421,13 +421,41 @@ function estimateCtx(items) {
 }
 
 // ---------- history ----------
+// History is cached per session: the SDK's getSessionMessages re-parses the whole transcript
+// (tens of MB on long sessions) on EVERY open and on every "loading earlier messages" page, which
+// is what made paging crawl. First load parses via the SDK; later, grown files are appended by
+// parsing only the new lines. A moved/rewritten file invalidates the cache.
+const HCACHE = new Map();          // cid -> {file, size, raw}
 async function history(chat) {
   if (!chat.cid) return [];
   await sdkReady;
-  let items = [];
-  try { items = sdk ? await sdk.getSessionMessages(chat.cid, { dir: chat.cwd }) : []; }
-  catch (e) { log('history', e.message); }
+  const f = transcriptPath(chat.cid, chat.cwd);
+  let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
+  let c = HCACHE.get(chat.cid);
+  if (!c || c.file !== f || (st && st.size < c.size)) { c = { file: f, size: 0, raw: [] }; HCACHE.set(chat.cid, c); }
+  if (!c.raw.length) {
+    try { c.raw = sdk ? await sdk.getSessionMessages(chat.cid, { dir: chat.cwd }) : []; }
+    catch (e) { log('history', e.message); }
+    c.size = st ? st.size : 0;
+  } else if (st && st.size > c.size) {
+    const fd = fs.openSync(f, 'r');
+    try {
+      const start = Math.max(0, c.size - 1024);                                 // overlap: a line cut last time
+      const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start);
+      const seen = new Set(c.raw.map((i) => i.uuid));
+      for (const l of buf.toString('utf8').split('\n')) {
+        if (!l.startsWith('{')) continue;
+        let e; try { e = JSON.parse(l); } catch (_) { continue; }
+        if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain || e.isMeta) continue;
+        if (!e.uuid || !e.message || seen.has(e.uuid)) continue;
+        seen.add(e.uuid);
+        c.raw.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null });
+      }
+      c.size = st.size;
+    } finally { fs.closeSync(fd); }
+  }
   // add what the SDK has streamed this turn but the transcript doesn't have yet
+  const items = c.raw.slice();
   const seen = new Set(items.map((i) => i.uuid));
   for (const m of chat.turn) if (!seen.has(m.uuid)) items.push(m);
   const out = [], { extra, times } = transcriptExtras(chat);
@@ -461,24 +489,41 @@ function pageStart(items, end) {
 // times: uuid -> when the message was written (ms) }; getSessionMessages has no timestamps either.
 // A transcript line starts with its own fields, so the first "uuid":…,"timestamp":… pair is the message's.
 const UUID_TS = /"uuid":"([^"]+)","timestamp":"([^"]+)"/;
+// Read incrementally: a long session's transcript is tens of MB, and re-reading it whole on
+// every history request stalled the server. Per-chat state remembers how much was consumed;
+// a moved, rewritten or shrunk file starts over. The 1 KB overlap re-parses the line that was
+// cut at the previous read boundary; map entries are overwritten, so duplicates are harmless.
+const EXTRAS = new Map();          // cid -> {file, size, map, times}
+const EMPTY_EXTRAS = () => ({ extra: new Map(), times: new Map() });
 function transcriptExtras(chat) {
-  const map = new Map(), times = new Map();
   const f = chat.cid && transcriptPath(chat.cid, chat.cwd);
-  let text = '';
-  try { if (f) text = fs.readFileSync(f, 'utf8'); } catch (_) {}
-  for (const l of text.split('\n')) {
-    const t = UUID_TS.exec(l);
-    if (t) { const ms = Date.parse(t[2]); if (ms) times.set(t[1], ms); }
-    if (!l.includes('"local_command"')) continue;
-    let e; try { e = JSON.parse(l); } catch (_) { continue; }
-    if (e.type !== 'system' || e.subtype !== 'local_command' || e.isSidechain) continue;
-    const c = String(e.content || '').replace(/<\/?local-command-std(out|err)>/g, '').trim();
-    if (!c) continue;
-    const k = e.parentUuid || '';
-    if (!map.has(k)) map.set(k, []);
-    map.get(k).push({ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: c });
+  let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
+  if (!st) return EMPTY_EXTRAS();
+  let c = EXTRAS.get(chat.cid);
+  if (!c || c.file !== f || st.size < c.size) { c = { file: f, size: 0, map: new Map(), times: new Map() }; EXTRAS.set(chat.cid, c); }
+  if (st.size > c.size) {
+    const fd = fs.openSync(f, 'r');
+    try {
+      const start = Math.max(0, c.size - 1024);                                 // overlap: a line cut last time
+      const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start);
+      const text = buf.toString('utf8');
+      let i = 0;
+      for (const l of text.split('\n')) {
+        const t = UUID_TS.exec(l);
+        if (t) { const ms = Date.parse(t[2]); if (ms) c.times.set(t[1], ms); }
+        if (!l.includes('"local_command"')) continue;
+        let e; try { e = JSON.parse(l); } catch (_) { continue; }
+        if (e.type !== 'system' || e.subtype !== 'local_command' || e.isSidechain) continue;
+        const cOut = String(e.content || '').replace(/<\/?local-command-std(out|err)>/g, '').trim();
+        if (!cOut) continue;
+        const k = e.parentUuid || '';
+        if (!c.map.has(k)) c.map.set(k, []);
+        c.map.get(k).push({ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: cOut });
+      }
+    } finally { fs.closeSync(fd); }
+    c.size = st.size;
   }
-  return { extra: map, times };
+  return { extra: c.map, times: c.times };
 }
 
 // ---------- per-socket handling ----------
@@ -604,7 +649,26 @@ function handleUpgrade(req, socket, head) {
 // Transcripts are append-only, so we cache per file and only read the bytes added since last time.
 const HOME = process.env.HOME || '/home/node';
 const PROJECTS = path.join(HOME, '.claude', 'projects');
+const CLAUDE_DIR = path.join(HOME, '.claude');
 const TITLES = new Map();          // cid -> {file, size, custom, ai}
+// Scan offsets are persisted: without this, the first /sessions after a restart rescans every
+// transcript from byte 0 (~200 MB across many sessions) and freezes the whole server for seconds.
+const TITLES_FILE = path.join(CLAUDE_DIR, 'web-titles.json');
+try { for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(TITLES_FILE, 'utf8')) || {}))
+  if (v && typeof v === 'object' && v.file) TITLES.set(k, v); } catch (_) {}
+let titlesSaveT = null;
+function saveTitles() {
+  clearTimeout(titlesSaveT);
+  titlesSaveT = setTimeout(() => {
+    try { const o = {}; for (const [k, v] of TITLES) o[k] = { file: v.file, size: v.size, custom: v.custom, ai: v.ai };
+      fs.writeFileSync(TITLES_FILE, JSON.stringify(o)); } catch (_) {}
+  }, 1000);
+}
+// A cold scan of a huge transcript is capped to its head and tail: title lines are appended
+// events (ai-title right after the first messages, custom-title on rename), so the middle of a
+// 30 MB file is the least likely place and the most expensive to read. The cached offset jumps
+// to the full size, so later appends are scanned incrementally as before.
+const TITLE_COLD_HEAD = 256 * 1024, TITLE_COLD_TAIL = 2 * 1024 * 1024;
 function transcriptPath(cid, cwd) {
   const guess = path.join(PROJECTS, String(cwd || '').replace(/[^a-zA-Z0-9]/g, '-'), cid + '.jsonl');
   if (fs.existsSync(guess)) return guess;
@@ -626,15 +690,24 @@ function sessionTitles(cid, cwd) {
   if (st.size > t.size) {
     const fd = fs.openSync(t.file, 'r');
     try {
-      const start = Math.max(0, t.size - 1024);                                 // overlap: a line cut last time
-      const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start);
-      const text = buf.toString('utf8'); let m; TITLE_RE.lastIndex = 0;
-      while ((m = TITLE_RE.exec(text))) {
-        let v; try { v = JSON.parse('"' + m[2] + '"'); } catch (_) { v = m[2]; }
-        if (m[1] === 'custom-title') t.custom = v; else t.ai = v;
+      const regions = [];
+      if (t.size === 0 && st.size > TITLE_COLD_HEAD + TITLE_COLD_TAIL) {        // cold, huge: head + tail
+        regions.push([0, TITLE_COLD_HEAD], [st.size - TITLE_COLD_TAIL, st.size]);
+        t.size = st.size; t.partial = '';
+      } else {
+        const start = Math.max(0, t.size - 1024) - (t.partial ? t.partial.length : 0);  // overlap: a line cut last time
+        regions.push([Math.max(0, start), st.size]);
+      }
+      for (const [from, to] of regions) {
+        const buf = Buffer.alloc(to - from); fs.readSync(fd, buf, 0, buf.length, from);
+        let m; TITLE_RE.lastIndex = 0;
+        while ((m = TITLE_RE.exec(buf.toString('utf8')))) {
+          let v; try { v = JSON.parse('"' + m[2] + '"'); } catch (_) { v = m[2]; }
+          if (m[1] === 'custom-title') t.custom = v; else t.ai = v;
+        }
       }
     } finally { fs.closeSync(fd); }
-    t.size = st.size;
+    saveTitles();
   }
   return t;
 }
@@ -835,5 +908,5 @@ async function sendTo(token, text) {
   return { via: 'chat' };
 }
 
-module.exports = { launchDir, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+module.exports = { launchDir, sessionTitles, transcriptExtras, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };
