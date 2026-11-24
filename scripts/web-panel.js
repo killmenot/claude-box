@@ -315,6 +315,8 @@ function agentRun(reason) {
     if (out) {
       const snap = Object.assign({ at: new Date().toISOString(), took: Math.round((Date.now() - t0) / 1000), cost, model: MODEL }, out,
         sources ? { sources } : {});
+      // the model sometimes writes a key as a markdown link: keep the bare key, the link goes to url
+      if (Array.isArray(snap.jira)) snap.jira = snap.jira.map((i) => { const c = cleanIssue(i); return Object.assign({}, i, { key: c.key, url: c.url }); });
       // backlog issues are not today's work, even if the model let some through
       if (Array.isArray(snap.jira)) {
         const backlog = new Set(snap.jira.filter((i) => /backlog/i.test(String(i.status || ''))).map((i) => i.key));
@@ -400,4 +402,94 @@ function inMeeting(now = Date.now()) {
   return null;
 }
 
-module.exports = { init, get, refresh, hide, unhideAll, setEvery, inMeeting, runs, run, READ_TOOL, isReadTool };
+// ---------------------------------------------------------------- Jira search (New task dialog)
+// The dialog lists my issues from the last snapshot right away; this finds any other issue by
+// words or key: a short read-only run on the cheap model through the Jira connector. Same guard
+// rails as the panel run (MCP reads only, no local tools). Cached per query for a few minutes.
+const JIRA_SCHEMA = {
+  type: 'object', required: ['connected', 'issues'],
+  properties: {
+    connected: { type: 'boolean', description: 'false when no Jira / Atlassian tools were available' },
+    issues: { type: 'array', items: { type: 'object', required: ['key', 'title'], properties: {
+      key: { type: 'string' }, title: { type: 'string' }, status: { type: 'string' }, assignee: { type: 'string' }, url: { type: 'string' }, updated: { type: 'string' } } } },
+  },
+};
+const JIRA_TTL = 5 * 60000, jiraCache = new Map();
+// "[ABC-12](https://…/browse/ABC-12)" (how the model often writes a key) -> key + url
+function cleanIssue(i) {
+  const raw = String((i && i.key) || ''), m = /([A-Z][A-Z0-9_]+-\d+)/.exec(raw), u = /\((https?:\/\/[^)\s]+)\)/.exec(raw);
+  return { key: m ? m[1] : raw.slice(0, 40), title: String((i && i.title) || '').trim(), status: String((i && i.status) || ''),
+    assignee: String((i && i.assignee) || ''), url: String((i && i.url) || (u ? u[1] : '')), updated: String((i && i.updated) || '') };
+}
+// one read-only run through the Jira connector -> {connected, issues}
+async function jiraRun(label, prompt, max) {
+  const sdk = await getSdk();
+  if (!sdk) throw new Error('Agent SDK not loaded');
+  // the claude.ai connectors come up some seconds after start: the prompt waits for them
+  let release; const gate = new Promise((r) => { release = r; });
+  async function* input() { await gate; yield { type: 'user', message: { role: 'user', content: prompt }, parent_tool_use_id: null }; }
+  const rec = wireMod ? await wireMod.begin('today', label, panelEnv()) : { id: null, env: panelEnv(), finish() {} };
+  const q = sdk.query({ prompt: input(), options: {
+    cwd: HOME, model: MODEL, persistSession: false, maxTurns: 8, permissionMode: 'default', env: rec.env,
+    hooks: { PreToolUse: [{ hooks: [async (h) => {
+      const n = String((h && h.tool_name) || '');
+      return !n.startsWith('mcp__') || isReadTool(n) ? { continue: true } : {
+        hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'This run is read-only.' },
+      };
+    }] }] },
+    disallowedTools: ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit', 'NotebookEdit', 'Agent', 'Task', 'WebFetch', 'WebSearch', 'Workflow',
+      'CronCreate', 'CronDelete', 'RemoteTrigger', 'PushNotification', 'SendMessage', 'ScheduleWakeup', 'Skill'],
+    canUseTool: async (name, inp) => isReadTool(name) && sourceOf(name) === 'jira' ? { behavior: 'allow', updatedInput: inp }
+      : { behavior: 'deny', message: 'Only Jira reads are allowed here.' },
+    outputFormat: { type: 'json_schema', schema: JIRA_SCHEMA },
+    stderr: () => {},
+  } });
+  const timer = setTimeout(() => { try { q.close(); } catch (_) {} }, 3 * 60000);
+  waitConnectors(q).finally(release);
+  let out = null, err = null, cost = null;
+  try {
+    for await (const m of q) if (m.type === 'result') {
+      cost = m.total_cost_usd;
+      setTimeout(() => { try { q.close(); } catch (_) {} }, 2000);
+      if (m.structured_output) out = m.structured_output; else err = m.subtype || 'no answer';
+    }
+  } catch (e) { err = String(e.message || e); } finally { clearTimeout(timer); }
+  rec.finish({ cost, answer: out, error: err });
+  log(label, err ? 'failed: ' + err : (out.issues || []).length + ' issues', cost != null ? '$' + cost.toFixed(4) : '');
+  if (!out) throw new Error(err);
+  out.issues = (out.issues || []).slice(0, max).map(cleanIssue).filter((i) => i.key);
+  return out;
+}
+async function jiraSearch(text) {
+  text = String(text || '').trim().slice(0, 200);
+  if (!text) return { connected: true, issues: [] };
+  const hit = jiraCache.get(text.toLowerCase());
+  if (hit && Date.now() - hit.at < JIRA_TTL) return hit.out;
+  const out = await jiraRun('Jira search: ' + text, 'Find Jira issues for this search: ' + JSON.stringify(text) + '.\n' +
+    'If it is an issue key (like ABC-123), fetch that issue. If it is the start of a key (like ABC-12), search key-like issues ' +
+    'in that project. Otherwise search with JQL text ~ the words, order by updated DESC; prefer issues that are not Done. ' +
+    'Return at most 15. key = the bare key (ABC-123), url = the browse link. ' +
+    'If there are no Jira / Atlassian tools at all, return connected=false and no issues. Do not do anything else.', 15);
+  jiraCache.set(text.toLowerCase(), { at: Date.now(), out });
+  if (jiraCache.size > 100) jiraCache.delete(jiraCache.keys().next().value);
+  return out;
+}
+// Issues of the projects I work in, recently touched: the dialog filters these as I type, so most
+// lookups need no run at all. Refreshed in the background when older than RECENT_TTL.
+const RECENT_TTL = 15 * 60000;
+let recent = { at: 0, out: null, busy: null };
+function jiraRecent() {
+  const fresh = recent.out && Date.now() - recent.at < RECENT_TTL;
+  if (!fresh && !recent.busy) {
+    recent.busy = jiraRun('Jira: recent issues', 'List Jira issues for a quick picker: the projects of the issues assigned to me ' +
+      '(find them first with assignee = currentUser()), then JQL: project in (those projects) AND updated >= -60d ' +
+      'ORDER BY updated DESC. Return up to 100: key = the bare key (ABC-123), title, status, assignee, url = the browse link. ' +
+      'If there are no Jira / Atlassian tools at all, return connected=false and no issues. Do not do anything else.', 100)
+      .then((out) => { recent = { at: Date.now(), out, busy: null }; }, (e) => { log('jira recent failed', e.message); })
+      .finally(() => { recent.busy = null; });
+  }
+  return { at: recent.at || null, refreshing: !!recent.busy, connected: recent.out ? recent.out.connected : null,
+    issues: recent.out ? recent.out.issues : [] };
+}
+
+module.exports = { init, get, refresh, hide, unhideAll, setEvery, inMeeting, runs, run, READ_TOOL, isReadTool, jiraSearch, jiraRecent, cleanIssue };

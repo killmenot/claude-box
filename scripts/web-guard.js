@@ -18,6 +18,7 @@
 // speed). cb-session inside the box uses a per-start API token instead of the web password, so
 // the password never has to be in the sessions' environment.
 const crypto = require('crypto');
+const { readCookie } = require('./web-auth.js');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
@@ -103,9 +104,13 @@ const FORWARDED = ['x-forwarded-for', 'x-forwarded-host', 'forwarded', 'cf-conne
 // rebinding page can fake X-Forwarded-For to look like many clients — this caps it anyway).
 const LIMITS = { WINDOW: 10 * 60000, KEY_MAX: 10, KEY_LOCK: 15 * 60000, GLOBAL_MAX: 100, GLOBAL_LOCK: 10 * 60000 };
 
+// opts.store (web-auth.js): the login lives there, a session cookie (opts.cookie names it) or the
+// one-time key from the host script (/?key=…) signs a browser in, and with no login set up yet
+// nothing else gets in. Without a store: the old single .env password, none = open.
 function makeAuth(opts) {
   opts = opts || {};
   const user = opts.user || 'claude', password = opts.password || '', apiToken = opts.apiToken || '';
+  const store = opts.store || null, cookie = opts.cookie || 'cb_s';
   const now = opts.now || Date.now;
   const L = Object.assign({}, LIMITS, opts.limits);
   const keys = new Map();             // client -> {n, first, until}
@@ -130,7 +135,7 @@ function makeAuth(opts) {
 
   // -> {ok:true} | {ok:false, status:401} | {ok:false, status:429, retry:seconds}
   return function check(req) {
-    if (!password) return { ok: true };
+    if (!store && !password) return { ok: true };
     const h = req.headers || {};
     const p = String(req.url || '').split('?')[0];
     // cb-session inside the box: the per-start API token, only for the headless chat API, only
@@ -142,11 +147,24 @@ function makeAuth(opts) {
     const t = now(), key = clientKey(req), e = keys.get(key);
     if (globalUntil > t) return { ok: false, status: 429, retry: Math.ceil((globalUntil - t) / 1000) };
     if (e && e.until > t) return { ok: false, status: 429, retry: Math.ceil((e.until - t) / 1000) };
+    if (store) {
+      const c = readCookie(req, cookie);
+      if (c && store.checkSession(c)) return { ok: true, session: c };
+      const k = p === '/' && new URLSearchParams(String(req.url || '').split('?')[1] || '').get('key');
+      if (k) {
+        if (store.useKey(k)) { keys.delete(key); return { ok: true, login: true }; }
+        fail(key, t);
+        return { ok: false, status: 401, setup: !store.configured(), badKey: true };
+      }
+      if (!store.configured()) return { ok: false, status: 401, setup: true };   // only the key link gets in
+    }
     const m = /^Basic (.+)$/.exec(h.authorization || '');
     if (!m) return { ok: false, status: 401 };              // no login yet: the browser will ask
     let got = '';
     try { got = Buffer.from(m[1], 'base64').toString(); } catch (_) {}
-    if (safeEqual(got, user + ':' + password)) { keys.delete(key); return { ok: true }; }
+    const i = got.indexOf(':');
+    const good = store ? i > 0 && store.checkPassword(got.slice(0, i), got.slice(i + 1)) : safeEqual(got, user + ':' + password);
+    if (good) { keys.delete(key); return { ok: true }; }
     fail(key, t);
     return { ok: false, status: 401 };
   };

@@ -31,13 +31,14 @@ claude-box is designed for a Linux host. On Windows it runs through **WSL2** (in
 ## Configuring claude-box
 
 4. **`PROJECT_DIR` in `.env` is a WSL path, not a Windows one.** The first start of `claude-box` asks for it
-   (default `~/workspace` inside Ubuntu). From inside Ubuntu, Docker doesn't understand `C:\...`; to use a
+   (default `workspace/` next to the script). From inside Ubuntu, Docker doesn't understand `C:\...`; to use a
    Windows folder, answer with its `/mnt/c/...` form. Example:
    ```env
    PROJECT_DIR=/mnt/c/Users/<user>/Documents/<...>/<workspace>
    ```
    (the path to the **parent** projects folder; don't point it at `claude-box` itself).
-   The same first start also asks for the web login and password.
+   The login and password are not asked here: open the one-time link the start prints, and the
+   browser asks for them on the first visit.
 
 5. **Authorization and the rest** — same as in the README: `CLAUDE_CODE_OAUTH_TOKEN`, and if needed
    `HTTPS_PROXY`/`GH_TOKEN` in `.env`.

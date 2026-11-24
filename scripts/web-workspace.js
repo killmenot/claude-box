@@ -52,8 +52,9 @@ function gitInfo(dir) {
   return info;
 }
 
-// one folder's entries: folders first; dotfiles only with hidden=true. At the root, tasks/ and
-// repos/ belong to the task manager (web-tasks.js) and folders being cloned are left out.
+// one folder's entries: folders first; dotfiles only with hidden=true. At the root, repos/ (the
+// task manager's base clones, web-tasks.js) and folders being cloned are left out; tasks/ is shown
+// like any folder, its task folders get their titles in the launcher.
 function ls(rel, hidden) {
   const dir = mustExist(abs(rel));
   if (!fs.statSync(dir).isDirectory()) throw new Error('not a folder: ' + rel);
@@ -62,7 +63,7 @@ function ls(rel, hidden) {
   const entries = [];
   for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
     if (!hidden && d.name.startsWith('.')) continue;
-    if (atRoot && (d.name === 'tasks' || d.name === 'repos' || d.name === TRASH)) continue;
+    if (atRoot && (d.name === 'repos' || d.name === TRASH)) continue;
     const p = path.join(dir, d.name);
     if (cloning.has(p)) continue;
     let st; try { st = fs.statSync(p); } catch (_) { continue; }        // dangling symlink
@@ -76,6 +77,32 @@ function ls(rel, hidden) {
 function list() {
   const o = ls('');
   return { root: ROOT, dirs: o.entries.filter((e) => e.dir), jobs: o.jobs };
+}
+
+// Folder sizes for the file list, in bytes: `du` per folder in the background, a few at a time,
+// each with a time limit (a huge tree gets null instead of holding the list up), cached for a while.
+const SIZE_TTL = 5 * 60000, SIZE_TIMEOUT = 20000, SIZE_PAR = 3;
+const SIZES = new Map();          // abs path -> {at, bytes} | {at, pending: Promise}
+function duOne(p) {
+  return new Promise((res) => execFile('du', ['-sk', '--', p], { timeout: SIZE_TIMEOUT, maxBuffer: 1 << 16 }, (e, out) => {
+    const kb = parseInt(String(out || '').split('\t')[0], 10);
+    // du exits 1 when some files are unreadable but still prints the total
+    res(Number.isFinite(kb) ? kb * 1024 : null);
+  }));
+}
+async function sizes(rel) {
+  const dir = mustExist(abs(rel));
+  const dirs = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(dir, d.name));
+  const now = Date.now(), todo = dirs.filter((p) => { const c = SIZES.get(p); return !c || (!c.pending && now - c.at > SIZE_TTL); });
+  let i = 0;
+  const worker = async () => { while (i < todo.length) { const p = todo[i++]; const pending = duOne(p); SIZES.set(p, { at: now, pending });
+    SIZES.set(p, { at: Date.now(), bytes: await pending }); } };
+  await Promise.all(Array.from({ length: Math.min(SIZE_PAR, todo.length) }, worker));
+  await Promise.all(dirs.map((p) => SIZES.get(p) && SIZES.get(p).pending).filter(Boolean));
+  if (SIZES.size > 5000) SIZES.clear();
+  const out = {};
+  for (const p of dirs) { const c = SIZES.get(p); out[path.basename(p)] = c ? (c.bytes != null ? c.bytes : null) : null; }
+  return out;
 }
 
 function mkdir(name, dir) {
@@ -289,4 +316,4 @@ function clone(url, name, dir) {
   return { id, name: dirName, path: target };
 }
 
-module.exports = { ROOT, list, ls, mkdir, rename, copy, move, trash, upload, serveFile, serveImage, clone, readText, saveText };
+module.exports = { ROOT, list, ls, sizes, mkdir, rename, copy, move, trash, upload, serveFile, serveImage, clone, readText, saveText };

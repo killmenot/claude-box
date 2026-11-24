@@ -148,8 +148,36 @@ async function cutClone(repo, dir, branch) {
   return { name: repo, branch, base: from || 'saved' };
 }
 
+// "https://github.com/Org/Repo.git", "git@github.com:org/repo" -> "github.com/org/repo" (to compare remotes)
+function remoteId(u) {
+  const m = /^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([^/:]+)[:/](.+?)(?:\.git)?\/?$/i.exec(String(u || '').trim());
+  return m ? (m[1] + '/' + m[2]).toLowerCase() : '';
+}
+// The base repo for a remote URL: the one in repos/ whose origin is that URL, or a fresh clone of it
+// there (named after the repo, or owner-repo when the short name is taken by another remote).
+const BASE_BUSY = new Map();
+async function ensureBase(url) {
+  url = String(url || '').trim();
+  if (!/^(https?:\/\/|ssh:\/\/|git@[\w.-]+:)[^\s]+$/.test(url)) throw new Error('unsupported git URL');
+  const want = remoteId(url);
+  for (const r of await repos()) if (remoteId(r.remote) === want) return r.name;
+  if (BASE_BUSY.has(want)) return BASE_BUSY.get(want);
+  const parts = want.split('/'), short = safeName(parts[parts.length - 1]);
+  const name = fs.existsSync(path.join(REPOS, short)) ? safeName(parts.slice(-2).join('-')) : short;
+  const p = (async () => {
+    fs.mkdirSync(REPOS, { recursive: true });
+    const dst = path.join(REPOS, name);
+    if (fs.existsSync(dst)) throw new Error('already exists: repos/' + name);
+    await git(['clone', '-q', '--', url, dst], { timeout: 30 * 60000 });
+    return name;
+  })().finally(() => BASE_BUSY.delete(want));
+  BASE_BUSY.set(want, p);
+  return p;
+}
+
 // ---------- tasks ----------
-// o: {id?, key?, title, url?, text?, source?, repos: [name]}; returns the existing task for a known id
+// o: {id?, key?, title, url?, text?, source?, repos: [name | {url}]}; returns the existing task for a
+// known id. A {url} repo is taken from repos/ when it is there already, otherwise cloned there first.
 async function open(o) {
   const key = String(o.key || '').trim().toUpperCase();
   const id = String(o.id || (JIRA_KEY.test(key) ? key : '') || '').trim().slice(0, 120);
@@ -168,11 +196,14 @@ async function open(o) {
     text: String(o.text || '').slice(0, 20000), branch: slug, repos: [], created: Date.now(), archived: false,
   };
   writeMeta(dir, meta);
-  const want = (Array.isArray(o.repos) ? o.repos : []).map(String).filter(Boolean).slice(0, 10);
+  const want = (Array.isArray(o.repos) ? o.repos : []).filter(Boolean).slice(0, 10);
   const errors = [];
-  for (const r of want) {
-    try { meta.repos.push(await cutClone(r, path.join(dir, safeName(r)), slug)); }
-    catch (e) { errors.push(r + ': ' + e.message); }
+  for (const w of want) {
+    const label = typeof w === 'object' ? String(w.url || '') : String(w);
+    try {
+      const r = typeof w === 'object' ? await ensureBase(w.url) : String(w);
+      meta.repos.push(await cutClone(r, path.join(dir, safeName(r)), slug));
+    } catch (e) { errors.push(label + ': ' + e.message); }
   }
   writeMeta(dir, meta);
   return Object.assign({ created: true, errors }, await describe(dir, meta));
@@ -263,4 +294,4 @@ function forget(slug) {
   return { ok: true };
 }
 
-module.exports = { list, open, archive, reopen, addRepos, refresh, forget, addRepo, slugify, TASKS, REPOS };
+module.exports = { list, open, archive, reopen, addRepos, refresh, forget, addRepo, slugify, remoteId, ensureBase, TASKS, REPOS };

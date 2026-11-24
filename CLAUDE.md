@@ -21,6 +21,8 @@ Guidance for Claude Code (and other agents) working in this repository.
   `scripts/web-panel.js` — the right-hand Today panel: GitHub via `gh`, calendar/Jira/Slack via a read-only cheap-model MCP run, served at `/panel`.
   `scripts/cb-session.js` — CLI for agents: start / poll chat sessions through `/chat/api/*`.
   `scripts/web-wire.js` — records what the background agents (Inbox, Today) send to the model and get back: a per-run local HTTPS proxy, served at `/wire`.
+  `scripts/web-auth.js` — the web login: one-time sign-in key from `./claude-box`, session cookies, login/password set in the UI (`/auth`).
+  `scripts/web-git.js` — GitHub sign-in from the UI via `gh auth login --web` device codes (`/git`).
   `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with per-task repo clones from `/workspace/repos`), served at `/tasks`.
 - `site/` — the static marketing landing for **claude-box.dev** (Tailwind, self-hosted
   fonts, no CDN; deploy with `./site/deploy.sh`).

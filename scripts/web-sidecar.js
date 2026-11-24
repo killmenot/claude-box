@@ -12,6 +12,8 @@
 //   /workspace   -> file manager: GET ls|file|text|image (image: any absolute path, raster only), POST /workspace/{mkdir,rename,copy,move,trash,clone,upload,save} (web-workspace.js)
 //   /inbox       -> the coordinator's cards: GET list, POST /inbox/act {token, op: send|seen|later|allow|deny} (web-inbox.js)
 //   /tasks       -> task workspaces: GET list, POST /tasks/{open,archive,reopen,refresh,forget,add-repos,repo-add}
+//   /auth        -> web login: GET /auth/state, POST /auth/password {user, password, current} (web-auth.js)
+//   /git         -> GitHub via gh: GET /git/status, GET /git/repos, POST /git/{login,login/cancel,logout} (web-git.js)
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
 const http = require('http');
@@ -33,6 +35,11 @@ const TTYD  = parseInt(process.env.TTYD_PORT || '7682', 10);
 const LAUNCHER = process.env.WEB_LAUNCHER || '/usr/local/share/claude-web/launcher.html';
 const PW = process.env.WEB_TERMINAL_PASSWORD || '';
 const USER = process.env.WEB_TERMINAL_USER || 'claude';
+// the login (set in the UI; the .env password still works) and the browser sessions
+const webAuth = require('./web-auth.js');
+const authStore = webAuth.makeStore({ dir: process.env.WEB_AUTH_DIR, envUser: USER, envPassword: PW });
+const COOKIE = webAuth.cookieName(PORT);
+const webGit = require('./web-git.js');
 
 // Web chat module (HTML UI over the Agent SDK). Optional: if it fails to load, the launcher
 // falls back to console-only and everything else keeps working.
@@ -85,6 +92,16 @@ function readJson(req, limit, cb) {
   req.on('data', (d) => { body += d; if (body.length > limit) { big = true; req.destroy(); } });
   req.on('end', () => { if (big) return; let o = null; try { o = JSON.parse(body || '{}'); } catch (_) {} cb(o); });
 }
+// shown instead of the UI until this browser is signed in, while no login exists yet
+const SIGNIN_PAGE = (bad) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>claude-box: sign in</title>
+<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.55 system-ui,-apple-system,sans-serif;background:#f7f8fa;color:#1f2430}
+@media (prefers-color-scheme:dark){body{background:#0f1218;color:#d6dbe4}code{background:#1c212b!important}}
+main{max-width:460px;padding:24px}h1{font-size:20px;margin:0 0 10px}code{background:#eceef2;padding:2px 6px;border-radius:5px;font-size:13.5px}p{margin:8px 0}.err{color:#c62828}</style></head>
+<body><main><h1>Open the sign-in link</h1>
+${bad ? '<p class="err">This sign-in link has expired or was already used.</p>' : ''}
+<p>When you run <code>./claude-box</code>, it prints a one-time link to this page. Open it in this browser to sign in, then pick a login and password.</p>
+<p>Need a fresh link? Run <code>./claude-box --login</code> on the computer where the box runs.</p></main></body></html>`;
 function json(res, code, obj) {
   try { res.writeHead(code, { 'content-type': 'application/json' }); res.end(typeof obj === 'string' ? obj : JSON.stringify(obj)); } catch (_) {}
 }
@@ -125,7 +142,7 @@ function safeDecode(s) { try { return decodeURIComponent(s); } catch (_) { retur
 // basic-auth: the sidecar serves /sessions (session names/paths) and the launcher — when a
 // password is set they MUST sit behind the same barrier as the terminal. Login: WEB_TERMINAL_USER.
 // Failed logins are rate-limited; cb-session may use the per-start API token (start(opts)).
-let auth = webGuard.makeAuth({ user: USER, password: PW });
+let auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cookie: COOKIE });
 
 // ttyd always runs with its own random login (web-serve.js), so a page that reaches its loopback
 // port directly gets nowhere; the sidecar, which has already checked the user, swaps that login in.
@@ -163,10 +180,52 @@ const handler = (req, res) => {
         res.writeHead(429, { 'retry-after': String(a.retry), 'content-type': 'text/plain' });
         res.end('too many failed logins, try again in ' + Math.ceil(a.retry / 60) + ' min'); return;
       }
+      if (a.setup) {          // no login set up yet: only the link from ./claude-box gets in
+        res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        res.end(SIGNIN_PAGE(a.badKey)); return;
+      }
       res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="claude-box"' });
       res.end('auth required'); return;
     }
+    if (a.login) {            // the one-time key: this browser gets a session, the key leaves the URL
+      const secure = !!(req.socket && req.socket.encrypted);
+      res.writeHead(302, { 'set-cookie': webAuth.sessionCookie(COOKIE, authStore.newSession(), secure), location: '/', 'cache-control': 'no-store' });
+      res.end(); return;
+    }
     const path = req.url.split('?')[0];
+    if (path === '/auth/state') {
+      json(res, 200, { configured: authStore.configured(), fromEnv: authStore.fromEnv(), user: authStore.configured() ? authStore.user() : '' });
+      return;
+    }
+    if (path === '/auth/password' && req.method === 'POST') {
+      readJson(req, 4096, (o) => {
+        o = o || {};
+        // changing an existing login needs the current password; the first one is set by whoever
+        // got in with the key link
+        if (authStore.configured() && !authStore.checkPassword(authStore.user(), String(o.current || ''))) {
+          json(res, 403, { ok: false, error: 'The current password is wrong.' }); return;
+        }
+        const err = authStore.setPassword(String(o.user || '').trim(), String(o.password || ''));
+        if (err) { json(res, 400, { ok: false, error: err }); return; }
+        // this browser stays signed in (it may have come in with the password, not a cookie)
+        const keep = a.session || authStore.newSession();
+        if (o.signOutOthers) authStore.dropSessions(keep);
+        const h = { 'content-type': 'application/json' };
+        if (!a.session) h['set-cookie'] = webAuth.sessionCookie(COOKIE, keep, !!(req.socket && req.socket.encrypted));
+        res.writeHead(200, h); res.end(JSON.stringify({ ok: true, user: authStore.user() }));
+      });
+      return;
+    }
+    if (path === '/git/repos') {
+      const force = /(?:^|&)fresh=1/.test(req.url.split('?')[1] || '');
+      webGit.repos(force).then((r) => json(res, 200, r), (e) => json(res, 502, { error: String(e.message || e) })); return;
+    }
+    if (path === '/git/status') { webGit.status().then((s) => json(res, 200, s), (e) => json(res, 500, { error: String(e.message || e) })); return; }
+    if (path.startsWith('/git/') && req.method === 'POST') {
+      if (path === '/git/login') { json(res, 200, webGit.start()); return; }
+      if (path === '/git/login/cancel') { json(res, 200, webGit.cancel()); return; }
+      if (path === '/git/logout') { webGit.logout().then((r) => json(res, r.ok ? 200 : 400, r)); return; }
+    }
     if (path === '/sessions') {
       let rows; try { rows = registry.list(); } catch (_) { json(res, 500, '[]'); return; }
       json(res, 200, chat ? chat.decorate(rows) : rows);
@@ -199,6 +258,7 @@ const handler = (req, res) => {
       try {
         if (req.method !== 'POST') {
           if (op === 'ls') { json(res, 200, workspace.ls(qs.get('p') || '', qs.get('hidden') === '1')); return; }
+          if (op === 'sizes') { workspace.sizes(qs.get('p') || '').then((s) => json(res, 200, s), fail); return; }
           if (op === 'file') { workspace.serveFile(res, qs.get('p') || '', qs.get('dl') === '1'); return; }
           if (op === 'image') { workspace.serveImage(res, qs.get('p') || ''); return; }
           if (op === 'text') { json(res, 200, workspace.readText(qs.get('p') || '')); return; }
@@ -322,6 +382,15 @@ const handler = (req, res) => {
         catch (e) { json(res, 400, { ok: false, error: String(e.message || e) }); }
       });
       return;
+    }
+    if (path === '/panel/jira/recent') {      // the New task dialog's instant list (refreshed in the background)
+      if (!panel) { json(res, 503, { error: 'panel disabled' }); return; }
+      json(res, 200, panel.jiraRecent()); return;
+    }
+    if (path === '/panel/jira') {             // the New task dialog: find any Jira issue (read-only run)
+      if (!panel) { json(res, 503, { error: 'panel disabled' }); return; }
+      const q = new URLSearchParams(req.url.split('?')[1] || '').get('q') || '';
+      panel.jiraSearch(q).then((r) => json(res, 200, r), (e) => json(res, 502, { error: String(e.message || e) })); return;
     }
     if (path === '/panel/runs' || path.startsWith('/panel/runs/')) {  // the Today agent's run log
       if (!panel) { json(res, 503, { error: 'panel module not loaded' }); return; }
@@ -454,7 +523,7 @@ function onUpgrade(req, socket, head) {
 function start(opts) {
   opts = opts || {};
   TTYD_AUTH = opts.ttydAuth || '';
-  if (opts.apiToken) auth = webGuard.makeAuth({ user: USER, password: PW, apiToken: opts.apiToken });
+  if (opts.apiToken) auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cookie: COOKIE, apiToken: opts.apiToken });
   const tls = loadTls();
   const servers = [];
   // requestTimeout 0: large uploads to the Workspace file manager may take longer than Node's 5 min default
