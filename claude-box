@@ -217,14 +217,15 @@ setup_model() {
 }
 setup_docker() {
   if [ "$force_setup" = 0 ] && [ -n "$(env_get DOCKER_ACCESS)" ]; then return 0; fi
-  if [ ! -S /var/run/docker.sock ]; then
+  local sock="${DOCKER_SOCK_FILE:-/var/run/docker.sock}"
+  if [ ! -e "$sock" ]; then
     echo "  Docker: no socket on this machine — containers on the host are not available."
     env_set DOCKER_ACCESS 0
     return 0
   fi
   local a gid
   a="$(ask '  Allow the box to run Docker containers on this host (test stacks, postgres, …)? [Y/n]' Y)"
-  gid="$(stat -c %g /var/run/docker.sock 2>/dev/null || echo 999)"
+  gid="$(stat -c %g "$sock" 2>/dev/null || echo 999)"
   case "$a" in
     n|N) env_set DOCKER_ACCESS 0; env_set DOCKER_GID "$gid" ;;
     *)   env_set DOCKER_ACCESS 1; env_set DOCKER_GID "$gid"
@@ -374,6 +375,31 @@ if [ "$need_oauth" = 1 ] && interactive; then
     echo "  Saved to .env and applied to the box."
   else
     echo "  Skipped. Set CLAUDE_CODE_OAUTH_TOKEN in .env later and restart."
+  fi
+fi
+
+# Trust the self-signed web certificate on this machine, so browsers HERE stop showing the
+# "connection is not private" warning. Only affects this machine; other devices download it
+# from https://<address>:PORT/cert (or import manually). One question, then remembered in .env
+# (CERT_TRUST=1 / no); re-runs only when the certificate itself is replaced.
+if [ -f home/web-certs/web.crt ] && interactive && [ "$(env_get CERT_TRUST)" != no ]; then
+  dst="${CA_CERT_DST:-/usr/local/share/ca-certificates/claude-box.crt}"
+  if ! cmp -s home/web-certs/web.crt "$dst" 2>/dev/null; then
+    try=0
+    if [ "$(env_get CERT_TRUST)" = 1 ]; then try=1
+    else
+      a="$(ask '  Trust the self-signed web certificate on this machine? (sudo will ask a password) [y/N]' n)"
+      case "$a" in y|Y) env_set CERT_TRUST 1; try=1 ;; *) env_set CERT_TRUST no ;; esac
+    fi
+    if [ "$try" = 1 ]; then
+      echo "  Installing the certificate into the system trust store (sudo)…"
+      if sudo install -m 644 home/web-certs/web.crt "$dst" \
+         && sudo update-ca-certificates >/dev/null 2>&1; then
+        echo "  Trusted. Local browsers: reload the page — the warning is gone (Firefox: import manually)."
+      else
+        echo "  Could not install (sudo refused?). Download https://localhost:$tls_port/cert and import manually."
+      fi
+    fi
   fi
 fi
 

@@ -88,6 +88,42 @@ check "glm: WEB_MODEL recorded"          glm "$(val WEB_MODEL)"
 check "glm: OAUTH stays empty"           "" "$(val CLAUDE_CODE_OAUTH_TOKEN)"
 check "glm: atlassian declined"          0 "$(val MCP_ATLASSIAN)"
 check "glm: web started"                 1 "$(grep -c 'compose -f docker-compose.yml up -d web' "$tmp/docker.log")"
+# --- 3c. certificate trust + docker question (sudo stubbed) ---
+rm "$repo/.env"; mkdir -p "$repo/home/web-certs"; echo dummy-cert > "$repo/home/web-certs/web.crt"
+export DOCKER_SOCK_FILE="$tmp/dockersock"; touch "$tmp/dockersock"
+export CA_CERT_DST="$tmp/ca-store/claude-box.crt"; mkdir -p "$tmp/ca-store"
+printf "#!/bin/sh
+if [ \"\$1\" = install ]; then cp \"\$4\" \"\$5\"; fi
+echo \"sudo \$*\" >> \"%s/sudo.log\"
+exit 0
+" "$tmp" > "$bin/sudo"; chmod +x "$bin/sudo"
+out="$(tty_run '
+
+
+
+
+Y
+')"
+check "docker: access on by default"               1 "$(val DOCKER_ACCESS)"
+check "docker: gid saved"                          nonempty "$([ -n "$(val DOCKER_GID)" ] && echo nonempty)"
+check "cert: installed into the host store"        1 "$(grep -c update-ca-certificates "$tmp/sudo.log")"
+check "cert: CERT_TRUST remembered"                1 "$(val CERT_TRUST)"
+out="$(tty_run '
+')"
+check "cert: unchanged cert skips reinstall"       1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
+rm "$repo/.env"; echo dummy2 > "$repo/home/web-certs/web.crt"
+out="$(tty_run '
+
+
+
+n
+')"
+check "cert: declined -> docker stays enabled"     1 "$(val DOCKER_ACCESS)"
+check "cert: declined -> remembered no"            no "$(val CERT_TRUST)"
+check "cert: declined -> no new installs"          1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
+unset DOCKER_SOCK_FILE CA_CERT_DST
+rm -f "$bin/sudo"
+
 # --- 4. non-interactive without .env: fail with a hint, no docker ---
 rm "$repo/.env"; : > "$tmp/docker.log"
 bash "$repo/claude-box" </dev/null >/dev/null 2>&1; rc=$?
@@ -102,7 +138,7 @@ check "--no-proxy: proxy overlay used"             1 "$(grep -c 'up -d web' "$tm
 check "--no-proxy: overlay file passed"            2 "$(grep -c 'docker-compose.no-proxy.yml' "$tmp/docker.log")"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --stop </dev/null >/dev/null 2>&1
-check "--stop: removes the web container"          1 "$(grep -c 'compose -f docker-compose.yml rm -sf web' "$tmp/docker.log")"
+check "--stop: removes the web container"          1 "$(grep -c 'rm -sf web' "$tmp/docker.log")"
 
 # owner guard: a container started by ANOTHER claude-box (different working dir) must not be stopped
 printf '#!/bin/sh
