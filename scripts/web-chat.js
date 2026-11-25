@@ -421,13 +421,13 @@ function estimateCtx(items) {
 }
 
 // ---------- history ----------
-// History is cached per session: the SDK's getSessionMessages re-parses the whole transcript
-// (tens of MB on long sessions) on EVERY open and on every "loading earlier messages" page, which
-// is what made paging crawl. First load parses via the SDK; later, grown files are appended by
-// parsing only the new lines. A moved/rewritten file invalidates the cache.
-const HCACHE = new Map();          // cid -> {file, size, raw} (LRU, see cacheTouch)
-// A parsed transcript of a long session is hundreds of MB of JS objects; keeping every session
-// forever grew the heap until GC pauses stalled the whole server periodically.
+// History is cut from the TAIL of the transcript instead of parsing it whole. Opening a session
+// needs the LAST few messages; the old path made the SDK re-parse the whole file (tens of MB) on
+// every open and every "loading earlier messages" page — seconds of CPU that left panes stuck in
+// "Loading" and starved everything else the server serves. A per-session backward reader consumes
+// the file in 512 KB windows from the end and grows toward the start only when the user asks for
+// earlier pages. Parsed windows are kept per session in a small LRU (a parsed long transcript is
+// hundreds of MB of JS objects; keeping all of them grew the heap until GC stalls).
 const CACHE_MAX = 10;
 function cacheTouch(map, cid, make) {
   let v = map.get(cid);
@@ -436,51 +436,8 @@ function cacheTouch(map, cid, make) {
   while (map.size > CACHE_MAX) map.delete(map.keys().next().value);
   return v;
 }
-async function history(chat) {
-  if (!chat.cid) return [];
-  await sdkReady;
-  const f = transcriptPath(chat.cid, chat.cwd);
-  let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
-  let c = HCACHE.get(chat.cid);
-  if (!c || c.file !== f || (st && st.size < c.size)) { c = cacheTouch(HCACHE, chat.cid, () => ({ file: f, size: 0, raw: [] })); }
-  else cacheTouch(HCACHE, chat.cid, () => c);
-  if (!c.raw.length) {
-    try { c.raw = sdk ? await sdk.getSessionMessages(chat.cid, { dir: chat.cwd }) : []; }
-    catch (e) { log('history', e.message); }
-    c.size = st ? st.size : 0;
-  } else if (st && st.size > c.size) {
-    const fd = fs.openSync(f, 'r');
-    try {
-      const start = Math.max(0, c.size - 1024);                                 // overlap: a line cut last time
-      const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start);
-      const seen = new Set(c.raw.map((i) => i.uuid));
-      for (const l of buf.toString('utf8').split('\n')) {
-        if (!l.startsWith('{')) continue;
-        let e; try { e = JSON.parse(l); } catch (_) { continue; }
-        if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain || e.isMeta) continue;
-        if (!e.uuid || !e.message || seen.has(e.uuid)) continue;
-        seen.add(e.uuid);
-        c.raw.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null });
-      }
-      c.size = st.size;
-    } finally { fs.closeSync(fd); }
-  }
-  // add what the SDK has streamed this turn but the transcript doesn't have yet
-  const items = c.raw.slice();
-  const seen = new Set(items.map((i) => i.uuid));
-  for (const m of chat.turn) if (!seen.has(m.uuid)) items.push(m);
-  const out = [], { extra, times } = transcriptExtras(chat);
-  for (const i of items) {
-    if (i.type !== 'user' && i.type !== 'assistant') continue;
-    const ts = i.ts || times.get(i.uuid) || 0;
-    out.push({ type: i.type, uuid: i.uuid, message: i.message, parent_tool_use_id: i.parent_tool_use_id || null, ts: ts || undefined });
-    for (const x of extra.get(i.uuid) || []) out.push(x);
-  }
-  return out;
-}
-// History is sent in pages so a long conversation doesn't flood the browser: the last
-// PAGE_PROMPTS user prompts with everything after them, then older pages on request.
 const PAGE_PROMPTS = 5;
+const WINDOW = 512 * 1024;
 function isPrompt(i) {
   if (i.type !== 'user' || i.parent_tool_use_id) return false;
   const c = i.message && i.message.content;
@@ -495,49 +452,84 @@ function pageStart(items, end) {
   return 0;
 }
 // Output of slash commands and skills (/code-review, /cost, …) is saved in the transcript as
-// {type:'system', subtype:'local_command', parentUuid, content:'<local-command-stdout>…'}, which
-// getSessionMessages leaves out. Returns { extra: parentUuid -> [local_command_output messages],
-// times: uuid -> when the message was written (ms) }; getSessionMessages has no timestamps either.
-// A transcript line starts with its own fields, so the first "uuid":…,"timestamp":… pair is the message's.
+// {type:'system', subtype:'local_command', parentUuid, content:'<local-command-stdout>…'}.
+// Times: uuid -> written-at ms; transcript lines carry their own "uuid","timestamp" pair.
 const UUID_TS = /"uuid":"([^"]+)","timestamp":"([^"]+)"/;
-// Read incrementally: a long session's transcript is tens of MB, and re-reading it whole on
-// every history request stalled the server. Per-chat state remembers how much was consumed;
-// a moved, rewritten or shrunk file starts over. The 1 KB overlap re-parses the line that was
-// cut at the previous read boundary; map entries are overwritten, so duplicates are harmless.
-const EXTRAS = new Map();          // cid -> {file, size, map, times} (LRU, see cacheTouch)
-const EMPTY_EXTRAS = () => ({ extra: new Map(), times: new Map() });
-function transcriptExtras(chat) {
-  const f = chat.cid && transcriptPath(chat.cid, chat.cwd);
-  let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
-  if (!st) return EMPTY_EXTRAS();
-  let c = EXTRAS.get(chat.cid);
-  if (!c || c.file !== f || st.size < c.size) { c = cacheTouch(EXTRAS, chat.cid, () => ({ file: f, size: 0, map: new Map(), times: new Map() })); }
-  else cacheTouch(EXTRAS, chat.cid, () => c);
-  if (st.size > c.size) {
-    const fd = fs.openSync(f, 'r');
-    try {
-      const start = Math.max(0, c.size - 1024);                                 // overlap: a line cut last time
-      const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start);
-      const text = buf.toString('utf8');
-      let i = 0;
-      for (const l of text.split('\n')) {
-        const t = UUID_TS.exec(l);
-        if (t) { const ms = Date.parse(t[2]); if (ms) c.times.set(t[1], ms); }
-        if (!l.includes('"local_command"')) continue;
-        let e; try { e = JSON.parse(l); } catch (_) { continue; }
-        if (e.type !== 'system' || e.subtype !== 'local_command' || e.isSidechain) continue;
-        const cOut = String(e.content || '').replace(/<\/?local-command-std(out|err)>/g, '').trim();
-        if (!cOut) continue;
-        const k = e.parentUuid || '';
-        if (!c.map.has(k)) c.map.set(k, []);
-        c.map.get(k).push({ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: cOut });
-      }
-    } finally { fs.closeSync(fd); }
-    c.size = st.size;
-  }
-  return { extra: c.map, times: c.times };
+const READERS = new Map();         // cid -> backward reader state (LRU, see cacheTouch)
+function readerFor(chat) {
+  return cacheTouch(READERS, chat.cid, () =>
+    ({ file: null, front: 0, items: [], extras: new Map(), times: new Map(), atStart: false }));
 }
-
+// Consume one more window moving toward the file start, until the collected tail holds at least
+// minPrompts user prompts (or the file start is reached).
+function extendBack(entry, chat, minPrompts) {
+  const f = transcriptPath(chat.cid, chat.cwd);
+  if (!f) { entry.atStart = true; return; }
+  let size; try { size = fs.statSync(f).size; } catch (_) { entry.atStart = true; return; }
+  if (entry.file !== f) { Object.assign(entry, { file: f, front: size, items: [], extras: new Map(), times: new Map(), atStart: false }); }
+  const prompts = () => entry.items.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
+  while (!entry.atStart && prompts() < minPrompts) {
+    const end = entry.front, start = Math.max(0, end - WINDOW);
+    const fd = fs.openSync(f, 'r');
+    let buf;
+    try { buf = Buffer.alloc(end - start); fs.readSync(fd, buf, 0, buf.length, start); }
+    finally { fs.closeSync(fd); }
+    const lines = buf.toString('utf8').split('\n');
+    if (start > 0) lines.shift();             // the line cut at the window head: its head lives in the previous window
+    const win = [], winExtras = new Map();
+    for (const l of lines) {
+      const t = UUID_TS.exec(l);
+      if (t) { const ms = Date.parse(t[2]); if (ms) entry.times.set(t[1], ms); }
+      if (!l.startsWith('{')) continue;
+      let e; try { e = JSON.parse(l); } catch (_) { continue; }
+      if (e.type === 'system' && e.subtype === 'local_command' && !e.isSidechain) {
+        const c = String(e.content || '').replace(/<\/?local-command-std(out|err)>/g, '').trim();
+        if (c) { const k = e.parentUuid || ''; if (!winExtras.has(k)) winExtras.set(k, []);
+          winExtras.get(k).push({ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: c }); }
+      }
+      if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain || e.isMeta) continue;
+      if (!e.uuid || !e.message) continue;
+      win.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null });
+    }
+    entry.items = win.concat(entry.items);
+    for (const [k, v] of winExtras) {
+      if (!entry.extras.has(k)) entry.extras.set(k, []);
+      entry.extras.set(k, v.concat(entry.extras.get(k) || []));
+    }
+    entry.front = start;
+    if (start <= 0) entry.atStart = true;
+  }
+}
+// The page the browser shows: the last PAGE_PROMPTS prompts counting from the end, or — with
+// `beforeUuid` — the PAGE_PROMPTS prompts right before that message (the "earlier" page).
+function tailPage(chat, beforeUuid) {
+  if (!chat.cid) return { items: [], more: 0 };
+  const entry = readerFor(chat);
+  extendBack(entry, chat, PAGE_PROMPTS);
+  let end = beforeUuid ? entry.items.findIndex((i) => i.uuid === beforeUuid) : entry.items.length;
+  let guard = 0;
+  while (beforeUuid && end < 0 && !entry.atStart && guard++ < 8) {   // the boundary page was evicted: read further back
+    extendBack(entry, chat, PAGE_PROMPTS * (guard + 1));
+    end = entry.items.findIndex((i) => i.uuid === beforeUuid);
+  }
+  if (beforeUuid && end < 0) return { items: [], more: 0, lost: true };
+  const stop = end < 0 ? entry.items.length : end;
+  const start = pageStart(entry.items, stop);
+  const page = entry.items.slice(start, stop);
+  if (!beforeUuid) {                                                 // streamed this turn, transcript may lag
+    const seen = new Set(page.map((i) => i.uuid));
+    for (const m of chat.turn) if (!seen.has(m.uuid))
+      page.push({ type: m.type, uuid: m.uuid, message: m.message, parent_tool_use_id: m.parent_tool_use_id || null });
+  }
+  const out = [];
+  for (const i of page) {
+    if (i.type !== 'user' && i.type !== 'assistant') continue;
+    const ts = entry.times.get(i.uuid) || 0;
+    out.push({ type: i.type, uuid: i.uuid, message: i.message, parent_tool_use_id: i.parent_tool_use_id || null, ts: ts || undefined });
+    for (const x of entry.extras.get(i.uuid) || []) out.push(x);
+  }
+  return { items: out, more: start > 0 ? start : (!entry.atStart ? 1 : 0) };
+}
 // ---------- per-socket handling ----------
 function sanitizeName(s) { return String(s || '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 40) || 'chat'; }
 // Launch directory of a transcript: the registry stores Claude's CURRENT cwd (it drifts deeper
@@ -581,21 +573,20 @@ function onConnection(ws) {
       if (msg.op === 'open') {
         let chat = mine.get(key);
         if (!chat) { chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key }); }
-        const all = await history(chat), start = pageStart(all, all.length), items = all.slice(start);
-        if (!chat.info.context) chat.info.context = (chat.cid && CTX[chat.cid]) || estimateCtx(all);
+        const pg = tailPage(chat, null), items = pg.items, start = pg.more;
+        if (!chat.info.context) chat.info.context = (chat.cid && CTX[chat.cid]) || estimateCtx(items);
         const pend = [...chat.perms].map(([id, p]) => ({ id, tool: p.tool, input: p.input, reason: p.reason, suggestions: p.suggestions.length > 0 }));
         reply({ ev: 'history', key, items, state: chat.state, console: !chat.q && await tmuxAlive(chat.name),
-                info: chat.info, perms: pend, token: chat.token, more: start,
+                info: chat.info, perms: pend, token: chat.token, more: pg.more,
                 draft: (chat.token && DRAFTS[chat.token]) || null });
         return;
       }
       if (msg.op === 'older') {
         const chat = mine.get(key);
         if (!chat) { reply({ ev: 'older', key, items: [], more: 0 }); return; }
-        const all = await history(chat), end = all.findIndex((i) => i.uuid === msg.before);
-        if (end < 0) { reply({ ev: 'older', key, items: [], more: 0, lost: true }); return; }
-        const start = pageStart(all, end);
-        reply({ ev: 'older', key, items: all.slice(start, end), more: start });
+        const pg = tailPage(chat, msg.before);
+        if (pg.lost) { reply({ ev: 'older', key, items: [], more: 0, lost: true }); return; }
+        reply({ ev: 'older', key, items: pg.items, more: pg.more });
         return;
       }
       let chat = mine.get(key);
@@ -719,6 +710,7 @@ function sessionTitles(cid, cwd) {
         }
       }
     } finally { fs.closeSync(fd); }
+    t.size = st.size;                       // common for both the cold scan and the incremental delta
     saveTitles();
   }
   return t;
@@ -920,5 +912,5 @@ async function sendTo(token, text) {
   return { via: 'chat' };
 }
 
-module.exports = { launchDir, sessionTitles, transcriptExtras, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+module.exports = { launchDir, sessionTitles, tailPage, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };

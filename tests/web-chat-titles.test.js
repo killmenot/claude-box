@@ -1,7 +1,8 @@
 'use strict';
-// The two transcript scans that used to stall the server (scripts/web-chat.js):
-// - sessionTitles: cold scan is bounded (head + tail), offsets persist to web-titles.json;
-// - transcriptExtras: incremental, not a whole-file re-read on every history request.
+// The transcript page plumbing (scripts/web-chat.js):
+// - sessionTitles: cold scan bounded (head + tail), scan offsets persisted to web-titles.json;
+// - tailPage: the browser page is cut from the TAIL of the transcript — opening a session must
+//   not parse a 30 MB file (that froze the server), and "earlier" pages walk toward the start.
 // Run: node --test tests/
 const test = require('node:test');
 const assert = require('node:assert');
@@ -19,41 +20,66 @@ const proj = path.join(tmp, '.claude', 'projects', '-w-x');
 fs.mkdirSync(proj, { recursive: true });
 const cid = 'c-titles';
 const file = path.join(proj, cid + '.jsonl');
-// 6 MB of filler so the cold scan is bounded, titles: one in the head, one in the tail
-const filler = JSON.stringify({ type: 'filler', data: 'x'.repeat(400) }) + '\n';
-fs.writeFileSync(file, filler.repeat(600) +
-  `{"uuid":"u1","timestamp":"2026-11-24T10:00:00Z","type":"system","subtype":"local_command","parentUuid":"p1","content":"<local-command-stdout>hi</local-command-stdout>"}\n` +
-  filler.repeat(14000) +
-  `{"type":"custom-title","customTitle":"Backend work"}\n` +
-  `{"type":"ai-title","aiTitle":"Security audit"}\n`);
+const chat = { cid, cwd: '/w/x', turn: [] };
+
+// 30 prompt/response turns + a slash-command output block, then titles at the very end
+const filler = JSON.stringify({ type: 'filler', data: 'x'.repeat(300) }) + '\n';
+let body = '';
+for (let i = 1; i <= 30; i++) {
+  body += `{"uuid":"p${i}","timestamp":"2026-01-01T00:${String(i % 60).padStart(2, '0')}:00Z","type":"user","message":{"role":"user","content":"prompt ${i}"}}\n`;
+  body += `{"uuid":"a${i}","timestamp":"2026-01-01T00:${String(i % 60).padStart(2, '0')}:30Z","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"answer ${i}"}],"usage":{"input_tokens":100}}}\n`;
+  if (i === 29) body += `{"uuid":"s${i}","timestamp":"2026-01-01T00:29:10Z","type":"system","subtype":"local_command","parentUuid":"a${i}","content":"<local-command-stdout>cost output</local-command-stdout>"}\n`;
+}
+body += `{"type":"custom-title","customTitle":"Backend work"}\n{"type":"ai-title","aiTitle":"Security audit"}\n`;
+fs.writeFileSync(file, body + filler.repeat(300));   // the filler AFTER the titles: appended garbage is not the point here
+
+test('tailPage: the last page holds the last 5 prompts and nothing earlier', () => {
+  const pg = wc.tailPage(chat, null);
+  const prompts = pg.items.filter((i) => wc.isPrompt ? false : true) && pg.items.filter((i) => i.type === 'user');
+  assert.deepStrictEqual(prompts.map((i) => i.message.content), ['prompt 26', 'prompt 27', 'prompt 28', 'prompt 29', 'prompt 30']);
+  assert.ok(pg.more > 0, 'more should be positive while the file head is unread');
+  const last = pg.items[pg.items.length - 1];
+  assert.strictEqual(last.message.content[0].text, 'answer 30');
+});
+
+test('tailPage: the slash-command output rides next to its message', () => {
+  const pg = wc.tailPage(chat, null);
+  const kinds = pg.items.filter((i) => i.type === 'system').map((i) => i.content);
+  assert.ok(kinds.includes('cost output'), 'local_command_output missing from the page');
+});
+
+test('tailPage: "earlier" continues toward the file start, ends at 0', () => {
+  const p1 = wc.tailPage(chat, null);
+  const before = p1.items.find((i) => i.type === 'user');            // the oldest prompt on page 1
+  const p2 = wc.tailPage(chat, before.uuid);
+  const prompts2 = p2.items.filter((i) => i.type === 'user').map((i) => i.message.content);
+  assert.deepStrictEqual(prompts2, ['prompt 21', 'prompt 22', 'prompt 23', 'prompt 24', 'prompt 25']);
+  assert.ok(p2.more > 0);
+  // walk all the way to the start: paging must terminate with more === 0
+  let pg = p2, pages = 0;
+  while (pg.more > 0 && pages < 12) {
+    const b = pg.items.find((i) => i.type === 'user');
+    pg = wc.tailPage(chat, b.uuid); pages++;
+  }
+  assert.strictEqual(pg.more, 0, 'paging did not terminate at the file start');
+  const first = pg.items.filter((i) => i.type === 'user').map((i) => i.message.content);
+  assert.ok(first.includes('prompt 1'), 'the first prompt never reached the page');
+});
+
+test('tailPage: unknown boundary uuid -> lost', () => {
+  const pg = wc.tailPage(chat, 'no-such-uuid');
+  assert.strictEqual(pg.lost, true);
+  assert.deepStrictEqual(pg.items, []);
+});
 
 test('sessionTitles: bounded cold scan finds tail titles, offsets persisted', async () => {
   const t1 = wc.sessionTitles(cid, '/w/x');
   assert.strictEqual(t1.custom, 'Backend work');
   assert.strictEqual(t1.ai, 'Security audit');
-  await new Promise((r) => setTimeout(r, 1300));                    // the save is debounced ~1s
+  await new Promise((r) => setTimeout(r, 1300));                     // the save is debounced ~1s
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'web-titles.json'), 'utf8'))[cid].size, fs.statSync(file).size);
-  // a later append is picked up incrementally
   fs.appendFileSync(file, `{"type":"custom-title","customTitle":"Renamed"}\n`);
-  const t2 = wc.sessionTitles(cid, '/w/x');
-  assert.strictEqual(t2.custom, 'Renamed');
-});
-
-test('transcriptExtras: incremental across repeated calls and appends', () => {
-  fs.writeFileSync(file, filler.repeat(600) +
-    `{"uuid":"u1","timestamp":"2026-11-24T10:00:00Z","type":"system","subtype":"local_command","parentUuid":"p1","content":"<local-command-stdout>hi</local-command-stdout>"}\n`);
-  const first = wc.transcriptExtras({ cid, cwd: '/w/x' });
-  assert.strictEqual(first.extra.get('p1')[0].content, 'hi');
-  assert.ok(first.times.get('u1') > 0);
-  const size1 = fs.statSync(file).size;
-  const again = wc.transcriptExtras({ cid, cwd: '/w/x' });          // no growth: same result, no re-read
-  assert.strictEqual(again.extra.get('p1')[0].content, 'hi');
-  fs.appendFileSync(file, filler.repeat(5) +
-    `{"uuid":"u2","timestamp":"2026-11-24T11:00:00Z","type":"system","subtype":"local_command","parentUuid":"p2","content":"<local-command-stdout>two</local-command-stdout>"}\n`);
-  const grown = wc.transcriptExtras({ cid, cwd: '/w/x' });
-  assert.strictEqual(grown.extra.get('p2')[0].content, 'two');
-  assert.strictEqual(grown.extra.get('p1')[0].content, 'hi');       // old entries kept
-  assert.ok(fs.statSync(file).size > size1);
+  assert.strictEqual(wc.sessionTitles(cid, '/w/x').custom, 'Renamed');
 });
 
 test('sessionTitles: missing transcript -> null', () => {
