@@ -168,6 +168,7 @@ setup_docker() {
     return 0
   fi
   local a gid
+  echo
   a="$(ask '  Allow the box to run Docker containers on this host (test stacks, postgres, …)? [Y/n]' Y)"
   gid="$(stat -c %g "$sock" 2>/dev/null || echo 999)"
   case "$a" in
@@ -296,6 +297,7 @@ WEB_TUNNEL="$([ "$tunnel" = 1 ] && echo 1 || true)" dc up -d web
 # "connection is not private" warning. Only affects this machine; other devices download it
 # from https://<address>:PORT/cert (or import manually). One question, then remembered in .env
 # (CERT_TRUST=1 / no); re-runs only when the certificate itself is replaced.
+echo
 if [ -f home/web-certs/web.crt ] && interactive && [ "$(env_get CERT_TRUST)" != no ]; then
   dst="${CA_CERT_DST:-/usr/local/share/ca-certificates/claude-box.crt}"
   if ! cmp -s home/web-certs/web.crt "$dst" 2>/dev/null; then
