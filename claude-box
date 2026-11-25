@@ -7,11 +7,11 @@
 #   claude-box --restart   — rebuild (cached) and recreate the container, even when nothing changed
 #   claude-box --status    — is it running, where, which sessions
 #   claude-box --login     — print a fresh one-time sign-in link for the web UI (changes nothing else)
-#   claude-box --setup     — re-run the first-run setup (the workspace folder)
+#   claude-box --setup     — re-run the first-run setup (the workspace folder, the git identity)
 #   claude-box --install   — print how to add claude-box to PATH (changes nothing)
 #   claude-box --env NAME  — use .env.NAME instead of .env (or a path to an env file); combines with
 #                            the others. Each env file is its own box: own home-NAME/, name and ports
-# The first start creates .env and asks where projects live. The web login and password are set
+# The first start creates .env and asks where projects live and who commits. The web login and password are set
 # in the browser: open the one-time link printed at the end, and the UI asks for them.
 set -euo pipefail
 
@@ -186,8 +186,30 @@ setup_instance() {
   env_set TTYD_PORT "$(ask "  Internal console port" "$((7682 + off))")"
 }
 
+# Who the box commits as: asked when the env file is created and on --setup, defaulting to this
+# computer's own git identity. Saved as GIT_USER_NAME / GIT_USER_EMAIL; the box writes them to its
+# ~/.gitconfig on every start. Left empty, the box takes the GitHub account's identity once gh is
+# signed in, and Claude asks rather than borrowing an author from a repository's history.
+setup_git_identity() {
+  local name email
+  name="$(env_get GIT_USER_NAME)"; [ -n "$name" ] || name="$(git config --global user.name 2>/dev/null || true)"
+  email="$(env_get GIT_USER_EMAIL)"; [ -n "$email" ] || email="$(git config --global user.email 2>/dev/null || true)"
+  echo
+  echo "Git: the name and email this box commits as. Enter keeps the default; leave empty to decide later."
+  name="$(ask "  Commit name" "$name")"
+  while :; do
+    email="$(ask "  Commit email" "$email")"
+    case "$email" in ""|?*@?*) break ;; esac
+    echo "  \"$email\" is not an email address." >&2; email=""
+  done
+  [ -z "$name" ] || env_set GIT_USER_NAME "$name"
+  [ -z "$email" ] || env_set GIT_USER_EMAIL "$email"
+}
+
 first_run() {
+  local created=0
   if [ ! -f "$ENV_FILE" ]; then
+    created=1
     if ! interactive; then echo "✗ $ENV_FILE is missing (copy .env.example and fill it in)." >&2; exit 1; fi
     cp "$REPO/.env.example" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
@@ -202,6 +224,7 @@ first_run() {
   # the container must run as this host user, or it cannot write the home bind mount
   if [ -z "$(env_get BOX_UID)" ]; then env_set BOX_UID "$(id -u)"; env_set BOX_GID "$(id -g)"; fi
   setup_workspace
+  if { [ "$created" = 1 ] || [ "$force_setup" = 1 ]; } && interactive; then setup_git_identity; fi
 }
 
 # ---------------------------------------------------------------- docker

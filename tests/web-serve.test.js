@@ -133,3 +133,22 @@ test('pickTtydPort: finds the first free loopback port, explicit TTYD_PORT wins'
   delete process.env.TTYD_PORT;
   for (const srv of holders) if (srv.listening) srv.close();
 });
+
+test('setupGitIdentity: GIT_USER_NAME/EMAIL from the env file win; unset ones keep ~/.gitconfig', (t) => {
+  const { execFileSync } = require('child_process');
+  try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch (_) { return t.skip('git not installed'); }
+  const { setupGitIdentity } = require('../scripts/web-serve.js');
+  const home = fs.mkdtempSync(path.join(tmp, 'git-'));
+  const e = Object.assign({}, process.env, { HOME: home, XDG_CONFIG_HOME: home });
+  delete e.GIT_CONFIG_GLOBAL; delete e.GIT_USER_NAME; delete e.GIT_USER_EMAIL;
+  const get = (k) => { try { return execFileSync('git', ['config', '--global', '--get', k], { env: e, encoding: 'utf8' }).trim(); } catch (_) { return ''; } };
+  setupGitIdentity(e);                                                  // nothing set: nothing written
+  assert.strictEqual(get('user.name'), '');
+  execFileSync('git', ['config', '--global', 'user.name', 'Old Name'], { env: e });
+  execFileSync('git', ['config', '--global', 'user.email', 'old@example.com'], { env: e });
+  setupGitIdentity(Object.assign({}, e, { GIT_USER_EMAIL: ' new@example.com ' }));
+  assert.strictEqual(get('user.email'), 'new@example.com');             // the env file wins, trimmed
+  assert.strictEqual(get('user.name'), 'Old Name');                     // unset: kept
+  setupGitIdentity(Object.assign({}, e, { GIT_USER_NAME: 'Jane Doe' }));
+  assert.strictEqual(get('user.name'), 'Jane Doe');
+});

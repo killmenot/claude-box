@@ -3,7 +3,7 @@
 // gh prints a one-time code, the user enters it at github.com/login/device, gh finishes by itself.
 // Afterwards git uses gh as its credential helper (HTTPS; git@github.com: URLs are rewritten to
 // HTTPS in the image's gitconfig), and a commit name/email is filled in from the GitHub account
-// when none is set. Served at /git by web-sidecar.js:
+// when none is set (also on every start, see web-serve.js; GIT_USER_NAME/EMAIL in the env file win). Served at /git by web-sidecar.js:
 //   GET  /git/status           {gh, account, name, email, login:{state, code, url, error}}
 //   POST /git/login            start the device flow (state: starting -> code -> done | error)
 //   POST /git/login/cancel     stop a sign-in in progress
@@ -124,4 +124,4 @@ async function repos(force) {
   return { repos: await reposCache.busy, at: Date.now() };
 }
 
-module.exports = { status, start, cancel, logout, repos };
+module.exports = { status, start, cancel, logout, repos, fillIdentity };

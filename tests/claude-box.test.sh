@@ -39,8 +39,10 @@ fi
 mode(){ stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 val(){ grep -E "^$1=" "$repo/.env" | tail -n1 | cut -d= -f2-; }
 
-# --- 1. first run: only the projects folder is asked; the web login is set later in the browser ---
-out="$(tty_run '\n')"
+# --- 1. first run: the projects folder and the git identity are asked; the web login is set later in the browser ---
+# the host's own git identity is the default the setup offers
+printf '[user]\n\tname = Host User\n\temail = host@example.com\n' > "$HOME/.gitconfig"
+out="$(tty_run '\n\n\n')"
 key_file="$repo/home/.claude/web-login-key"
 check "first run: .env created"                    yes "$([ -f "$repo/.env" ] && echo yes)"
 check "first run: .env is private"                 600 "$(mode "$repo/.env")"
@@ -51,6 +53,8 @@ check "first run: no password in .env"             "" "$(val WEB_TERMINAL_PASSWO
 check "first run: other settings kept"             7681 "$(val WEB_TERMINAL_PORT)"
 check "first run: container uid saved (BOX_UID)"    "$(id -u)" "$(val BOX_UID)"
 check "first run: auth hint shown (none configured)" 1 "$(printf '%s' "$out" | grep -c 'auth is not configured')"
+check "first run: git name defaults to the host's" "Host User" "$(val GIT_USER_NAME)"
+check "first run: git email defaults to the host's" "host@example.com" "$(val GIT_USER_EMAIL)"
 check "first run: container gid saved (BOX_GID)"    "$(id -g)" "$(val BOX_GID)"
 check "first run: image built"                     1 "$(dlog | grep 'compose -f docker-compose.yml build' | grep -vc -- '--print')"
 check "first run: web started"                     1 "$(dlog | grep -c 'compose -f docker-compose.yml up -d web')"
@@ -64,7 +68,7 @@ check "first run: says the login is picked in the UI" 1 "$(printf '%s' "$out" | 
 # --- 2. second run: nothing to ask, a fresh key every start ---
 : > "$tmp/docker.log"
 out="$(tty_run '')"
-check "second run: no questions"                   0 "$(printf '%s' "$out" | grep -c 'Press Enter\|Password')"
+check "second run: no questions"                   0 "$(printf '%s' "$out" | grep -c 'Press Enter\|Password\|Commit name')"
 check "second run: no auth hint"                   0 "$(printf '%s' "$out" | grep -c 'auth is not configured')"
 check "second run: web started"                    1 "$(dlog | grep -c 'up -d web')"
 check "second run: a new key"                      no "$([ "$(cat "$key_file")" = "$key" ] && echo yes || echo no)"
@@ -89,9 +93,14 @@ out="$(tty_run '' --tunnel)"
 check "--tunnel with a UI login: allowed"          0 "$(printf '%s' "$out" | grep -c 'Tunnel not started')"
 
 # --- 3. --setup: a custom projects folder ---
-out="$(tty_run "~/code/projects\n" --setup)"
+out="$(tty_run "~/code/projects\nBox Bot\nnot-an-email\nbot@example.com\n" --setup)"
 check "setup: tilde path expanded and created"     "$HOME/code/projects" "$(val PROJECT_DIR)"
 check "setup: still a single PROJECT_DIR line"     1 "$(grep -c '^PROJECT_DIR=' "$repo/.env")"
+check "setup: git name changed"                    "Box Bot" "$(val GIT_USER_NAME)"
+check "setup: a non-email is asked again"          1 "$(printf '%s' "$out" | grep -c 'is not an email address')"
+check "setup: git email changed"                   "bot@example.com" "$(val GIT_USER_EMAIL)"
+check "setup: one GIT_USER_EMAIL line"             1 "$(grep -c '^GIT_USER_EMAIL=' "$repo/.env")"
+rm -f "$HOME/.gitconfig"
 
 # --- 4. non-interactive without .env: fail with a hint, no docker ---
 rm "$repo/.env"; : > "$tmp/docker.log"

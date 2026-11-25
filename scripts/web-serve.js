@@ -102,6 +102,23 @@ function seedDefaults() {
   }
 }
 
+// ---------- 1b. git identity ----------
+// Who the box commits as. GIT_USER_NAME / GIT_USER_EMAIL from the env file (./claude-box asks for
+// them when the box is set up) are written to ~/.gitconfig on every start, so the env file is the
+// one place to change them. Without them the box keeps what ~/.gitconfig has, and fills a missing
+// one from the GitHub account once gh is signed in. Claude never guesses one: see
+// claude-defaults/managed-CLAUDE.md (/etc/claude-code/CLAUDE.md in the image).
+function setupGitIdentity(e = env) {
+  const set = [];
+  for (const [k, key] of [['GIT_USER_NAME', 'user.name'], ['GIT_USER_EMAIL', 'user.email']]) {
+    const v = String(e[k] || '').trim();
+    if (!v) continue;
+    try { execFileSync('git', ['config', '--global', key, v], { stdio: 'ignore', env: e }); set.push(key); }
+    catch (err) { warn(`git config ${key} failed:`, err.message); }
+  }
+  if (set.length) log('git identity from the env file:', set.join(', '));
+}
+
 // ---------- 2. TLS ----------
 function setupTls() {
   if ((env.WEB_TLS || '1') !== '1') return;
@@ -198,6 +215,8 @@ async function run() {
   let apiToken = '';
   try { apiToken = writeApiToken(); } catch (e) { warn('api token:', e.message); }
   try { seedDefaults(); } catch (e) { warn('seeding defaults failed:', e.message); }
+  setupGitIdentity();
+  require('./web-git.js').fillIdentity().catch(() => {});   // only what is still unset; needs gh signed in
   setupTls();
   const tunnel = startTunnel();
 
@@ -245,5 +264,5 @@ async function run() {
   }
 }
 
-module.exports = { seedDefaults, expandUrl, pickTtydPort, dropSecrets, SECRET_ENV };
+module.exports = { seedDefaults, setupGitIdentity, expandUrl, pickTtydPort, dropSecrets, SECRET_ENV };
 if (require.main === module) main();
