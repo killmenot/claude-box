@@ -809,7 +809,7 @@
     <div class="wbody" id="wirebody"></div>
   </div></div>
   <div id="setupw" role="dialog" aria-modal="true" aria-label="Set up claude-box"><div class="sbox">
-    <div class="ssteps"><span data-st="1">1 · Login</span><span data-st="2">2 · GitHub</span></div>
+    <div class="ssteps"><span data-st="1">1 · Login</span><span data-st="2">2 · GitHub</span><span data-st="3">3 · Jira</span><span data-st="4">4 · Model</span></div>
     <div id="setupbody"></div>
   </div></div>
   <div id="taskd" role="dialog" aria-label="New task"><div class="tbox">
@@ -1806,6 +1806,44 @@ function openSetup(){
   var w=$('setupw'), body=$('setupbody');
   function step(n){ [].forEach.call(w.querySelectorAll('[data-st]'), function(s){ s.classList.toggle('on', +s.dataset.st===n); }); }
   function finish(){ w.classList.remove('on'); }
+  function jiraStep(){
+    step(3);
+    body.innerHTML='<h2>Enable the Jira/Atlassian integration</h2><p>Turns on the Atlassian MCP server for this box. '+
+      'Authorize once in any chat: type <b>/mcp</b>, pick <b>atlassian</b> → Authenticate.</p>'+
+      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="atlbox" checked>'+
+      '<span>Atlassian (Jira) MCP enabled</span></label></div>'+
+      '<div class="acts"><button class="btn" type="button" id="setupdone">Continue</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
+    var save=function(){ var c=$('atlbox');
+      fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:!!(c&&c.checked)})}); };
+    $('setupdone').onclick=function(){ save(); modelStep(); };
+    $('setupskip').onclick=function(){ save(); modelStep(); };
+  }
+  function modelStep(){
+    step(4);
+    body.innerHTML='<h2>Pick the model</h2><p>What powers Claude in this box. Applies to new messages; change it later in Settings.</p>'+
+      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="radio" name="smprov" value="claude" checked>'+
+      '<span>Claude via a claude.ai subscription<small>login once in a Console: run <b>claude setup-token</b> and put the token into .env on the host</small></span></label></div>'+
+      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="radio" name="smprov" value="glm">'+
+      '<span>GLM-5.3-Flash via z.ai<small>paste your z.ai API key below</small></span></label></div>'+
+      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="radio" name="smprov" value="abliteration">'+
+      '<span>Abliteration<small>paste your API key below</small></span></label></div>'+
+      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="radio" name="smprov" value="custom">'+
+      '<span>Custom (Anthropic-compatible)<small>base URL, model name and API key below</small></span></label></div>'+
+      '<div class="sub"><input id="smkey" type="password" placeholder="API key (GLM / Abliteration / custom)" autocomplete="off">'+
+      '<input id="smurl" placeholder="https://… base URL (custom only)" autocomplete="off">'+
+      '<input id="smmodel" placeholder="model name (optional)" autocomplete="off"></div>'+
+      '<div class="acts"><button class="btn" type="button" id="smok">Save &amp; finish</button><button class="btn ghost" type="button" id="smskip">Skip for now</button></div>';
+    $('smok').onclick=function(){
+      var prov=(document.querySelector('input[name="smprov"]:checked')||{}).value;
+      var key=$('smkey').value;
+      if(prov!=='claude' && !key.trim()){ alert('Paste the API key for this provider, or Skip for now.'); return; }
+      fetch('/model',{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({provider:prov,key:key,baseUrl:$('smurl').value,model:$('smmodel').value})})
+        .then(function(r){ return r.json(); })
+        .then(function(){ finish(); }, function(){ finish(); });
+    };
+    $('smskip').onclick=finish;
+  }
   step(1);
   body.innerHTML='<h2>Welcome to claude-box</h2><p>You are signed in on this browser with the one-time link. '+
     'Pick a login and password: your phone, other computers and the public tunnel will ask for them.</p>';
@@ -1813,9 +1851,9 @@ function openSetup(){
     loadAuth(); step(2);
     body.innerHTML='<h2>Connect GitHub</h2><p>Optional. Lets Claude clone your repos, push branches and open pull requests. '+
       'You can do it later in Settings.</p><div class="gitbox" id="setupgit"></div>'+
-      '<div class="acts"><button class="btn" type="button" id="setupdone">Done</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
+      '<div class="acts"><button class="btn" type="button" id="setupdone">Continue</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
     gitBox($('setupgit'), function(){ $('setupskip').classList.add('hidden'); });
-    $('setupdone').onclick=finish; $('setupskip').onclick=finish;
+    $('setupdone').onclick=jiraStep; $('setupskip').onclick=jiraStep;
   }));
   w.classList.add('on');
   var u=body.querySelector('input[name=user]'); if(u) u.focus();
