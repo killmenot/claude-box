@@ -147,6 +147,7 @@ let auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cooki
 // ttyd always runs with its own random login (web-serve.js), so a page that reaches its loopback
 // port directly gets nowhere; the sidecar, which has already checked the user, swaps that login in.
 let TTYD_AUTH = '';
+let jiraLogin = null;           // the in-flight 'claude mcp login atlassian' process (onboarding Jira step)
 function ttydHeaders(h) {
   const o = Object.assign({}, h);
   if (TTYD_AUTH) o.authorization = 'Basic ' + Buffer.from(TTYD_AUTH).toString('base64');
@@ -257,6 +258,48 @@ const handler = (req, res) => {
           writeJ(require('path').join(homeDir, '.claude', 'web-integrations.json'), { atlassian: o.atlassian });
           json(res, 200, { ok: true, atlassian: o.atlassian });
         } catch (e) { json(res, 400, { error: String(e.message || e) }); }
+      });
+      return;
+    }
+    if (path === '/jira-auth') {
+      // Drive `claude mcp login atlassian` for the onboarding step: start → {url}; paste the
+      // redirected URL back in → the login completes; status → is the server connected now.
+      const { spawn } = require('child_process');
+      const { execFile } = require('child_process');
+      readJson(req, 16384, (o) => {
+        const act = o && o.act;
+        if (req.method === 'POST' && act === 'start') {
+          if (jiraLogin && jiraLogin.child) { json(res, 200, { url: jiraLogin.url || '' }); return; }
+          const child = spawn('claude', ['mcp', 'login', 'atlassian'], { stdio: ['pipe', 'pipe', 'pipe'] });
+          jiraLogin = { child, url: '', buf: '' };
+          const collect = (d) => {
+            jiraLogin.buf += String(d);
+            if (!jiraLogin.url) {
+              const m = /https?:\/\/\S+/.exec(jiraLogin.buf);
+              if (m) jiraLogin.url = m[0];
+            }
+          };
+          child.stdout.on('data', collect);
+          child.stderr.on('data', collect);
+          child.on('exit', () => { if (jiraLogin) jiraLogin.child = null; });
+          const give = () => { if (jiraLogin) json(res, 200, { url: jiraLogin.url }); };
+          setTimeout(give, 1500);           // give the URL a moment to appear in the output
+          setTimeout(() => { if (jiraLogin && jiraLogin.child) { try { jiraLogin.child.kill(); } catch (_) {} } }, 10 * 60000);
+          return;
+        }
+        if (req.method === 'POST' && act === 'paste') {
+          const u = String(o.url || '').trim();
+          if (jiraLogin && jiraLogin.child && u) { jiraLogin.child.stdin.write(u + '\n'); json(res, 200, { ok: true }); }
+          else json(res, 400, { error: 'no login in progress' });
+          return;
+        }
+        if (req.method === 'GET') {
+          execFile('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 60000, maxBuffer: 1 << 20 }, (e, out) => {
+            json(res, 200, { connected: /atlassian: \S+ .*Connected/.test(String(out)) });
+          });
+          return;
+        }
+        json(res, 400, { error: 'bad act' });
       });
       return;
     }

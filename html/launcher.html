@@ -815,7 +815,7 @@
     <div class="wbody" id="wirebody"></div>
   </div></div>
   <div id="setupw" role="dialog" aria-modal="true" aria-label="Set up claude-box"><div class="sbox">
-    <div class="ssteps"><span data-st="1">1 · Login</span><span data-st="2">2 · GitHub</span><span data-st="3">3 · Jira</span><span data-st="4">4 · Model</span></div>
+    <div class="ssteps"><span data-st="1">1 · Login</span><span data-st="2">2 · Model</span><span data-st="3">3 · GitHub</span><span data-st="4">4 · Jira</span></div>
     <div id="setupbody"></div>
   </div></div>
   <div id="taskd" role="dialog" aria-label="New task"><div class="tbox">
@@ -1812,26 +1812,14 @@ function openSetup(){
   var w=$('setupw'), body=$('setupbody');
   function step(n){ [].forEach.call(w.querySelectorAll('[data-st]'), function(s){ s.classList.toggle('on', +s.dataset.st===n); }); }
   function finish(){ w.classList.remove('on'); }
-  function jiraStep(){
-    step(3);
-    body.innerHTML='<h2>Enable the Jira/Atlassian integration</h2><p>Turns on the Atlassian MCP server for this box. '+
-      'Authorize once in any chat: type <b>/mcp</b>, pick <b>atlassian</b> → Authenticate.</p>'+
-      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="atlbox" checked>'+
-      '<span>Atlassian (Jira) MCP enabled</span></label></div>'+
-      '<div class="acts"><button class="btn" type="button" id="setupdone">Continue</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
-    var save=function(){ var c=$('atlbox');
-      fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:!!(c&&c.checked)})}); };
-    $('setupdone').onclick=function(){ save(); modelStep(); };
-    $('setupskip').onclick=function(){ save(); modelStep(); };
-  }
   function modelStep(){
-    step(4);
+    step(2);
     body.innerHTML='<h2>Pick the model</h2><p>What powers Claude in this box. Applies to new messages; change it later in Settings.</p>'+
       '<label class="opt"><input type="radio" name="smprov" value="claude" checked><span>Claude via a claude.ai subscription<small>after saving, the login command is shown below</small></span></label>'+
       '<label class="opt"><input type="radio" name="smprov" value="glm"><span>GLM-5.3-Flash via z.ai<small>paste your z.ai API key below</small></span></label>'+
       '<label class="opt"><input type="radio" name="smprov" value="abliteration"><span>Abliteration<small>paste your API key below</small></span></label>'+
       '<div id="smarea"></div>'+
-      '<div class="acts"><button class="btn" type="button" id="smok">Save &amp; finish</button><button class="btn ghost" type="button" id="smskip">Skip for now</button></div>';
+      '<div class="acts"><button class="btn" type="button" id="smok">Continue</button><button class="btn ghost" type="button" id="smskip">Skip for now</button></div>';
     function area(){
       var prov=(document.querySelector('input[name="smprov"]:checked')||{}).value;
       var a=$('smarea');
@@ -1852,18 +1840,69 @@ function openSetup(){
       fetch('/model',{method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({provider:prov,key:key})})
         .then(function(r){ return r.json(); })
-        .then(function(){ finish(); }, function(){ finish(); });
+        .then(function(){ githubStep(); }, function(){ githubStep(); });
     };
-    $('smskip').onclick=finish;
+    $('smskip').onclick=githubStep;
+  }
+  function githubStep(){
+    step(3);
+    body.innerHTML='<h2>Connect GitHub</h2><p>Optional. Lets Claude clone your repos, push branches and open pull requests. '+
+      'You can do it later in Settings.</p><div class="gitbox" id="setupgit"></div>'+
+      '<div class="acts"><button class="btn" type="button" id="setupdone">Continue</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
+    gitBox($('setupgit'), function(){ $('setupskip').classList.add('hidden'); });
+    $('setupdone').onclick=jiraStep; $('setupskip').onclick=jiraStep;
+  }
+  function jiraStep(){
+    step(4);
+    body.innerHTML='<h2>Enable the Jira/Atlassian integration</h2><p>Turns on the Atlassian MCP server for this box.</p>'+
+      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="atlbox" checked>'+
+      '<span>Atlassian (Jira) MCP enabled</span></label></div>'+
+      '<div class="acts" style="margin-top:10px"><button class="btn" type="button" id="jauth">Authorize Jira now</button></div>'+
+      '<div id="jiraauth"></div>'+
+      '<div class="acts"><button class="btn" type="button" id="setupdone">Done</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
+    var save=function(){ var c=$('atlbox');
+      fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:!!(c&&c.checked)})}); };
+    $('jauth').onclick=function(){
+      var a=$('jiraauth');
+      a.innerHTML='<div class="sub">Starting the Jira authorization…</div>';
+      fetch('/jira-auth',{method:'POST',headers:{'content-type':'application/json'},body:'{"act":"start"}'})
+        .then(function(r){ return r.json(); })
+        .then(function(o){
+          if(!o.url){ a.innerHTML='<div class="sub">The authorization link is not ready yet — press again in a moment.</div>'; return; }
+          a.innerHTML='<div class="note">1. Open this link and log in to Atlassian:<br><a href="'+o.url+'" target="_blank" rel="noopener">'+o.url+'</a></div>'+
+            '<div class="sub">2. After login the browser may fail to reach localhost — that is expected. '+
+            'Copy the full address from the browser bar and paste it here:</div>'+
+            '<input id="jurl" placeholder="https://localhost…/callback?code=…" autocomplete="off">'+
+            '<button class="btn" type="button" id="jpaste">Paste &amp; finish</button><span id="jstat" class="sub"></span>';
+          $('jpaste').onclick=function(){
+            fetch('/jira-auth',{method:'POST',headers:{'content-type':'application/json'},
+              body:JSON.stringify({act:'paste',url:$('jurl').value})})
+              .then(function(r){ return r.json(); })
+              .then(function(o2){
+                if(!o2.ok){ $('jstat').textContent=o2.error||'error'; return; }
+                $('jstat').textContent='checking…';
+                var tries=0;
+                var iv=setInterval(function(){
+                  fetch('/jira-auth').then(function(r){ return r.json(); }).then(function(s){
+                    if(s.connected){ clearInterval(iv); a.innerHTML='<div class="note">✓ Jira authorized.</div>'; }
+                    else if(++tries>10){ clearInterval(iv); a.innerHTML='<div class="sub">Not connected yet — try Authorize again.</div>'; }
+                  });
+                }, 3000);
+              });
+          };
+        })
+        .catch(function(){ a.innerHTML='<div class="sub">Could not start the authorization.</div>'; });
+    };
+    var save=function(){ var c=$('atlbox');
+      fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:!!(c&&c.checked)})}); };
+    $('setupdone').onclick=function(){ save(); finish(); };
+    $('setupskip').onclick=function(){ save(); finish(); };
   }
   step(1);
   body.innerHTML='<h2>Welcome to claude-box</h2><p>You are signed in on this browser with the one-time link. '+
     'Pick a login and password: your phone, other computers and the public tunnel will ask for them.</p>';
   body.appendChild(pwForm(true, function(){
-    loadAuth(); step(2);
-    body.innerHTML='<h2>Connect GitHub</h2><p>Optional. Lets Claude clone your repos, push branches and open pull requests. '+
-      'You can do it later in Settings.</p><div class="gitbox" id="setupgit"></div>'+
-      '<div class="acts"><button class="btn" type="button" id="setupdone">Continue</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
+    loadAuth(); modelStep();
     gitBox($('setupgit'), function(){ $('setupskip').classList.add('hidden'); });
     $('setupdone').onclick=jiraStep; $('setupskip').onclick=jiraStep;
   }));
