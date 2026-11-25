@@ -436,7 +436,7 @@ function estimateCtx(items) {
 // the file in 512 KB windows from the end and grows toward the start only when the user asks for
 // earlier pages. Parsed windows are kept per session in a small LRU (a parsed long transcript is
 // hundreds of MB of JS objects; keeping all of them grew the heap until GC stalls).
-const CACHE_MAX = 10;
+const CACHE_MAX = 6;
 function cacheTouch(map, cid, make) {
   let v = map.get(cid);
   if (!v) { v = make(); map.set(cid, v); }

@@ -227,8 +227,13 @@ const handler = (req, res) => {
       if (path === '/git/logout') { webGit.logout().then((r) => json(res, r.ok ? 200 : 400, r)); return; }
     }
     if (path === '/sessions') {
+      const t0 = Date.now();
       let rows; try { rows = registry.list(); } catch (_) { json(res, 500, '[]'); return; }
-      json(res, 200, chat ? chat.decorate(rows) : rows);
+      const t1 = Date.now();
+      rows = chat ? chat.decorate(rows) : rows;
+      const t2 = Date.now();
+      if (t2 - t0 > 500) console.error(`[sessions] slow: registry ${t1 - t0}ms, decorate ${t2 - t1}ms, ${rows.length} rows at ${new Date().toISOString()}`);
+      json(res, 200, rows);
       return;
     }
     if (path === '/chat/info') {
