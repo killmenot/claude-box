@@ -54,8 +54,13 @@ function locked(fn) {
 
 // ---------- tmux ----------
 function tmux(args) {
+  const t0 = Date.now();
   try { return execFileSync('tmux', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
   catch (_) { return null; }
+  finally {
+    const dt = Date.now() - t0;
+    if (dt > 300) console.error(`[tmux] ${args[0]} took ${dt}ms at ${new Date().toISOString()}`);   // the tmux server briefly stalling blocks the whole node loop
+  }
 }
 // name -> {stamp, title} of every live tmux session, in ONE tmux call.
 function tmuxSessions() {
