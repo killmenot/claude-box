@@ -48,6 +48,26 @@ test('later starts keep the user\'s own settings and MCP servers', () => {
   assert.strictEqual(c.numStartups, 5);
 });
 
+test('MCP urls: ${VAR} / ${VAR:-default} filled from the env (Claude Code takes them literally), keys stay out', () => {
+  const { expandUrl } = require('../scripts/web-serve.js');
+  delete process.env.CB_T_URL;
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://app.example.com/mcp');
+  process.env.CB_T_URL = '';
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://app.example.com/mcp');   // empty = unset
+  process.env.CB_T_URL = 'https://team.example.com/';
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://team.example.com/mcp');  // no double slash
+  assert.strictEqual(expandUrl('https://mcp.example.com/mcp'), 'https://mcp.example.com/mcp');
+
+  const helper = 'node -e "print the key"';
+  fs.writeFileSync(path.join(def, 'mcp.json'), JSON.stringify({ mcpServers: {
+    wiki: { type: 'http', url: '${CB_T_URL}/mcp', headersHelper: helper } } }));
+  seedDefaults();
+  const w = read('.claude.json').mcpServers.wiki;
+  assert.strictEqual(w.url, 'https://team.example.com/mcp');
+  assert.strictEqual(w.headersHelper, helper);
+  delete process.env.CB_T_URL;
+});
+
 // metrics read /proc: Linux only, as in the image
 test('metrics: host numbers without a token, nulls for the session part', { skip: process.platform !== 'linux' && 'reads /proc (Linux only)' }, async () => {
   const { metrics } = require('../scripts/web-metrics.js');

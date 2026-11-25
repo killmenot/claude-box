@@ -42,6 +42,11 @@
       "type": "http",
       "url": "https://mcp.figma.com/mcp"
     },
+    "outline": {
+      "type": "http",
+      "url": "${OUTLINE_URL:-https://app.getoutline.com}/mcp",
+      "headersHelper": "node -e 'process.stdout.write(JSON.stringify({Authorization:\"Bearer \"+(process.env.OUTLINE_API_KEY||\"\")}))'"
+    },
     "playwright": {
       "type": "stdio",
       "command": "npx",

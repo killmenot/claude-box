@@ -65,6 +65,15 @@ function writeApiToken() {
 }
 
 // ---------- 1. defaults ----------
+// Claude Code takes a user-scope MCP server's url literally (no ${VAR} expansion there), so a url
+// built from the env file (OUTLINE_URL) is filled in here: ${VAR} / ${VAR:-default}, an empty VAR
+// counts as unset; a trailing slash on the base does not double up. Only urls: secrets stay out of
+// ~/.claude.json (a server's key comes from a headersHelper that reads the env at connect time).
+function expandUrl(u) {
+  return String(u)
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, k, def) => env[k] || def || '')
+    .replace(/([^:\/])\/{2,}/g, '$1/');
+}
 // settings.json is copied once (the user may change it later); MCP servers are re-synced from the
 // image on every start; the claude-notify hooks are (re)installed unless CLAUDE_NOTIFY_DISABLE is set.
 function seedDefaults() {
@@ -77,7 +86,11 @@ function seedDefaults() {
   }
   const config = readJson(configFile) || {};
   const mcp = readJson(path.join(DEF, 'mcp.json'));
-  if (mcp && mcp.mcpServers) config.mcpServers = Object.assign({}, config.mcpServers, mcp.mcpServers);
+  if (mcp && mcp.mcpServers) {
+    const servers = {};
+    for (const [k, v] of Object.entries(mcp.mcpServers)) servers[k] = v && v.url ? Object.assign({}, v, { url: expandUrl(v.url) }) : v;
+    config.mcpServers = Object.assign({}, config.mcpServers, servers);
+  }
   // an OAuth token in .env: skip the first-run login wizard (Claude Code ignores it during onboarding)
   if (env.CLAUDE_CODE_OAUTH_TOKEN) config.hasCompletedOnboarding = true;
   writeJson(configFile, config);
@@ -232,5 +245,5 @@ async function run() {
   }
 }
 
-module.exports = { seedDefaults, pickTtydPort, dropSecrets, SECRET_ENV };
+module.exports = { seedDefaults, expandUrl, pickTtydPort, dropSecrets, SECRET_ENV };
 if (require.main === module) main();
