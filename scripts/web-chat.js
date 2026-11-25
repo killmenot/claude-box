@@ -425,14 +425,25 @@ function estimateCtx(items) {
 // (tens of MB on long sessions) on EVERY open and on every "loading earlier messages" page, which
 // is what made paging crawl. First load parses via the SDK; later, grown files are appended by
 // parsing only the new lines. A moved/rewritten file invalidates the cache.
-const HCACHE = new Map();          // cid -> {file, size, raw}
+const HCACHE = new Map();          // cid -> {file, size, raw} (LRU, see cacheTouch)
+// A parsed transcript of a long session is hundreds of MB of JS objects; keeping every session
+// forever grew the heap until GC pauses stalled the whole server periodically.
+const CACHE_MAX = 10;
+function cacheTouch(map, cid, make) {
+  let v = map.get(cid);
+  if (!v) { v = make(); map.set(cid, v); }
+  else { map.delete(cid); map.set(cid, v); }          // refresh LRU order
+  while (map.size > CACHE_MAX) map.delete(map.keys().next().value);
+  return v;
+}
 async function history(chat) {
   if (!chat.cid) return [];
   await sdkReady;
   const f = transcriptPath(chat.cid, chat.cwd);
   let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
   let c = HCACHE.get(chat.cid);
-  if (!c || c.file !== f || (st && st.size < c.size)) { c = { file: f, size: 0, raw: [] }; HCACHE.set(chat.cid, c); }
+  if (!c || c.file !== f || (st && st.size < c.size)) { c = cacheTouch(HCACHE, chat.cid, () => ({ file: f, size: 0, raw: [] })); }
+  else cacheTouch(HCACHE, chat.cid, () => c);
   if (!c.raw.length) {
     try { c.raw = sdk ? await sdk.getSessionMessages(chat.cid, { dir: chat.cwd }) : []; }
     catch (e) { log('history', e.message); }
@@ -493,14 +504,15 @@ const UUID_TS = /"uuid":"([^"]+)","timestamp":"([^"]+)"/;
 // every history request stalled the server. Per-chat state remembers how much was consumed;
 // a moved, rewritten or shrunk file starts over. The 1 KB overlap re-parses the line that was
 // cut at the previous read boundary; map entries are overwritten, so duplicates are harmless.
-const EXTRAS = new Map();          // cid -> {file, size, map, times}
+const EXTRAS = new Map();          // cid -> {file, size, map, times} (LRU, see cacheTouch)
 const EMPTY_EXTRAS = () => ({ extra: new Map(), times: new Map() });
 function transcriptExtras(chat) {
   const f = chat.cid && transcriptPath(chat.cid, chat.cwd);
   let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
   if (!st) return EMPTY_EXTRAS();
   let c = EXTRAS.get(chat.cid);
-  if (!c || c.file !== f || st.size < c.size) { c = { file: f, size: 0, map: new Map(), times: new Map() }; EXTRAS.set(chat.cid, c); }
+  if (!c || c.file !== f || st.size < c.size) { c = cacheTouch(EXTRAS, chat.cid, () => ({ file: f, size: 0, map: new Map(), times: new Map() })); }
+  else cacheTouch(EXTRAS, chat.cid, () => c);
   if (st.size > c.size) {
     const fd = fs.openSync(f, 'r');
     try {
