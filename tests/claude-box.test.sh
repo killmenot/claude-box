@@ -134,6 +134,11 @@ bash "$repo/claude-box" </dev/null >/dev/null 2>&1
 check "build: bake gets --allow=network.host"      1 "$(grep -c 'buildx bake --allow=network.host -f - web' "$tmp/docker.log")"
 check "build: bake reads compose's definition"     '{"target":{}}' "$(cat "$tmp/bake.json" 2>/dev/null)"
 check "build: no plain compose build"              0 "$(grep ' compose .* build ' "$tmp/docker.log" | grep -vc -- '--print')"
+check "start: no forced recreate"                  0 "$(grep -c -- '--force-recreate' "$tmp/docker.log")"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" --restart </dev/null >/dev/null 2>&1
+check "--restart: builds through bake"             1 "$(grep -c 'buildx bake' "$tmp/docker.log")"
+check "--restart: recreates the container"         1 "$(grep -c 'up -d --force-recreate web' "$tmp/docker.log")"
 bash "$repo/claude-box" --bogus </dev/null >/dev/null 2>&1; rc=$?
 check "unknown option: exit 2"                     2 "$rc"
 

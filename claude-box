@@ -4,6 +4,7 @@
 #   claude-box --tunnel    — + publish it on a public https URL (cloudflared without a token / ngrok)
 #   claude-box --no-proxy  — run WITHOUT the proxy from .env (the host's direct egress)
 #   claude-box --stop      — stop the web UI (running Claude sessions are restored on the next start)
+#   claude-box --restart   — rebuild (cached) and recreate the container, even when nothing changed
 #   claude-box --status    — is it running, where, which sessions
 #   claude-box --login     — print a fresh one-time sign-in link for the web UI (changes nothing else)
 #   claude-box --setup     — re-run the first-run setup (the workspace folder)
@@ -18,7 +19,7 @@ REPO="$(cd "$(dirname "$SELF")" && pwd -P)"
 ENV_FILE="$REPO/.env"
 PLACEHOLDER='/path/to/your/project'
 
-usage() { sed -n '2,12p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,13p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ---------------------------------------------------------------- arguments
 action=start; want_tunnel=0; no_proxy=0; force_setup=0
@@ -27,6 +28,7 @@ for a in "$@"; do
     --tunnel)                 want_tunnel=1 ;;
     --no-proxy)               no_proxy=1 ;;
     --stop|--web-stop)        action=stop ;;
+    --restart)                action=restart ;;
     --status|--web-status)    action=status ;;
     --setup)                  force_setup=1 ;;
     --login)                  action=login ;;
@@ -282,7 +284,11 @@ if [ "$want_tunnel" = 1 ]; then
     tunnel=1
   fi
 fi
-WEB_TUNNEL="$([ "$tunnel" = 1 ] && echo 1 || true)" dc up -d web
+# --restart: recreate the container even when its config and image are unchanged (plain `up -d`
+# would leave it running). It is stopped only now, after the build, so the old one serves meanwhile.
+recreate=()
+[ "$action" = restart ] && recreate=(--force-recreate)
+WEB_TUNNEL="$([ "$tunnel" = 1 ] && echo 1 || true)" dc up -d ${recreate[@]+"${recreate[@]}"} web
 
 echo
 echo "claude-box is up:"

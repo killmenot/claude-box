@@ -17,6 +17,7 @@ with state and plugins preserved between runs.
 ./claude-box            # build (cached) and start the web UI, print its address
 ./claude-box --status   # is it running, where, which console sessions
 ./claude-box --stop     # stop it (running sessions come back on the next start)
+./claude-box --restart  # rebuild (cached) and recreate the container
 ./claude-box --setup    # re-run the first-run setup
 ./claude-box --install  # print how to add claude-box to PATH (changes nothing)
 ```
@@ -104,7 +105,7 @@ ANTHROPIC_DEFAULT_HAIKU_MODEL=GLM-5.3-Flash
 ```
 
 `CLAUDE_CODE_OAUTH_TOKEN` must stay **empty** in this mode. Model names are whatever your z.ai plan
-exposes (e.g. `GLM-5.3`, `GLM-5.3-Flash`). Restart with `./claude-box --stop && ./claude-box`.
+exposes (e.g. `GLM-5.3`, `GLM-5.3-Flash`). Restart with `./claude-box --restart`.
 The same block can instead live in `home/.claude/settings.json` as `"env": { ... }` — the `.env`
 variant is preferred, keeping secrets in one place.
 
@@ -138,7 +139,7 @@ Open `.env`, uncomment the line and paste the token:
 GH_TOKEN=ghp_xxx
 ```
 
-Restart claude-box (`./claude-box --stop && ./claude-box`) — and `gh` is ready:
+Restart claude-box (`./claude-box --restart`) — and `gh` is ready:
 
 ```bash
 # in the web terminal:
