@@ -31,8 +31,13 @@ Guidance for Claude Code (and other agents) working in this repository.
 ## Tests
 
 - **Run the tests on macOS and on Linux separately — both must pass** before saying a change works:
-  `bash tests/run.sh` (this machine) and `bash tests/run.sh --linux` (inside the claude-box image;
-  build it with `./claude-box` first). Report the two results separately.
+  `bash tests/run.sh` (this machine) and `bash tests/run.sh --linux` (inside the test box's image).
+  Report the two results separately.
+- **Tests and live checks use the test box: `.env.test`** (`./claude-box --env test`, its own
+  `home-test/`). `tests/run.sh --linux` takes that box's image; build or refresh it with
+  `./claude-box --env test` (or `--env test --restart`). To see a change in the real UI, restart the
+  test box. The other `.env.*` files are the user's working boxes: never start, restart or stop them
+  for a check unless the user asks. Never read any `.env*` file (the test one included).
 - The host here is often a Mac: `./claude-box` and `tests/claude-box.test.sh` run on BSD tools there
   (`stat`, `sed -i`, `script`, `uname`). Keep both portable: no GNU-only flags without a fallback.
 - Server-side code (`scripts/*.js`) runs only inside the Linux image; a test that needs Linux or a

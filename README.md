@@ -76,7 +76,7 @@ macOS and Linux are separate runs, and both must pass:
 
 ```bash
 bash tests/run.sh               # every suite on this machine (macOS or Linux)
-bash tests/run.sh --linux       # every suite on Linux, inside the claude-box image (run ./claude-box first)
+bash tests/run.sh --linux       # every suite on Linux, inside the test box's image (.env.test: ./claude-box --env test)
 ```
 
 The Linux run is where the web server really lives (tmux, `/proc`); the host run checks `./claude-box`
