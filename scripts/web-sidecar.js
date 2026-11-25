@@ -193,6 +193,14 @@ const handler = (req, res) => {
       res.end(); return;
     }
     const path = req.url.split('?')[0];
+    if (path === '/cert') {          // the self-signed cert, for importing into client devices
+      try {
+        const buf = fs.readFileSync(process.env.WEB_TLS_CERT || '/nonexistent');
+        res.writeHead(200, { 'content-type': 'application/x-x509-ca-cert', 'content-disposition': 'attachment; filename="claude-box.crt"' });
+        res.end(buf);
+      } catch (_) { res.writeHead(404); res.end('no certificate'); }
+      return;
+    }
     if (path === '/auth/state') {
       json(res, 200, { configured: authStore.configured(), fromEnv: authStore.fromEnv(), user: authStore.configured() ? authStore.user() : '' });
       return;

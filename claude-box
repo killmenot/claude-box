@@ -141,7 +141,8 @@ setup_instance() {
   env_set CLAUDE_BOX_NAME "$name"
   env_set WEB_TERMINAL_PORT "$(ask "  Web UI port (http)" "$((7681 + off))")"
   env_set WEB_TLS_PORT "$(ask "  Web UI port (https)" "$((8443 + off))")"
-  env_set TTYD_PORT "$(ask "  Internal console port" "$((7682 + off))")"
+  # the internal console (ttyd) port is NOT asked: it is loopback-only and picked free at runtime
+  # (see web-serve.js) — an implementation detail several boxes can share safely.
 }
 
 first_run() {
@@ -157,6 +158,7 @@ first_run() {
   setup_workspace
   setup_model
   setup_integrations
+  setup_docker
 }
 
 # ---------------------------------------------------------------- model + integrations
@@ -213,6 +215,23 @@ setup_model() {
       ;;
   esac
 }
+setup_docker() {
+  if [ "$force_setup" = 0 ] && [ -n "$(env_get DOCKER_ACCESS)" ]; then return 0; fi
+  if [ ! -S /var/run/docker.sock ]; then
+    echo "  Docker: no socket on this machine — containers on the host are not available."
+    env_set DOCKER_ACCESS 0
+    return 0
+  fi
+  local a gid
+  a="$(ask '  Allow the box to run Docker containers on this host (test stacks, postgres, …)? [Y/n]' Y)"
+  gid="$(stat -c %g /var/run/docker.sock 2>/dev/null || echo 999)"
+  case "$a" in
+    n|N) env_set DOCKER_ACCESS 0; env_set DOCKER_GID "$gid" ;;
+    *)   env_set DOCKER_ACCESS 1; env_set DOCKER_GID "$gid"
+         echo "  Note: Docker access is root-equivalent on this machine — grant only where everyone"
+         echo "  using the box is trusted. Test: docker ps inside the box." ;;
+  esac
+}
 setup_integrations() {
   if [ -n "$(env_get MCP_ATLASSIAN)" ]; then return 0; fi
   local a
@@ -231,6 +250,7 @@ mkdir -p ./home
 
 compose_files=(-f docker-compose.yml)
 [ "$no_proxy" = 1 ] && compose_files+=(-f docker-compose.no-proxy.yml)
+[ "$(env_get DOCKER_ACCESS)" = 1 ] && compose_files+=(-f docker-compose.docker.yml)
 # Network mode: on Linux (incl. WSL2) the container shares the host network directly (Tailscale,
 # DBs). Docker Desktop on macOS does NOT map host-mode ports to the real machine, so there we
 # swap to bridge + explicit ports (docker-compose.ports.yml). WEB_BIND overrides the auto choice.

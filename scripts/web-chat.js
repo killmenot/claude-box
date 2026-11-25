@@ -502,9 +502,10 @@ function extendBack(entry, chat, minPrompts) {
         if (c) { const k = e.parentUuid || ''; if (!winExtras.has(k)) winExtras.set(k, []);
           winExtras.get(k).push({ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: c }); }
       }
-      if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain || e.isMeta) continue;
+      // isMeta stays: scheduled/cron turns are real user turns and must be visible
+      if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain) continue;
       if (!e.uuid || !e.message) continue;
-      win.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null });
+      win.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null, meta: !!e.isMeta });
     }
     entry.items = win.concat(entry.items);
     for (const [k, v] of winExtras) {

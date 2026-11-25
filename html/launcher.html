@@ -2144,6 +2144,7 @@ function renderItem(p, m){
   MSG_TS=m.ts||0;
   var msg=m.message||{}, c=msg.content;
   if(m.type==='user'){
+    if(m.meta){ note(p, '⏰ scheduled run'); return; }   // cron/scheduled turns collapse to one dim line
     if(typeof c==='string'){ userTextHtml(p,c); return; }
     var imgs=[];
     (c||[]).forEach(function(b){

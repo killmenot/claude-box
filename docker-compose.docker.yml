@@ -1,0 +1,11 @@
+# Overlay for DOCKER_ACCESS=1 (.env, asked on the first run): let the box manage Docker on the
+# host — test stacks, helper containers (postgres, redis), `docker`/`docker compose` from the
+# chat and console. The docker socket is root-equivalent on the host: grant only on machines
+# where everyone using the box is trusted anyway. DOCKER_GID = the host's docker group id
+# (claude-box fills it from the socket); without it the socket is not accessible to the box user.
+services:
+  web:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
