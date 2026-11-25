@@ -541,5 +541,14 @@ function start(opts) {
 }
 
 module.exports = { start, handler, onUpgrade };
+// Event-loop lag probe: when the loop stalls (a sync scan, GC, a wedged child), every endpoint
+// freezes for that long — the "sessions slow for a few seconds" symptom. This makes such stalls
+// visible in docker logs with their exact duration instead of being invisible from outside.
+let lastBeat = Date.now();
+setInterval(() => {
+  const now = Date.now(), drift = now - lastBeat - 2000;
+  lastBeat = now;
+  if (drift > 800) console.error(`[loop] stalled ${drift}ms at ${new Date().toISOString()}`);
+}, 2000).unref();
 // standalone (tests, debugging): the same options from the environment
 if (require.main === module) start({ ttydAuth: process.env.CB_TTYD_AUTH, apiToken: process.env.CB_API_TOKEN });
