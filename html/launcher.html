@@ -478,6 +478,12 @@
   #setupw .ssteps{display:flex;gap:14px;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
   #setupw .ssteps .on{color:var(--iris)}
   #setupw .acts{display:flex;gap:8px;margin-top:18px}
+  #setupw label.opt{display:block;margin:8px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:14px}
+  #setupw label.opt:hover{background:var(--hover)}
+  #setupw label.opt input{margin-right:8px}
+  #setupw label.opt small{display:block;color:var(--slate);font-size:12.5px;margin-top:3px;font-weight:400}
+  #setupw input[type=password]{width:100%;margin:10px 0;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font:inherit}
+  #setupw .note{border:1px solid var(--line);border-left:3px solid var(--iris);border-radius:8px;padding:10px 12px;font-size:13.5px;color:var(--slate);margin:10px 0}
   .pwform{display:flex;flex-direction:column;gap:10px;margin-top:6px}
   .pwform label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--slate)}
   .pwform label.chk{flex-direction:row;align-items:center;gap:8px}
@@ -1821,24 +1827,30 @@ function openSetup(){
   function modelStep(){
     step(4);
     body.innerHTML='<h2>Pick the model</h2><p>What powers Claude in this box. Applies to new messages; change it later in Settings.</p>'+
-      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="radio" name="smprov" value="claude" checked>'+
-      '<span>Claude via a claude.ai subscription<small>login once in a Console: run <b>claude setup-token</b> and put the token into .env on the host</small></span></label></div>'+
-      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="radio" name="smprov" value="glm">'+
-      '<span>GLM-5.3-Flash via z.ai<small>paste your z.ai API key below</small></span></label></div>'+
-      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="radio" name="smprov" value="abliteration">'+
-      '<span>Abliteration<small>paste your API key below</small></span></label></div>'+
-      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="radio" name="smprov" value="custom">'+
-      '<span>Custom (Anthropic-compatible)<small>base URL, model name and API key below</small></span></label></div>'+
-      '<div class="sub"><input id="smkey" type="password" placeholder="API key (GLM / Abliteration / custom)" autocomplete="off">'+
-      '<input id="smurl" placeholder="https://… base URL (custom only)" autocomplete="off">'+
-      '<input id="smmodel" placeholder="model name (optional)" autocomplete="off"></div>'+
+      '<label class="opt"><input type="radio" name="smprov" value="claude" checked><span>Claude via a claude.ai subscription<small>after saving, the login command is shown below</small></span></label>'+
+      '<label class="opt"><input type="radio" name="smprov" value="glm"><span>GLM-5.3-Flash via z.ai<small>paste your z.ai API key below</small></span></label>'+
+      '<label class="opt"><input type="radio" name="smprov" value="abliteration"><span>Abliteration<small>paste your API key below</small></span></label>'+
+      '<div id="smarea"></div>'+
       '<div class="acts"><button class="btn" type="button" id="smok">Save &amp; finish</button><button class="btn ghost" type="button" id="smskip">Skip for now</button></div>';
+    function area(){
+      var prov=(document.querySelector('input[name="smprov"]:checked')||{}).value;
+      var a=$('smarea');
+      if(prov==='claude'){
+        a.innerHTML='<div class="note">After saving, open a <b>Console</b> session and run <b>claude setup-token</b>: '+
+          'open the link it prints, log in at claude.ai, paste the code back, and put the printed token into '+
+          '<b>.env</b> on the host as <b>CLAUDE_CODE_OAUTH_TOKEN</b>.</div>';
+      } else {
+        a.innerHTML='<input id="smkey" type="password" placeholder="'+(prov==='glm'?'z.ai API key':'API key')+'">';
+      }
+    }
+    body.querySelectorAll('input[name="smprov"]').forEach(function(r){ r.addEventListener('change', area); });
+    area();
     $('smok').onclick=function(){
       var prov=(document.querySelector('input[name="smprov"]:checked')||{}).value;
-      var key=$('smkey').value;
+      var key=($('smkey')||{}).value||'';
       if(prov!=='claude' && !key.trim()){ alert('Paste the API key for this provider, or Skip for now.'); return; }
       fetch('/model',{method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({provider:prov,key:key,baseUrl:$('smurl').value,model:$('smmodel').value})})
+        body:JSON.stringify({provider:prov,key:key})})
         .then(function(r){ return r.json(); })
         .then(function(){ finish(); }, function(){ finish(); });
     };
