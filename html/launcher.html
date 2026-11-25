@@ -1124,7 +1124,7 @@ function buildChat(p){
     '<button class="sendbtn stopbtn hidden" type="button" title="Stop (Esc)">■</button>'+
     '<button class="sendbtn go" type="button" title="Send (Enter)" disabled>↑</button></div></div></div></div>';
   views.appendChild(c);
-  p.el=c; p.log=c.querySelector('.log'); p.inner=c.querySelector('.inner');
+  p.el=c; p.log=c.querySelector('.log'); p.inner=c.querySelector('.inner'); p.inner.dataset.key=p.wire;
   p.inner.appendChild(el('div','loading','Loading session…'));   // the history reply clears it
   p.log.addEventListener('scroll', function(){ checkOlder(p); }, {passive:true});
   p.ta=c.querySelector('textarea'); p.go=c.querySelector('.go'); p.stopb=c.querySelector('.stopbtn');
@@ -1462,8 +1462,9 @@ function olderIn(p, o){ if(p.olderEl) p.olderEl.classList.remove('loading');
   renderAgBar(p);
   requestAnimationFrame(function(){ checkOlder(p); });
 }
-// ---- under each message: when it was sent, Copy, Read aloud
+// ---- under each message: when it was sent, Copy, Read aloud, Fork
 var MSG_TS=0;   // time of the message renderItem is drawing (history items carry ts)
+var CUR_UUID=null;  // uuid of the message renderItem is drawing (the Fork button needs it)
 function msgTime(ts){
   var d=new Date(ts), now=new Date(), t=d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
   if(d.toDateString()===now.toDateString()) return t;
@@ -1472,11 +1473,13 @@ function msgTime(ts){
 }
 function stampMsg(d, raw, ts){
   ts=ts||d._ts||MSG_TS||Date.now(); d._ts=ts; d._raw=String(raw||'');
+  if(CUR_UUID) d._uuid=CUR_UUID;
   var old=d.querySelector(':scope > .mmeta'); if(old) old.remove();
   if(!d._raw.trim()) return;
+  var fork=d._uuid?'<button type="button" data-mm="fork" title="Fork: continue from this message in a new session">⑂ Fork</button>':'';
   d.appendChild(el('div','mmeta','<span class="mt" title="'+esc(new Date(ts).toLocaleString())+'">'+esc(msgTime(ts))+'</span>'+
     '<button type="button" data-mm="copy" title="Copy the message">Copy</button>'+
-    '<button type="button" data-mm="say" title="Read the message aloud">'+(READ.el===d?'■ Stop':'🔊 Read aloud')+'</button>'));
+    '<button type="button" data-mm="say" title="Read the message aloud">'+(READ.el===d?'■ Stop':'🔊 Read aloud')+'</button>'+fork));
 }
 function copyText(t){
   if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(t);
@@ -1527,6 +1530,12 @@ document.addEventListener('click', function(e){
   if(b.dataset.mm==='copy') copyText(d._raw).then(function(){ b.textContent='✓ Copied'; }, function(){ b.textContent='Copy failed'; })
     .then(function(){ setTimeout(function(){ b.textContent='Copy'; }, 1500); });
   else if(b.dataset.mm==='say') readAloud(d);
+  else if(b.dataset.mm==='fork'){
+    var host=b.closest('[data-key]'), key=host&&host.dataset.key, u=d._uuid;
+    if(!key||!u||b.disabled) return;
+    b.disabled=true; b.textContent='Forking…';
+    wsSend({op:'fork', key:key, uuid:u});
+  }
 });
 function addUser(p, text, local, atts, voice){
   var d=el('div','msg user'); if(voice) d.classList.add('voiced');
@@ -2075,6 +2084,7 @@ $('agv').addEventListener('click', function(e){ if(e.target===this) closeAgent()
 document.addEventListener('keydown', function(e){ if(e.key==='Escape' && (AGV.ag || AGV.panel)){ e.stopPropagation(); closeAgent(); } }, true);
 function renderItem(p, m){
   if(!m) return;
+  CUR_UUID=(m.uuid||null);
   if(m.type==='system'){ renderSystem(p,m); return; }
   if(m.parent_tool_use_id){ renderSub(p,m); return; }     // Task-row internals stay hidden; skill runs collect
   if(m.uuid){ if(p.r.seen[m.uuid]) return; p.r.seen[m.uuid]=1; }
@@ -2233,6 +2243,7 @@ function onEvent(p, o){
       scrollEnd(p);
       break;
     case 'older': olderIn(p,o); break;
+    case 'forked': if(o.token) openSession(o.token); break;
     case 'draft': draftRemote(p,o); break;
     case 'state': setState(p, o.state); if(o.state==='stopped'||o.state==='idle') finishLive(p); break;
     case 'info': p.info=o.info||{}; renderStatus(p); if(p.cmdEl && !p.cmdEl.classList.contains('hidden')) cmdUpdate(p); break;

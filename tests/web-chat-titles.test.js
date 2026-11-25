@@ -26,8 +26,8 @@ const chat = { cid, cwd: '/w/x', turn: [] };
 const filler = JSON.stringify({ type: 'filler', data: 'x'.repeat(300) }) + '\n';
 let body = '';
 for (let i = 1; i <= 30; i++) {
-  body += `{"uuid":"p${i}","timestamp":"2026-01-01T00:${String(i % 60).padStart(2, '0')}:00Z","type":"user","message":{"role":"user","content":"prompt ${i}"}}\n`;
-  body += `{"uuid":"a${i}","timestamp":"2026-01-01T00:${String(i % 60).padStart(2, '0')}:30Z","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"answer ${i}"}],"usage":{"input_tokens":100}}}\n`;
+  body += `{"uuid":"p${i}","sessionId":"c-titles","timestamp":"2026-01-01T00:${String(i % 60).padStart(2, '0')}:00Z","type":"user","message":{"role":"user","content":"prompt ${i}"}}\n`;
+  body += `{"uuid":"a${i}","sessionId":"c-titles","timestamp":"2026-01-01T00:${String(i % 60).padStart(2, '0')}:30Z","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"answer ${i}"}],"usage":{"input_tokens":100}}}\n`;
   if (i === 29) body += `{"uuid":"s${i}","timestamp":"2026-01-01T00:29:10Z","type":"system","subtype":"local_command","parentUuid":"a${i}","content":"<local-command-stdout>cost output</local-command-stdout>"}\n`;
 }
 body += `{"type":"custom-title","customTitle":"Backend work"}\n{"type":"ai-title","aiTitle":"Security audit"}\n`;
@@ -84,4 +84,30 @@ test('sessionTitles: bounded cold scan finds tail titles, offsets persisted', as
 
 test('sessionTitles: missing transcript -> null', () => {
   assert.strictEqual(wc.sessionTitles('no-such-cid', '/w/x'), null);
+});
+
+test('forkFrom: copies the prefix up to the chosen message, rewrites sessionId, appends "Fork: …"', () => {
+  const before = fs.readFileSync(file, 'utf8');
+  // a user prompt branches BEFORE it (re-ask differently): prompt 15 itself is not copied
+  const r = wc.forkFrom({ cid, cwd: '/w/x' }, 'p15');
+  let forked = fs.readFileSync(path.join(proj, r.cid + '.jsonl'), 'utf8');
+  let fl = forked.split('\n').filter((l) => l.startsWith('{'));
+  assert.ok(fl.some((l) => l.includes('"uuid":"a14"')));
+  assert.ok(!fl.some((l) => l.includes('"uuid":"p15"')), 'fork leaked past the chosen prompt');
+  assert.ok(!fl.some((l) => l.includes('"uuid":"p16"')));
+  // an assistant answer branches AFTER it: answer 15 is copied
+  const r2 = wc.forkFrom({ cid, cwd: '/w/x' }, 'a15');
+  forked = fs.readFileSync(path.join(proj, r2.cid + '.jsonl'), 'utf8');
+  fl = forked.split('\n').filter((l) => l.startsWith('{'));
+  assert.ok(fl.some((l) => l.includes('"uuid":"a15"')));
+  assert.ok(!fl.some((l) => l.includes('"uuid":"p16"')), 'fork leaked past the chosen message');
+  assert.ok(!forked.includes('"sessionId":"c-titles"'), 'sessionId not rewritten');
+  assert.ok(forked.includes('"sessionId":"' + r2.cid + '"'));
+  assert.match(fl[fl.length - 1], /"customTitle":"Fork: Renamed"/);
+  // the original is untouched
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), before);
+});
+
+test('forkFrom: unknown uuid -> error', () => {
+  assert.throws(() => wc.forkFrom({ cid, cwd: '/w/x' }, 'nope'), /not found/);
 });

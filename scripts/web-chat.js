@@ -38,6 +38,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 // The environment for Claude sessions: never the web login or the tunnel token (web-serve.js
 // already drops them; this keeps a standalone sidecar safe too). CLAUDE_WEB_CHAT tells the
@@ -604,6 +605,17 @@ function onConnection(ws) {
         reply({ ev: 'older', key, items: pg.items, more: pg.more });
         return;
       }
+      if (msg.op === 'fork') {
+        let chat = mine.get(key);
+        if (!chat && msg.token) { chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key }); }
+        if (!chat || !chat.cid) { reply({ ev: 'error', key, text: 'fork: session not open' }); return; }
+        try {
+          const r = forkFrom(chat, String(msg.uuid || ''));
+          const token = registry.upsert({ cid: r.cid, cwd: chat.cwd, name: r.name, state: 'stopped', mode: 'chat' });
+          reply({ ev: 'forked', key, token, name: r.name });
+        } catch (e) { reply({ ev: 'error', key, text: 'fork failed: ' + e.message }); }
+        return;
+      }
       let chat = mine.get(key);
       // Self-healing: after a reconnect or a server restart an op can arrive for a key whose
       // open was lost (the client only re-sends 'open' on its own socket reconnect). If the op
@@ -927,5 +939,33 @@ async function sendTo(token, text) {
   return { via: 'chat' };
 }
 
-module.exports = { launchDir, sessionTitles, tailPage, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+// ---------- fork: a new session continuing from a chosen message ----------
+// Claude Code transcripts are line-per-message files keyed by filename; a fork is a copy of the
+// prefix (everything up to and including the chosen message) under a NEW session id, with the
+// copied lines' sessionId rewritten. The original session stays untouched; sending a message to
+// the fork resumes the new id and continues exactly from the fork point. A custom-title line is
+// appended so "Fork: …" sticks as the session name.
+function forkFrom(chat, uuid) {
+  const f = transcriptPath(chat.cid, chat.cwd);
+  if (!f) throw new Error('transcript not found');
+  const text = fs.readFileSync(f, 'utf8');
+  const lines = text.split('\n');
+  const cut = lines.findIndex((l) => l.includes('"uuid":"' + uuid + '"'));
+  if (cut < 0) throw new Error('message not found in transcript');
+  // forking from a user prompt branches BEFORE it (re-ask differently); from an answer — after it
+  let userType = false;
+  try { userType = JSON.parse(lines[cut]).type === 'user'; } catch (_) {}
+  const keep = userType ? cut : cut + 1;
+  const newId = crypto.randomUUID();
+  const prefix = lines.slice(0, keep)
+    .map((l) => l.split(`"sessionId":"${chat.cid}"`).join(`"sessionId":"${newId}"`))
+    .join('\n') + '\n';
+  const title = (sessionTitles(chat.cid, chat.cwd) || {});
+  const name = 'Fork: ' + (title.custom || title.ai || chat.name || path.basename(chat.cwd || 'session'));
+  fs.writeFileSync(path.join(path.dirname(f), newId + '.jsonl'),
+    prefix + `{"type":"custom-title","customTitle":${JSON.stringify(name)}}\n`);
+  return { cid: newId, name };
+}
+
+module.exports = { launchDir, sessionTitles, tailPage, forkFrom, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };
