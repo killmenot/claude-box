@@ -7,6 +7,10 @@
 services:
   web:
     network_mode: bridge
+    environment:
+      # Published ports reach the container's bridge interface, not its loopback: listen on all
+      # interfaces inside. Exposure on the Mac is still limited by the host address below.
+      - WEB_LISTEN_ADDR=0.0.0.0
     ports:
       - "${WEB_TERMINAL_INTERFACE:-127.0.0.1}:${WEB_TERMINAL_PORT:-7681}:7681"
       - "${WEB_TERMINAL_INTERFACE:-127.0.0.1}:${WEB_TLS_PORT:-8443}:8443"

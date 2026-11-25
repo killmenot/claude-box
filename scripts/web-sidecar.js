@@ -28,7 +28,11 @@ const { search } = require('./web-search.js');
 const webGuard = require('./web-guard.js');
 const guard = webGuard.makeGuard();
 
-const IFACE = process.env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
+// The address the listeners bind to inside the container. WEB_LISTEN_ADDR is set only by the
+// bridge overlay (docker-compose.ports.yml): there Docker forwards published ports to the
+// container's own interface, never to its loopback, so it must be 0.0.0.0. WEB_TERMINAL_INTERFACE
+// stays the address exposed on the host.
+const IFACE = process.env.WEB_LISTEN_ADDR || process.env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
 const PORT  = parseInt(process.env.WEB_TERMINAL_PORT || '7681', 10);
 const TLS_PORT = parseInt(process.env.WEB_TLS_PORT || '8443', 10);   // https listener (if a cert is present)
 const TTYD  = parseInt(process.env.TTYD_PORT || '7682', 10);
