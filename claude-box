@@ -169,7 +169,7 @@ setup_docker() {
   fi
   local a gid
   echo
-  a="$(ask '  Allow the box to run Docker containers on this host (test stacks, postgres, …)? [Y/n]' Y)"
+  a="$(ask 'Allow the box to run Docker containers on this host (test stacks, postgres, …)? [Y/n]' Y)"
   gid="$(stat -c %g "$sock" 2>/dev/null || echo 999)"
   case "$a" in
     n|N) env_set DOCKER_ACCESS 0; env_set DOCKER_GID "$gid" ;;
