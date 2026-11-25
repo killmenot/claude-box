@@ -19,6 +19,8 @@ printf '%s\n' 'PROJECT_DIR=/path/to/your/project' 'WEB_TERMINAL_PORT=7681' '# WE
 bin="$tmp/bin"; mkdir -p "$bin"
 printf '#!/bin/sh\necho "docker $*" >> "%s/docker.log"\n' "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
 export PATH="$bin:$PATH"
+# the docker calls, without the --env-file every compose call carries (checked on its own below)
+dlog(){ sed -E 's/ --env-file [^ ]+//' "$tmp/docker.log"; }
 # `uname -s` picks the network mode (auto): pinned to Linux (host network, no overlay) so the
 # expected docker calls are the same on every machine; the auto-mode checks below switch it
 fake_uname(){ printf '#!/bin/sh\necho %s\n' "$1" > "$bin/uname"; chmod +x "$bin/uname"; }
@@ -50,8 +52,8 @@ check "first run: other settings kept"             7681 "$(val WEB_TERMINAL_PORT
 check "first run: container uid saved (BOX_UID)"    "$(id -u)" "$(val BOX_UID)"
 check "first run: auth hint shown (none configured)" 1 "$(printf '%s' "$out" | grep -c 'auth is not configured')"
 check "first run: container gid saved (BOX_GID)"    "$(id -g)" "$(val BOX_GID)"
-check "first run: image built"                     1 "$(grep 'compose -f docker-compose.yml build' "$tmp/docker.log" | grep -vc -- '--print')"
-check "first run: web started"                     1 "$(grep -c 'compose -f docker-compose.yml up -d web' "$tmp/docker.log")"
+check "first run: image built"                     1 "$(dlog | grep 'compose -f docker-compose.yml build' | grep -vc -- '--print')"
+check "first run: web started"                     1 "$(dlog | grep -c 'compose -f docker-compose.yml up -d web')"
 key="$(cat "$key_file" 2>/dev/null)"
 check "first run: one-time key written"            32 "${#key}"
 check "first run: key file is private"             600 "$(mode "$key_file")"
@@ -64,7 +66,7 @@ check "first run: says the login is picked in the UI" 1 "$(printf '%s' "$out" | 
 out="$(tty_run '')"
 check "second run: no questions"                   0 "$(printf '%s' "$out" | grep -c 'Press Enter\|Password')"
 check "second run: no auth hint"                   0 "$(printf '%s' "$out" | grep -c 'auth is not configured')"
-check "second run: web started"                    1 "$(grep -c 'up -d web' "$tmp/docker.log")"
+check "second run: web started"                    1 "$(dlog | grep -c 'up -d web')"
 check "second run: a new key"                      no "$([ "$(cat "$key_file")" = "$key" ] && echo yes || echo no)"
 check "second run: prints the https address"       2 "$(printf '%s' "$out" | grep -c 'https://localhost:8443')"   # the address + the sign-in link
 check "second run: plain http address too"         2 "$(printf '%s' "$out" | grep -c 'http://localhost:7681')"    # the address + the sign-in link
@@ -101,11 +103,11 @@ check "no tty, no .env: docker untouched"          0 "$(wc -l < "$tmp/docker.log
 printf 'PROJECT_DIR=%s\nWEB_TERMINAL_PASSWORD=abcdefgh\n' "$repo/workspace" > "$repo/.env"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --no-proxy </dev/null >/dev/null 2>&1
-check "--no-proxy: proxy overlay used"             1 "$(grep -c 'up -d web' "$tmp/docker.log" | tr -d ' ')"
-check "--no-proxy: overlay file passed"            1 "$(grep -c 'docker-compose.no-proxy.yml up -d web' "$tmp/docker.log")"
+check "--no-proxy: proxy overlay used"             1 "$(dlog | grep -c 'up -d web' | tr -d ' ')"
+check "--no-proxy: overlay file passed"            1 "$(dlog | grep -c 'docker-compose.no-proxy.yml up -d web')"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --stop </dev/null >/dev/null 2>&1
-check "--stop: removes the web container"          1 "$(grep -c 'compose -f docker-compose.yml rm -sf web' "$tmp/docker.log")"
+check "--stop: removes the web container"          1 "$(dlog | grep -c 'compose -f docker-compose.yml rm -sf web')"
 
 # owner guard: a container started by ANOTHER claude-box (different working dir) must not be stopped
 printf '#!/bin/sh
@@ -117,7 +119,7 @@ exit 0
 bash "$repo/claude-box" --stop </dev/null >"$tmp/out" 2>&1; rc=$?
 check "owner guard: foreign container refuses to stop"  1 "$rc"
 check "owner guard: explains and names no rm"           1 "$(grep -c 'belongs to another claude-box' "$tmp/out")"
-check "owner guard: no rm attempted"                    0 "$(grep -c 'rm -sf web' "$tmp/docker.log")"
+check "owner guard: no rm attempted"                    0 "$(dlog | grep -c 'rm -sf web')"
 # network mode: auto on Linux stays host; WEB_BIND=ports adds the overlay
 mkdir -p "$HOME/workspace"
 printf '#!/bin/sh
@@ -130,11 +132,11 @@ WEB_TERMINAL_PASSWORD=abcdefgh
 fake_uname Linux
 : > "$tmp/docker.log"
 bash "$repo/claude-box" </dev/null >/dev/null 2>&1
-check "linux auto: no ports overlay"               0 "$(grep -c 'docker-compose.ports.yml' "$tmp/docker.log")"
+check "linux auto: no ports overlay"               0 "$(dlog | grep -c 'docker-compose.ports.yml')"
 fake_uname Darwin
 : > "$tmp/docker.log"
 bash "$repo/claude-box" </dev/null >/dev/null 2>&1
-check "macOS auto: ports overlay on up"            1 "$(grep -c 'docker-compose.ports.yml up -d web' "$tmp/docker.log")"
+check "macOS auto: ports overlay on up"            1 "$(dlog | grep -c 'docker-compose.ports.yml up -d web')"
 fake_uname Linux
 printf 'PROJECT_DIR=%s
 WEB_TERMINAL_PASSWORD=abcdefgh
@@ -142,7 +144,7 @@ WEB_BIND=ports
 ' "$HOME/workspace" > "$repo/.env"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" </dev/null >/dev/null 2>&1
-check "WEB_BIND=ports: overlay passed to compose"  1 "$(grep -c 'docker-compose.ports.yml up -d web' "$tmp/docker.log" | tr -d ' ')"
+check "WEB_BIND=ports: overlay passed to compose"  1 "$(dlog | grep -c 'docker-compose.ports.yml up -d web' | tr -d ' ')"
 # compose renders a bake definition (build --print) -> bake builds it with network.host granted
 printf '#!/bin/sh
 echo "docker $*" >> "%s/docker.log"
@@ -151,14 +153,62 @@ exit 0
 ' "$tmp" "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" </dev/null >/dev/null 2>&1
-check "build: bake gets --allow=network.host"      1 "$(grep -c 'buildx bake --allow=network.host -f - web' "$tmp/docker.log")"
+check "build: bake gets --allow=network.host"      1 "$(dlog | grep -c 'buildx bake --allow=network.host -f - web')"
 check "build: bake reads compose's definition"     '{"target":{}}' "$(cat "$tmp/bake.json" 2>/dev/null)"
-check "build: no plain compose build"              0 "$(grep ' compose .* build ' "$tmp/docker.log" | grep -vc -- '--print')"
-check "start: no forced recreate"                  0 "$(grep -c -- '--force-recreate' "$tmp/docker.log")"
+check "build: no plain compose build"              0 "$(dlog | grep ' compose .* build ' | grep -vc -- '--print')"
+check "start: no forced recreate"                  0 "$(dlog | grep -c -- '--force-recreate')"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --restart </dev/null >/dev/null 2>&1
-check "--restart: builds through bake"             1 "$(grep -c 'buildx bake' "$tmp/docker.log")"
-check "--restart: recreates the container"         1 "$(grep -c 'up -d --force-recreate web' "$tmp/docker.log")"
+check "--restart: builds through bake"             1 "$(dlog | grep -c 'buildx bake')"
+check "--restart: recreates the container"         1 "$(dlog | grep -c 'up -d --force-recreate web')"
+
+# --- 6. --env: another env file is another box (own env file for compose, own home, own label) ---
+printf '#!/bin/sh
+echo "docker $* | env=$CLAUDE_BOX_ENV_FILE home=$BOX_HOME" >> "%s/docker.log"
+exit 0
+' "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
+printf 'PROJECT_DIR=%s\nWEB_TERMINAL_PASSWORD=abcdefgh\nCLAUDE_BOX_NAME=cb-ws1\n' "$HOME/workspace" > "$repo/.env.ws1"
+for form in "--env ws1" "--env .env.ws1" "--env=ws1"; do
+  : > "$tmp/docker.log"
+  # shellcheck disable=SC2086  # the flag and its value, split on purpose
+  bash "$repo/claude-box" $form </dev/null >/dev/null 2>&1
+  check "$form: compose reads .env.ws1"            1 "$(grep -c -- "--env-file $repo/.env.ws1 up -d web" "$tmp/docker.log")"
+  check "$form: container gets .env.ws1 + home-ws1" 1 "$(grep 'up -d web' "$tmp/docker.log" | grep -c "env=$repo/.env.ws1 home=./home-ws1$")"
+done
+check "--env ws1: home-ws1 created"                yes "$([ -d "$repo/home-ws1" ] && echo yes)"
+check "--env ws1: sign-in key in home-ws1"         32 "$(wc -c < "$repo/home-ws1/.claude/web-login-key" | tr -d ' ' | awk '{print $1-1}')"
+: > "$tmp/docker.log"
+CLAUDE_BOX_ENV=ws1 bash "$repo/claude-box" </dev/null >/dev/null 2>&1
+check "CLAUDE_BOX_ENV=ws1: same as --env ws1"      1 "$(grep -c -- "--env-file $repo/.env.ws1 up -d web" "$tmp/docker.log")"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" </dev/null >/dev/null 2>&1
+check "no --env: .env and home/"                   1 "$(grep 'up -d web' "$tmp/docker.log" | grep -c -- "--env-file $repo/.env .*env=$repo/.env home=./home$")"
+mkdir -p "$tmp/elsewhere"; cp "$repo/.env.ws1" "$tmp/elsewhere/box.env"
+: > "$tmp/docker.log"
+( cd "$tmp" && bash "$repo/claude-box" --env elsewhere/box.env </dev/null >/dev/null 2>&1 )
+check "--env a/path: that file, from the caller's folder" 1 "$(grep -c -- "--env-file $tmp/elsewhere/box.env up -d web" "$tmp/docker.log")"
+bash "$repo/claude-box" --env example </dev/null >/dev/null 2>&1; rc=$?
+check "--env example: refused (the template)"      2 "$rc"
+bash "$repo/claude-box" --env </dev/null >/dev/null 2>&1; rc=$?
+check "--env without a value: exit 2"              2 "$rc"
+# a container of the same name that this checkout started from .env must not be replaced by .env.ws1
+printf '#!/bin/sh
+case "$*" in
+  *working_dir*) echo "%s"; exit 0 ;;
+  *claude-box.env*) echo "%s/.env"; exit 0 ;;
+esac
+echo "docker $*" >> "%s/docker.log"
+exit 0
+' "$repo" "$repo" "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" --env ws1 </dev/null >"$tmp/out" 2>&1; rc=$?
+check "env guard: .env's container not replaced"   1 "$rc"
+check "env guard: names the other env file"        1 "$(grep -c "belongs to the box of $repo/.env" "$tmp/out")"
+check "env guard: no up attempted"                 0 "$(dlog | grep -c 'up -d web')"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" </dev/null >/dev/null 2>&1
+check "env guard: its own env file passes"         1 "$(dlog | grep -c 'up -d web')"
+
 bash "$repo/claude-box" --bogus </dev/null >/dev/null 2>&1; rc=$?
 check "unknown option: exit 2"                     2 "$rc"
 

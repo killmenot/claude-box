@@ -2,7 +2,9 @@
 # every env file (.env, .env.workspace1, ...) except the public template
 .env*
 !.env.example
+# the box's home per env file: home/ for .env, home-<name>/ for .env.<name>
 home/
+/home-*/
 certs/*.crt
 certs/*.key
 # each proxy has its own cert (tied to its server) — placed locally, not committed

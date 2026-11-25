@@ -9,6 +9,8 @@
 #   claude-box --login     — print a fresh one-time sign-in link for the web UI (changes nothing else)
 #   claude-box --setup     — re-run the first-run setup (the workspace folder)
 #   claude-box --install   — print how to add claude-box to PATH (changes nothing)
+#   claude-box --env NAME  — use .env.NAME instead of .env (or a path to an env file); combines with
+#                            the others. Each env file is its own box: own home-NAME/, name and ports
 # The first start creates .env and asks where projects live. The web login and password are set
 # in the browser: open the one-time link printed at the end, and the UI asks for them.
 set -euo pipefail
@@ -16,15 +18,21 @@ set -euo pipefail
 # real path of the script (works via symlink and via PATH too) -> repository root
 SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
 REPO="$(cd "$(dirname "$SELF")" && pwd -P)"
-ENV_FILE="$REPO/.env"
+CALLER_PWD="$PWD"
 PLACEHOLDER='/path/to/your/project'
 
-usage() { sed -n '2,13p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,15p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ---------------------------------------------------------------- arguments
 action=start; want_tunnel=0; no_proxy=0; force_setup=0
-for a in "$@"; do
+env_arg="${CLAUDE_BOX_ENV:-}"
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  a="${args[i]}"
   case "$a" in
+    --env=*)                  env_arg="${a#--env=}" ;;
+    --env)                    i=$((i + 1)); env_arg="${args[i]:-}"
+                              [ -n "$env_arg" ] || { echo "claude-box: --env needs a name or a file" >&2; exit 2; } ;;
     --tunnel)                 want_tunnel=1 ;;
     --no-proxy)               no_proxy=1 ;;
     --stop|--web-stop)        action=stop ;;
@@ -38,6 +46,27 @@ for a in "$@"; do
     *) echo "claude-box: unknown option: $a" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+# The env file: .env by default. --env NAME (or CLAUDE_BOX_ENV) picks .env.NAME next to this script;
+# ".env.NAME" works too, and anything with a "/" is a path from the current folder.
+# ENV_NAME is the NAME part ("" for .env): it names the box's home folder (home-NAME/).
+case "$env_arg" in
+  "")      ENV_FILE="$REPO/.env" ;;
+  */*)     d="$(cd "$(dirname "$env_arg")" 2>/dev/null && pwd -P)" \
+             || { echo "claude-box: no such folder for --env: $env_arg" >&2; exit 2; }
+           ENV_FILE="$d/$(basename "$env_arg")" ;;
+  .env*)   ENV_FILE="$REPO/$env_arg" ;;
+  *)       ENV_FILE="$REPO/.env.$env_arg" ;;
+esac
+ENV_NAME="$(basename "$ENV_FILE")"
+case "$ENV_NAME" in
+  .env)         ENV_NAME="" ;;
+  .env.example) echo "claude-box: .env.example is the template, copy it to .env.NAME and use --env NAME" >&2; exit 2 ;;
+  .env.*)       ENV_NAME="${ENV_NAME#.env.}" ;;
+esac
+case "$ENV_NAME" in *[!A-Za-z0-9_.-]*)
+  echo "claude-box: env name may hold only letters, digits, '.', '_' and '-' (got: $ENV_NAME)" >&2; exit 2 ;;
+esac
 
 if [ "$action" = help ]; then usage; exit 0; fi
 if [ "$action" = install ]; then
@@ -125,15 +154,26 @@ setup_workspace() {
 # the internal ttyd port is shared too. Asked once, when .env is created and another box exists.
 taken_names() { docker ps -a --format '{{.Names}}' 2>/dev/null || true; }
 setup_instance() {
-  local others name n=2 off
+  local others name n=2 off def
   others="$(taken_names | grep -E -e '-web$' || true)"
-  printf '%s\n' "$others" | grep -qx "claude-box-web" || return 0
-  echo
-  echo "Another claude-box already runs on this Docker (container claude-box-web)."
-  echo "This one needs its own name and ports, or starting it would replace that one."
+  # a named env file (.env.NAME) is a second box by definition: always its own name and ports
+  if [ -z "$ENV_NAME" ]; then
+    printf '%s\n' "$others" | grep -qx "claude-box-web" || return 0
+    echo
+    echo "Another claude-box already runs on this Docker (container claude-box-web)."
+    echo "This one needs its own name and ports, or starting it would replace that one."
+  else
+    echo
+    echo "$(basename "$ENV_FILE") is its own box: it needs its own name and ports."
+  fi
   while printf '%s\n' "$others" | grep -qx "claude-box-$n-web"; do n=$((n + 1)); done
+  def="claude-box-$n"
+  if [ -n "$ENV_NAME" ]; then
+    def="claude-box-$(printf '%s' "$ENV_NAME" | tr 'A-Z.' 'a-z-')"
+    printf '%s\n' "$others" | grep -qx "$def-web" && def="claude-box-$n"
+  fi
   while :; do
-    name="$(ask "  Instance name" "claude-box-$n")"
+    name="$(ask "  Instance name" "$def")"
     case "$name" in [a-z0-9]*) ;; *) echo "  Start with a lowercase letter or digit." >&2; continue ;; esac
     case "$name" in *[!a-z0-9_-]*) echo "  Lowercase letters, digits, '_' and '-' only." >&2; continue ;; esac
     printf '%s\n' "$others" | grep -qx "$name-web" && { echo "  $name-web is taken." >&2; continue; }
@@ -159,14 +199,20 @@ first_run() {
     fi
     setup_instance
   fi
-  # the container must run as this host user, or it cannot write the ./home bind mount
+  # the container must run as this host user, or it cannot write the home bind mount
   if [ -z "$(env_get BOX_UID)" ]; then env_set BOX_UID "$(id -u)"; env_set BOX_GID "$(id -g)"; fi
   setup_workspace
 }
 
 # ---------------------------------------------------------------- docker
 cd "$REPO"
-mkdir -p ./home
+# The box's home (bind-mounted as /home/node: history, sessions, login): one per env file, so two
+# boxes never share it. home/ for .env, home-NAME/ for .env.NAME; BOX_HOME in the env file overrides.
+box_home="$(env_get BOX_HOME)"; box_home="${box_home:-./home${ENV_NAME:+-$ENV_NAME}}"
+case "$box_home" in /*|./*|../*) ;; *) box_home="./$box_home" ;; esac
+mkdir -p "$box_home"
+# compose reads these: the container's env_file, the home mount and the label guard_owner checks
+export CLAUDE_BOX_ENV_FILE="$ENV_FILE" BOX_HOME="$box_home"
 
 compose_files=(-f docker-compose.yml)
 [ "$no_proxy" = 1 ] && compose_files+=(-f docker-compose.no-proxy.yml)
@@ -186,19 +232,29 @@ bind_name=$([ "$bind_ports" = 1 ] && echo "ports (bridge+mapping)" || echo "host
 # A named instance is its own compose project too (the default project is the folder's name,
 # so two checkouts both called claude-box would otherwise be one project).
 name_set="$(env_get CLAUDE_BOX_NAME)"; name="$name_set"
+# --env-file: compose substitutes ${...} in the compose files from the chosen env file, not ./.env
 dc() {
-  if [ -n "$name" ]; then COMPOSE_PROJECT_NAME="$name" docker compose "${compose_files[@]}" "$@"
-  else docker compose "${compose_files[@]}" "$@"; fi
+  if [ -n "$name" ]; then COMPOSE_PROJECT_NAME="$name" docker compose "${compose_files[@]}" --env-file "$ENV_FILE" "$@"
+  else docker compose "${compose_files[@]}" --env-file "$ENV_FILE" "$@"; fi
 }
 name="${name:-claude-box}"
 container="$name-web"
 # Refuse to touch a container of the same name that another checkout started: compose would
 # stop and replace it (that is how a second box used to kill the first one).
+# The same goes for a container this checkout started from another env file (.env vs .env.NAME
+# with the same CLAUDE_BOX_NAME). Containers from before env files were labelled came from .env.
 guard_owner() {
-  local dir
+  local dir envf owner=""
   dir="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container" 2>/dev/null || true)"
-  [ -z "$dir" ] || [ "$(cd "$dir" 2>/dev/null && pwd -P || echo "$dir")" = "$REPO" ] && return 0
-  echo "✗ Container $container belongs to another claude-box ($dir)." >&2
+  [ -n "$dir" ] || return 0
+  if [ "$(cd "$dir" 2>/dev/null && pwd -P || echo "$dir")" != "$REPO" ]; then owner="another claude-box ($dir)"
+  else
+    envf="$(docker inspect -f '{{index .Config.Labels "claude-box.env"}}' "$container" 2>/dev/null || true)"
+    case "$envf" in ""|"<no value>") envf="$REPO/.env" ;; esac
+    [ "$envf" = "$ENV_FILE" ] && return 0
+    owner="the box of $envf"
+  fi
+  echo "✗ Container $container belongs to $owner." >&2
   echo "  Give this one its own CLAUDE_BOX_NAME and ports in $ENV_FILE" >&2
   echo "  (WEB_TERMINAL_PORT, WEB_TLS_PORT, TTYD_PORT), then run claude-box again." >&2
   exit 1
@@ -219,19 +275,19 @@ if [ "$(env_get WEB_TLS)" = 0 ]; then url="$http_url"; url_note=""; alt_url=""
 else url="https://${host}:${tls_port}"; url_note="   (self-signed cert; enables clipboard and notifications)"
   alt_url="$http_url"; fi
 alt_note="   (plain http, no certificate warning)"
-# A one-time sign-in key: it goes to ./home/.claude (the box's own home, private), the browser
+# A one-time sign-in key: it goes to <home>/.claude (the box's own home, private), the browser
 # that opens a link with it within 15 minutes is signed in and the key is used up. One key serves
 # both addresses, so either link works, but only once.
 signin_links() {
   local key
-  mkdir -p ./home/.claude
+  mkdir -p "$box_home"/.claude
   key="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32)"
-  ( umask 077; printf '%s\n' "$key" > ./home/.claude/web-login-key )
+  ( umask 077; printf '%s\n' "$key" > "$box_home"/.claude/web-login-key )
   echo "  ${url}/?key=${key}"
   [ -z "$alt_url" ] || echo "  ${alt_url}/?key=${key}"
 }
 # a login exists: set in the UI (web-auth.json) or the old WEB_TERMINAL_PASSWORD in .env
-has_login() { [ -n "$(env_get WEB_TERMINAL_PASSWORD)" ] || grep -q '"hash"' ./home/.claude/web-auth.json 2>/dev/null; }
+has_login() { [ -n "$(env_get WEB_TERMINAL_PASSWORD)" ] || grep -q '"hash"' "$box_home"/.claude/web-auth.json 2>/dev/null; }
 
 case "$action" in
   login)
@@ -249,7 +305,7 @@ case "$action" in
     cid="$(docker ps -q --filter "name=^${container}\$" | head -n1)"
     if [ -z "$cid" ]; then echo "claude-box is not running."; exit 0; fi
     echo "claude-box is running: ${url}"
-    url="$(head -n1 ./home/.claude/web-tunnel-url 2>/dev/null || true)"
+    url="$(head -n1 "$box_home"/.claude/web-tunnel-url 2>/dev/null || true)"
     [ -n "$url" ] && echo "Public tunnel: ${url}"
     echo "Console sessions (tmux):"
     docker exec "$cid" tmux list-sessions 2>/dev/null || echo "  (none)"
@@ -260,7 +316,7 @@ esac
 # --- start ---
 first_run
 # the setup may have just named this instance
-if [ -z "$name_set" ] && [ -n "$(env_get CLAUDE_BOX_NAME)" ]; then exec "$SELF" "$@"; fi
+if [ -z "$name_set" ] && [ -n "$(env_get CLAUDE_BOX_NAME)" ]; then cd "$CALLER_PWD" && exec "$SELF" "$@"; fi
 guard_owner
 
 # Build bypassing the proxy: compose reads .env at build time too and would pick up HTTPS_PROXY
@@ -310,12 +366,12 @@ signin_links
 if [ "$tunnel" = 1 ]; then
   if [ -n "$(env_get NGROK_AUTHTOKEN)" ]; then echo "Bringing up a public tunnel (ngrok)…"
   else echo "Bringing up a public tunnel (cloudflared, no token)…"; fi
-  # The container writes the URL to ./home/.claude/web-tunnel-url (bind mount). cloudflared buffers
+  # The container writes the URL to <home>/.claude/web-tunnel-url (bind mount). cloudflared buffers
   # its log and flushes the URL late, so its log is grepped directly as well. Wait window ~60s.
   url=""
   for _ in $(seq 1 120); do
-    [ -s ./home/.claude/web-tunnel-url ] && { url="$(head -n1 ./home/.claude/web-tunnel-url)"; break; }
-    u="$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' ./home/.claude/cloudflared.log 2>/dev/null | head -n1 || true)"
+    [ -s "$box_home"/.claude/web-tunnel-url ] && { url="$(head -n1 "$box_home"/.claude/web-tunnel-url)"; break; }
+    u="$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$box_home"/.claude/cloudflared.log 2>/dev/null | head -n1 || true)"
     [ -n "$u" ] && { url="$u"; break; }
     sleep 0.5
   done
