@@ -193,6 +193,73 @@ const handler = (req, res) => {
       res.end(); return;
     }
     const path = req.url.split('?')[0];
+    // model provider + integrations: written into ~/.claude/settings.json / ~/.claude.json, which
+    // every fresh claude process reads — so changes apply to new messages without a restart.
+    const homeDir = process.env.HOME || '/home/node';
+    const settingsFile = require('path').join(homeDir, '.claude', 'settings.json');
+    const claudeJsonFile = require('path').join(homeDir, '.claude.json');
+    const defMcpFile = require('path').join(process.env.CLAUDE_DEFAULTS || '/opt/claude-defaults', 'mcp.json');
+    const readJ = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return d; } };
+    const writeJ = (f, o) => { const t = f + '.' + process.pid + '.tmp'; fs.writeFileSync(t, JSON.stringify(o, null, 2)); fs.renameSync(t, f); };
+    if (path === '/model' && req.method === 'GET') {
+      const env = (readJ(settingsFile, {}).env) || {};
+      const b = env.ANTHROPIC_BASE_URL || '';
+      let provider = 'claude';
+      if (/z\.ai/.test(b)) provider = 'glm';
+      else if (/abliteration/.test(b)) provider = 'abliteration';
+      else if (b) provider = 'custom';
+      json(res, 200, { provider, baseUrl: b, model: env.ANTHROPIC_DEFAULT_SONNET_MODEL || '', hasKey: !!env.ANTHROPIC_AUTH_TOKEN });
+      return;
+    }
+    if (path === '/model' && req.method === 'POST') {
+      readJson(req, 8192, (o) => {
+        try {
+          if (!o || !o.provider) throw new Error('provider required');
+          const prov = String(o.provider);
+          const s = readJ(settingsFile, {}); s.env = s.env || {};
+          if (prov === 'claude') {
+            // the OAuth token itself lives in .env on the host — the UI shows the Console command
+            ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
+             'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'].forEach((k) => delete s.env[k]);
+          } else {
+            const defaults = { glm: { base: 'https://api.z.ai/api/anthropic', model: 'GLM-5.3-Flash' },
+              abliteration: { base: 'https://api.abliteration.ai', model: 'abliterated-model' } };
+            const d = defaults[prov] || {};
+            const base = prov === 'custom' ? String(o.baseUrl || '').trim() : d.base;
+            const model = String(o.model || d.model || '').trim();
+            const key = String(o.key || '').trim();
+            if (!base) throw new Error('baseUrl required');
+            if (!key) throw new Error('API key required');
+            s.env.ANTHROPIC_BASE_URL = base;
+            s.env.ANTHROPIC_AUTH_TOKEN = key;
+            s.env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
+            s.env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
+            s.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
+          }
+          writeJ(settingsFile, s);
+          json(res, 200, { ok: true, note: 'applies to new messages' });
+        } catch (e) { json(res, 400, { error: String(e.message || e) }); }
+      });
+      return;
+    }
+    if (path === '/integrations') {
+      if (req.method !== 'POST') { json(res, 200, (readJ(claudeJsonFile, {}).mcpServers) || {}); return; }
+      readJson(req, 8192, (o) => {
+        try {
+          if (!o || typeof o.atlassian !== 'boolean') throw new Error('atlassian boolean required');
+          const cfg = readJ(claudeJsonFile, {});
+          cfg.mcpServers = cfg.mcpServers || {};
+          if (o.atlassian) {
+            const def = readJ(defMcpFile, {});
+            if (def.mcpServers && def.mcpServers.atlassian) cfg.mcpServers.atlassian = def.mcpServers.atlassian;
+          } else delete cfg.mcpServers.atlassian;
+          writeJ(claudeJsonFile, cfg);
+          writeJ(require('path').join(homeDir, '.claude', 'web-integrations.json'), { atlassian: o.atlassian });
+          json(res, 200, { ok: true, atlassian: o.atlassian });
+        } catch (e) { json(res, 400, { error: String(e.message || e) }); }
+      });
+      return;
+    }
     if (path === '/cert') {          // the self-signed cert, for importing into client devices
       try {
         const buf = fs.readFileSync(process.env.WEB_TLS_CERT || '/nonexistent');

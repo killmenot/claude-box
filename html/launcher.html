@@ -1679,11 +1679,42 @@ function openSettings(){
   var tl={}; TOOLMODES.forEach(function(m){ tl[m]=TOOLLBL[m]; });
   $('setbody').innerHTML=setGroup('pmode','Permissions','For every chat; open chats switch right away.', PMODES, PMODEHINT, PMODE)+
     setGroup('tools','Tool calls in chat','How tool calls show in the conversation.', tl, TOOLHINT, toolMode)+
+    '<h4>Model</h4><div class="sub" id="mcur">…</div>'+
+    '<div class="opt"><input type="radio" name="mprov" value="claude"><span>Claude (claude.ai subscription)<small>login once in a Console: run claude setup-token, put the token into .env on the host</small></span></div>'+
+    '<div class="opt"><input type="radio" name="mprov" value="glm"><span>GLM-5.3-Flash via z.ai<small>api.z.ai — paste your API key below</small></span></div>'+
+    '<div class="opt"><input type="radio" name="mprov" value="abliteration"><span>Abliteration<small>api.abliteration.ai — paste your API key below</small></span></div>'+
+    '<div class="opt"><input type="radio" name="mprov" value="custom"><span>Custom (Anthropic-compatible)<small>base URL, model name and API key below</small></span></div>'+
+    '<div class="sub"><input id="mkey" type="password" placeholder="API key" autocomplete="off"><input id="mbase" placeholder="https://… base URL (custom only)" autocomplete="off"><input id="mmodel" placeholder="model name (optional)" autocomplete="off"><button class="btn" type="button" id="msave">Save model</button><span id="mnote" class="sub"></span></div>'+
+    '<h4>Integrations</h4><div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="atlbox"><span>Atlassian (Jira) MCP<small>once enabled, authorize in any chat: /mcp → atlassian</small></span></label></div>'+
     '<h4>Model traffic</h4><div class="sub">Off by default. When on, every session records what went to the model and back, the commands and file changes it made, and the hosts it connected to.</div>'+
     '<button class="btn" type="button" id="setwire">Model traffic settings &amp; records</button>'+
     '<h4>Access</h4><div class="sub" id="setacc">…</div>'+
     '<details id="setpw"><summary>Change login or password</summary></details>'+
     '<h4>GitHub</h4><div class="sub">Clone, push and pull requests go through this account (gh).</div><div class="gitbox" id="setgit"></div>';
+  fetch('/model').then(function(r){ return r.json(); }).then(function(m){
+    var el=document.querySelector('input[name="mprov"][value="'+(m.provider||'claude')+'"]'); if(el) el.checked=true;
+    if(m.baseUrl) $('mbase').value=m.baseUrl;
+    if(m.model) $('mmodel').value=m.model;
+    $('mcur').textContent = m.hasKey ? 'Current: '+(m.provider||'claude')+(m.model? ' · '+m.model : '') : 'Current: Claude via claude.ai login';
+  }).catch(function(){});
+  fetch('/integrations').then(function(r){ return r.json(); }).then(function(m){
+    $('atlbox').checked = !!(m && m.atlassian);
+  }).catch(function(){});
+  $('msave').addEventListener('click', function(){
+    var prov=(document.querySelector('input[name="mprov"]:checked')||{}).value;
+    var note=$('mnote');
+    if(!prov){ note.textContent='pick a provider first'; return; }
+    if(prov!=='claude' && !$('mkey').value.trim()){ note.textContent='paste the API key'; return; }
+    note.textContent='saving…';
+    fetch('/model',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({provider:prov,key:$('mkey').value,baseUrl:$('mbase').value,model:$('mmodel').value})})
+      .then(function(r){ return r.json(); })
+      .then(function(o){ note.textContent = o.ok ? 'saved — applies to new messages' : (o.error||'error'); })
+      .catch(function(){ note.textContent='error'; });
+  });
+  $('atlbox').addEventListener('change', function(){
+    fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:this.checked})});
+  });
   $('setd').classList.add('on');
   loadAuth().then(function(a){
     $('setacc').innerHTML=a.configured?'Login: <b>'+esc(a.user)+'</b>'+(a.fromEnv?' (from .env; a password set here replaces it)':'')+
