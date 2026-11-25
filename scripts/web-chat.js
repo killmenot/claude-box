@@ -181,8 +181,12 @@ function cachedCommands(cwd) { return (cwd && CMD.byCwd[cwd]) || CMD.last || [];
 // Ask a claude process for the list without sending it anything: it starts, answers
 // supportedCommands() (~1 s, no API call, no transcript) and is closed again.
 const WARMING = new Set();
+// Warmups run ONE at a time: each spawns a full `claude` process (all MCP servers start with it),
+// and a burst of those on parallel session opens stole CPU from the whole server (UI-wide stalls).
+const WARM_QUEUE = [];
 async function warmCommands(cwd) {
-  if (!cwd || WARMING.has(cwd) || CMD.byCwd[cwd]) return;
+  if (!cwd || WARMING.has(cwd) || CMD.byCwd[cwd] || WARM_QUEUE.includes(cwd)) return;
+  if (WARMING.size > 0) { WARM_QUEUE.push(cwd); return; }   // wait for the current warmup + 3 s spacing
   WARMING.add(cwd);
   let stop = null, q = null;
   const never = { [Symbol.asyncIterator]() { return { next: () => new Promise((r) => { stop = () => r({ done: true, value: undefined }); }) }; } };
@@ -195,7 +199,11 @@ async function warmCommands(cwd) {
     const list = rememberCommands(cwd, await q.supportedCommands());
     for (const c of CHATS) if (c.cwd === cwd && !c.q) { c.info.commandList = list; c.emit({ ev: 'info', info: c.info }); }
   } catch (e) { log('warm commands', cwd, e.message); }
-  finally { clearTimeout(timer); if (stop) stop(); try { q && q.close(); } catch (_) {} WARMING.delete(cwd); }
+  finally {
+    clearTimeout(timer); if (stop) stop(); try { q && q.close(); } catch (_) {} WARMING.delete(cwd);
+    const next = WARM_QUEUE.shift();
+    if (next) setTimeout(() => warmCommands(next).catch(() => {}), 3000);   // spacing between claude spawns
+  }
 }
 
 class Chat {
