@@ -17,6 +17,8 @@ delete process.env.TMUX;
 const bin = path.join(tmp, 'bin'); fs.mkdirSync(bin);
 fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nexec sleep 300\n', { mode: 0o755 });
 process.env.PATH = bin + ':' + process.env.PATH;
+// tmux runs inside the claude-box image; a host without it (macOS) skips the tmux tests
+const NO_TMUX = (() => { try { execFileSync('tmux', ['-V'], { stdio: 'ignore' }); return false; } catch (_) { return 'tmux not installed'; } })();
 const tmux = (...a) => { try { return execFileSync('tmux', a, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch (_) { return null; } };
 test.after(() => { tmux('kill-server'); fs.rmSync(tmp, { recursive: true, force: true }); });
 
@@ -47,7 +49,7 @@ test('concurrent CLI upserts do not lose records', () => {
   });
 });
 
-test('snapshot keeps the newest record per live tmux session; restore brings it back stamped', () => {
+test('snapshot keeps the newest record per live tmux session; restore brings it back stamped', { skip: NO_TMUX }, () => {
   const cwd = fs.mkdtempSync(path.join(tmp, 'proj-'));
   fs.writeFileSync(reg.REG, JSON.stringify({
     old: { token: 'old', claudeSessionId: 'c-old', cwd, name: 'web-7', tmuxSession: 'web-7', lastActivity: 1 },
@@ -76,7 +78,7 @@ test('restore skips a record with no saved conversation', () => {
   assert.strictEqual(reg.owns('sdk'), null);
 });
 
-test('preview: live capture is cached and served after the session dies', async () => {
+test('preview: live capture is cached and served after the session dies', { skip: NO_TMUX }, async () => {
   fs.writeFileSync(reg.REG, JSON.stringify({ pv: { token: 'pv', claudeSessionId: 'c-pv', cwd: tmp, tmuxSession: 'pv-1', lastActivity: 1 } }));
   tmux('new-session', '-d', '-s', 'pv-1', '-x', '80', '-y', '20', 'printf "line-%s\\n" $(seq 1 15); sleep 300');
   await new Promise((r) => setTimeout(r, 300));

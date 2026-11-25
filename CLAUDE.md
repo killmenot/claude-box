@@ -28,6 +28,16 @@ Guidance for Claude Code (and other agents) working in this repository.
   fonts, no CDN; deploy with `./site/deploy.sh`).
 - `html/` — the in-product web terminal / session launcher pages.
 
+## Tests
+
+- **Run the tests on macOS and on Linux separately — both must pass** before saying a change works:
+  `bash tests/run.sh` (this machine) and `bash tests/run.sh --linux` (inside the claude-box image;
+  build it with `./claude-box` first). Report the two results separately.
+- The host here is often a Mac: `./claude-box` and `tests/claude-box.test.sh` run on BSD tools there
+  (`stat`, `sed -i`, `script`, `uname`). Keep both portable: no GNU-only flags without a fallback.
+- Server-side code (`scripts/*.js`) runs only inside the Linux image; a test that needs Linux or a
+  tool the host lacks (tmux, `/proc`) skips on the host instead of failing.
+
 ## Secrets & safety
 
 - Never read, print, or commit `.env` or `certs/*.crt` (they are gitignored and
