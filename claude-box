@@ -21,7 +21,7 @@ PLACEHOLDER='/path/to/your/project'
 usage() { sed -n '2,12p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ---------------------------------------------------------------- arguments
-action=start; want_tunnel=0; no_proxy=0; force_setup=0
+action=start; want_tunnel=0; no_proxy=0; force_setup=0; need_oauth=0
 for a in "$@"; do
   case "$a" in
     --tunnel)                 want_tunnel=1 ;;
@@ -150,16 +150,79 @@ first_run() {
     cp "$REPO/.env.example" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
     echo "Created $ENV_FILE from .env.example (tokens, proxy and other settings live there)."
-    if [ -z "$(env_get CLAUDE_CODE_OAUTH_TOKEN)" ] && [ -z "$(env_get ANTHROPIC_BASE_URL)" ]; then
-      echo "  Claude auth is not configured. Either set CLAUDE_CODE_OAUTH_TOKEN (Anthropic), or"
-      echo "  ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + ANTHROPIC_DEFAULT_*_MODEL (GLM / any"
-      echo "  Anthropic-compatible provider) — see README \"Using GLM\"."
-    fi
     setup_instance
   fi
   # the container must run as this host user, or it cannot write the ./home bind mount
   if [ -z "$(env_get BOX_UID)" ]; then env_set BOX_UID "$(id -u)"; env_set BOX_GID "$(id -g)"; fi
   setup_workspace
+  setup_model
+  setup_integrations
+}
+
+# ---------------------------------------------------------------- model + integrations
+# Hidden single-line read with a retry: keys pasted from clipboard/voice often need a second try.
+ask_key() {
+  local v
+  while :; do
+    printf '%s: ' "$1" >&2
+    IFS= read -rs v || v=""
+    echo >&2
+    case "$v" in "") echo "  A key is required for this provider." >&2 ;; *) printf '%s' "$v"; return 0 ;; esac
+  done
+}
+setup_model() {
+  # already configured or already chosen (the choice is stored in .env) — ask nothing
+  if [ -n "$(env_get WEB_MODEL)" ] || [ -n "$(env_get CLAUDE_CODE_OAUTH_TOKEN)" ] || [ -n "$(env_get ANTHROPIC_BASE_URL)" ]; then return 0; fi
+  if ! interactive; then
+    echo "  Model/auth not configured: set CLAUDE_CODE_OAUTH_TOKEN (Anthropic) or ANTHROPIC_BASE_URL +"
+    echo "  ANTHROPIC_AUTH_TOKEN + ANTHROPIC_DEFAULT_*_MODEL (GLM / any Anthropic-compatible provider) in .env." >&2
+    return 0
+  fi
+  echo
+  echo "Model: what powers Claude inside the box."
+  echo "  1) Claude via a claude.ai subscription — a one-time OAuth login link is generated after start"
+  echo "  2) GLM-5.3-Flash via z.ai — needs a z.ai API key"
+  echo "  3) Abliteration — needs an API key"
+  local m
+  m="$(ask '  Choose [1/2/3]' 1)"
+  case "$m" in
+    2)
+      env_set WEB_MODEL glm
+      env_set CLAUDE_CODE_OAUTH_TOKEN ""
+      env_set ANTHROPIC_BASE_URL "https://api.z.ai/api/anthropic"
+      env_set ANTHROPIC_DEFAULT_OPUS_MODEL "GLM-5.3-Flash"
+      env_set ANTHROPIC_DEFAULT_SONNET_MODEL "GLM-5.3-Flash"
+      env_set ANTHROPIC_DEFAULT_HAIKU_MODEL "GLM-5.3-Flash"
+      env_set ANTHROPIC_AUTH_TOKEN "$(ask_key '  z.ai API key')"
+      ;;
+    3)
+      env_set WEB_MODEL abliteration
+      env_set CLAUDE_CODE_OAUTH_TOKEN ""
+      env_set ANTHROPIC_BASE_URL "https://api.abliteration.ai"
+      env_set ANTHROPIC_DEFAULT_OPUS_MODEL "abliterated-model"
+      env_set ANTHROPIC_DEFAULT_SONNET_MODEL "abliterated-model"
+      env_set ANTHROPIC_DEFAULT_HAIKU_MODEL "abliterated-model"
+      env_set ANTHROPIC_AUTH_TOKEN "$(ask_key '  Abliteration API key')"
+      ;;
+    *)
+      env_set WEB_MODEL claude
+      env_set CLAUDE_CODE_OAUTH_TOKEN ""
+      env_set ANTHROPIC_BASE_URL ""
+      env_set ANTHROPIC_AUTH_TOKEN ""
+      need_oauth=1
+      ;;
+  esac
+}
+setup_integrations() {
+  if [ -n "$(env_get MCP_ATLASSIAN)" ]; then return 0; fi
+  local a
+  a="$(ask '  Enable the Jira/Atlassian integration (MCP)? [Y/n]' Y)"
+  case "$a" in
+    n|N) env_set MCP_ATLASSIAN 0 ;;
+    *)   env_set MCP_ATLASSIAN 1
+         echo "  After the box starts: open a Console session, run /mcp, pick atlassian → Authenticate."
+         echo "  (The OAuth login happens once, inside Claude.)" ;;
+  esac
 }
 
 # ---------------------------------------------------------------- docker
@@ -273,6 +336,26 @@ if [ "$want_tunnel" = 1 ]; then
   fi
 fi
 WEB_TUNNEL="$([ "$tunnel" = 1 ] && echo 1 || true)" dc up -d web
+
+# Claude (provider 1): a one-time OAuth login — the link is printed by claude setup-token
+# INSIDE the box; after the token comes back, .env is updated and the box recreated with it.
+if [ "$need_oauth" = 1 ] && interactive; then
+  echo
+  echo "Claude login (claude.ai subscription):"
+  echo "  Running 'claude setup-token' in the box — open the link it prints, log in,"
+  echo "  paste the code back when asked, then copy the token it shows here."
+  dc exec web claude setup-token || echo "  (setup-token failed — run later: docker exec -it claude-box-web claude setup-token)"
+  printf '  Paste the CLAUDE_CODE_OAUTH_TOKEN shown above (empty = skip): ' >&2
+  tok=""
+  if interactive; then IFS= read -rs tok || tok=""; echo >&2; fi
+  if [ -n "$tok" ]; then
+    env_set CLAUDE_CODE_OAUTH_TOKEN "$tok"
+    dc up -d --force-recreate web >/dev/null
+    echo "  Saved to .env and applied to the box."
+  else
+    echo "  Skipped. Set CLAUDE_CODE_OAUTH_TOKEN in .env later and restart."
+  fi
+fi
 
 echo
 echo "claude-box is up:"

@@ -24,18 +24,18 @@ export PATH="$bin:$PATH"
 tty_run(){ printf '%b' "$1" | script -qec "bash '$repo/claude-box' ${2:-}" /dev/null 2>&1; }
 val(){ grep -E "^$1=" "$repo/.env" | tail -n1 | cut -d= -f2-; }
 
-# --- 1. first run: only the projects folder is asked; the web login is set later in the browser ---
-out="$(tty_run '\n')"
+# --- 1. first run: projects folder, model (default Claude), integrations; login comes via the browser ---
+out="$(tty_run '\n\n\n')"
 key_file="$repo/home/.claude/web-login-key"
 check "first run: .env created"                    yes "$([ -f "$repo/.env" ] && echo yes)"
 check "first run: .env is private"                 600 "$(stat -c %a "$repo/.env")"
 check "first run: projects default to ./workspace" "$repo/workspace" "$(val PROJECT_DIR)"
 check "first run: projects folder created"         yes "$([ -d "$repo/workspace" ] && echo yes)"
-check "first run: no password asked"               0 "$(printf '%s' "$out" | grep -c 'Password (Enter\|Repeat password')"
-check "first run: no password in .env"             "" "$(val WEB_TERMINAL_PASSWORD)"
+check "first run: model defaults to claude"        claude "$(val WEB_MODEL)"
+check "first run: claude keeps BASE_URL empty"     "" "$(val ANTHROPIC_BASE_URL)"
+check "first run: atlassian on by default"         1 "$(val MCP_ATLASSIAN)"
 check "first run: other settings kept"             7681 "$(val WEB_TERMINAL_PORT)"
 check "first run: container uid saved (BOX_UID)"    "$(id -u)" "$(val BOX_UID)"
-check "first run: auth hint shown (none configured)" 1 "$(printf '%s' "$out" | grep -c 'auth is not configured')"
 check "first run: container gid saved (BOX_GID)"    "$(id -g)" "$(val BOX_GID)"
 check "first run: image built"                     1 "$(grep -c 'compose -f docker-compose.yml build' "$tmp/docker.log")"
 check "first run: web started"                     1 "$(grep -c 'compose -f docker-compose.yml up -d web' "$tmp/docker.log")"
@@ -77,6 +77,17 @@ out="$(tty_run "~/code/projects\n" --setup)"
 check "setup: tilde path expanded and created"     "$HOME/code/projects" "$(val PROJECT_DIR)"
 check "setup: still a single PROJECT_DIR line"     1 "$(grep -c '^PROJECT_DIR=' "$repo/.env")"
 
+# --- 3b. fresh run with the GLM provider chosen (2), key, atlassian declined ---
+rm "$repo/.env"; : > "$tmp/docker.log"
+out="$(tty_run '\n2\nzai-key-123\nn\n')"
+check "glm: BASE_URL set"                "https://api.z.ai/api/anthropic" "$(val ANTHROPIC_BASE_URL)"
+check "glm: token saved"                 "zai-key-123" "$(val ANTHROPIC_AUTH_TOKEN)"
+check "glm: sonnet model"                "GLM-5.3-Flash" "$(val ANTHROPIC_DEFAULT_SONNET_MODEL)"
+check "glm: opus model"                  "GLM-5.3-Flash" "$(val ANTHROPIC_DEFAULT_OPUS_MODEL)"
+check "glm: WEB_MODEL recorded"          glm "$(val WEB_MODEL)"
+check "glm: OAUTH stays empty"           "" "$(val CLAUDE_CODE_OAUTH_TOKEN)"
+check "glm: atlassian declined"          0 "$(val MCP_ATLASSIAN)"
+check "glm: web started"                 1 "$(grep -c 'compose -f docker-compose.yml up -d web' "$tmp/docker.log")"
 # --- 4. non-interactive without .env: fail with a hint, no docker ---
 rm "$repo/.env"; : > "$tmp/docker.log"
 bash "$repo/claude-box" </dev/null >/dev/null 2>&1; rc=$?

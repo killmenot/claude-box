@@ -78,6 +78,8 @@ function seedDefaults() {
   const config = readJson(configFile) || {};
   const mcp = readJson(path.join(DEF, 'mcp.json'));
   if (mcp && mcp.mcpServers) config.mcpServers = Object.assign({}, config.mcpServers, mcp.mcpServers);
+  // MCP_ATLASSIAN=0 in .env (the wizard asks) keeps the Atlassian server out of this box
+  if (env.MCP_ATLASSIAN === '0') delete config.mcpServers.atlassian;
   // an OAuth token in .env: skip the first-run login wizard (Claude Code ignores it during onboarding)
   if (env.CLAUDE_CODE_OAUTH_TOKEN) config.hasCompletedOnboarding = true;
   writeJson(configFile, config);
