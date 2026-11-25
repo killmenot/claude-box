@@ -546,6 +546,29 @@ function tailPage(chat, beforeUuid) {
   }
   return { items: out, more: start > 0 ? start : (!entry.atStart ? 1 : 0) };
 }
+// ---------- one-shot shell runs (the "Run" button on code blocks) ----------
+// A fresh bash per run: real shell semantics ( pipes, env, builds) with a clean state and no
+// surprises in a live console. Bounded by time and output size; at most a few at a time.
+const RUN_MAX = 2, RUN_TIMEOUT = 120000, RUN_MAXBUF = 1 << 20;
+let runsActive = 0;
+function runInShell(chat, cmd) {
+  return new Promise((res) => {
+    if (runsActive >= RUN_MAX) { res({ code: -1, out: 'too many runs in progress, try again in a moment', ms: 0 }); return; }
+    runsActive++;
+    const t0 = Date.now();
+    execFile('bash', ['-lc', cmd], { cwd: chat.cwd || WS_ROOT, timeout: RUN_TIMEOUT, maxBuffer: RUN_MAXBUF,
+      env: Object.assign({}, process.env, { TERM: 'dumb' }) }, (e, out, err) => {
+      runsActive--;
+      let code = e && e.code != null ? e.code : (e ? -1 : 0);
+      let text = String(out || '');
+      if (err) text += (text ? '\n' : '') + String(err);
+      if (e && e.killed) text += '\n[timeout after ' + Math.round(RUN_TIMEOUT / 1000) + ' s — killed]';
+      if (text.length > RUN_MAXBUF) text = text.slice(0, RUN_MAXBUF) + '\n…[truncated]';
+      res({ code, out: text.trim(), ms: Date.now() - t0 });
+    });
+  });
+}
+
 // ---------- per-socket handling ----------
 function sanitizeName(s) { return String(s || '').replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 40) || 'chat'; }
 // Launch directory of a transcript: the registry stores Claude's CURRENT cwd (it drifts deeper
@@ -603,6 +626,16 @@ function onConnection(ws) {
         const pg = tailPage(chat, msg.before);
         if (pg.lost) { reply({ ev: 'older', key, items: [], more: 0, lost: true }); return; }
         reply({ ev: 'older', key, items: pg.items, more: pg.more });
+        return;
+      }
+      if (msg.op === 'run') {
+        let chat = mine.get(key);
+        if (!chat && msg.token) { chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key }); }
+        if (!chat) { reply({ ev: 'error', key, text: 'run: session not open' }); return; }
+        const cmd = String(msg.cmd || '').trim().slice(0, 4000);
+        if (!cmd) { reply({ ev: 'error', key, text: 'run: empty command' }); return; }
+        log('shell run:', cmd.slice(0, 120));
+        runInShell(chat, cmd).then((r) => reply({ ev: 'run_result', key, cmd, code: r.code, out: r.out, ms: r.ms }));
         return;
       }
       if (msg.op === 'fork') {
@@ -967,5 +1000,5 @@ function forkFrom(chat, uuid) {
   return { cid: newId, name };
 }
 
-module.exports = { launchDir, sessionTitles, tailPage, forkFrom, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+module.exports = { launchDir, sessionTitles, tailPage, forkFrom, runInShell, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };

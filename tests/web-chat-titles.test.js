@@ -111,3 +111,16 @@ test('forkFrom: copies the prefix up to the chosen message, rewrites sessionId, 
 test('forkFrom: unknown uuid -> error', () => {
   assert.throws(() => wc.forkFrom({ cid, cwd: '/w/x' }, 'nope'), /not found/);
 });
+
+test('runInShell: fresh bash, output captured, bounded', async () => {
+  const r1 = await wc.runInShell({ cwd: '/tmp' }, 'echo hello-run');
+  assert.strictEqual(r1.code, 0);
+  assert.match(r1.out, /hello-run/);
+  assert.ok(r1.ms >= 0);
+  const r2 = await wc.runInShell({ cwd: '/tmp' }, 'echo out; echo err >&2; exit 3');
+  assert.strictEqual(r2.code, 3);
+  assert.match(r2.out, /out/);
+  const r3 = await wc.runInShell({ cwd: '/nowhere-at-all' }, 'echo x');
+  assert.notStrictEqual(r3.code, 0);                                 // a bad cwd must not look like success
+  assert.strictEqual(r3.out, '');
+});
