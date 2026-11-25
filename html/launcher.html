@@ -449,7 +449,8 @@
   .agit{display:flex;gap:9px;align-items:flex-start;padding:7px 12px;cursor:pointer}
   .agit:hover{background:var(--hover)}
   .agdot{margin-top:6px;flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--live)}
-  .agdot.run{background:var(--work);animation:pulse 1s infinite} .agdot.err{background:var(--err)}
+  .agdot.run{background:var(--work);animation:pulse 1s infinite} .agdot.err{background:var(--err)} .agdot.stop{background:var(--stop)}
+  .agdot.run.quiet{background:var(--wait);animation-duration:2.4s}
   .agit .b{min-width:0;flex:1} .agit .nm{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .agit .d{color:var(--mute);font:11.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .setbtn{border:0;background:none;color:var(--mute);font-size:15px;line-height:1;cursor:pointer;padding:2px 4px}
@@ -623,6 +624,24 @@
   .cmdpop .cd{color:var(--slate);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .cmdpop .cempty{padding:8px 10px;color:var(--mute);font-size:13px}
   .cmdhint{font-size:12.5px;color:var(--slate);margin:0 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mdlbtn{flex:0 1 auto;min-width:0;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--line);background:var(--paper);color:var(--slate);border-radius:999px;padding:2px 9px;font:11.5px var(--mono);cursor:pointer}
+  .mdlbtn:hover{color:var(--ink);border-color:var(--slate)}
+  .mdlpop{position:absolute;left:0;bottom:calc(100% + 6px);width:min(380px,100%);max-height:min(460px,60vh);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px -12px rgba(20,22,40,.35);padding:4px;z-index:20}
+  .mdlpop.hidden{display:none}
+  .mdlpop .mh{padding:6px 10px 4px;font-size:12px;color:var(--mute)}
+  .mdlpop .mnote{padding:6px 10px;font-size:13px;color:var(--mute)}
+  .mdlpop .mi{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;cursor:pointer}
+  .mdlpop .mi:hover{background:var(--hover)} .mdlpop .mi.on{background:var(--hover)}
+  .mdlpop .mt{flex:1;min-width:0} .mdlpop .mt b{display:block;font-weight:600;font-size:13.5px;color:var(--ink)}
+  .mdlpop .mt small{display:block;color:var(--slate);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mdlpop .ck{color:var(--iris);font-weight:700}
+  .mdlpop .meff{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-top:1px solid var(--line);margin-top:4px;font-size:13px;color:var(--ink)}
+  .mdlpop .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .mdlpop .seg button{border:0;background:transparent;color:var(--slate);font:12px var(--mono);padding:3px 8px;cursor:pointer}
+  .mdlpop .seg button+button{border-left:1px solid var(--line)}
+  .mdlpop .seg button.on{background:var(--iris);color:#fff}
+  .mdlpop .mcust{padding:6px 6px 4px;border-top:1px solid var(--line);margin-top:4px}
+  .mdlpop .mcust input{width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font:12.5px var(--mono)}
   .cmdhint b{font:600 12.5px var(--mono);color:var(--ink)}
   .box{border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:0 4px 18px -10px rgba(20,22,40,.25);padding:10px 12px 8px}
   .box:focus-within{border-color:var(--focus)}
@@ -1175,11 +1194,12 @@ function buildChat(p){
   c.innerHTML='<div class="log"><div class="inner"></div></div>'+
     '<div class="composer"><div class="wrap"><div class="agbar hidden"></div><div class="banners"></div><div class="perms"></div>'+
     '<div class="box"><div class="voice"><span class="bars"><i></i><i></i><i></i><i></i></span><span class="txt">Listening…</span></div>'+
-    '<div class="cmdpop hidden" role="listbox"></div><div class="cmdhint hidden"></div>'+
+    '<div class="cmdpop hidden" role="listbox"></div><div class="cmdhint hidden"></div><div class="mdlpop hidden" role="dialog" aria-label="Model"></div>'+
     '<div class="atts"></div><textarea rows="1" placeholder="Message Claude…  ( / for commands )"></textarea>'+
     '<div class="bar"><button class="attbtn" type="button" title="Attach files — or paste / drop them here"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button>'+
     '<input type="file" multiple hidden>'+
-    '<span class="stat"><i></i><span></span></span><span class="ctxm hidden" tabindex="0" role="img"></span><span class="barsp"></span>'+
+    '<span class="stat"><i></i><span></span></span><button class="mdlbtn" type="button" title="Model and effort"></button>'+
+    '<span class="ctxm hidden" tabindex="0" role="img"></span><span class="barsp"></span>'+
     (VOICE.supported ? '<button class="langbtn" type="button" title="Voice input language"></button>'+
       '<button class="micbtn" type="button" title="Voice input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>' : '')+
     '<button class="sendbtn stopbtn hidden" type="button" title="Stop (Esc)">■</button>'+
@@ -1190,6 +1210,12 @@ function buildChat(p){
   p.log.addEventListener('scroll', function(){ checkOlder(p); }, {passive:true});
   p.ta=c.querySelector('textarea'); p.go=c.querySelector('.go'); p.stopb=c.querySelector('.stopbtn');
   p.stat=c.querySelector('.stat'); p.ctxm=c.querySelector('.ctxm');
+  p.mdlb=c.querySelector('.mdlbtn'); p.mdlEl=c.querySelector('.mdlpop');
+  p.mdlb.addEventListener('click', function(e){ e.stopPropagation(); mdlToggle(p); });
+  p.mdlEl.addEventListener('click', function(e){ e.stopPropagation(); mdlClick(p, e); });
+  p.mdlEl.addEventListener('keydown', function(e){
+    if(e.key==='Enter' && e.target.name==='mcustom'){ e.preventDefault(); var v=e.target.value.trim(); if(v) mdlPick(p, {model:v}); }
+    else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); mdlClose(p); p.ta.focus(); } });
   p.banners=c.querySelector('.banners'); p.permsEl=c.querySelector('.perms'); p.agbar=c.querySelector('.agbar');
   p.r={tools:{}, live:[], seen:{}};
   function grow(){ p.ta.style.height='auto'; p.ta.style.height=Math.min(p.ta.scrollHeight, innerHeight*0.4)+'px';
@@ -1519,7 +1545,7 @@ function olderIn(p, o){ if(p.olderEl) p.olderEl.classList.remove('loading');
   if(ref) p.log.scrollTop+=ref.getBoundingClientRect().top-y0;
   if(o.lost){ p.more=0; }
   setOlder(p, o.more, o.items);
-  if(!/running|starting|requires_action/.test(p.state)) agentsSettle(p);
+  agentsSettle(p);
   renderAgBar(p);
   requestAnimationFrame(function(){ checkOlder(p); });
 }
@@ -1972,7 +1998,7 @@ function addToolResult(p, b){
     t=t.replace(/^\[image\]$/mg,'').trim();
   }
   // a background agent answers "launched" at once and keeps working: it ends with task_notification
-  if(ag) agentState(p, ag, b.is_error ? 'err' : (ag.bg && /launch|background|async|running/i.test(t||'') ? 'run' : 'done'));
+  if(ag){ agentSet(ag, agentUsage(t)); agentState(p, ag, b.is_error ? 'err' : (ag.bg && /launch|background|async|running/i.test(t||'') ? 'run' : 'done')); }
   if(!t) return;
   var body=d.querySelector('.body');
   body.insertAdjacentHTML('beforeend','<div class="lbl">'+(b.is_error?'error':'result')+'</div><pre class="res">'+
@@ -2032,8 +2058,11 @@ function renderSystem(p, m){
   var ag=agid && p.r.agents[agid];
   if(ag){
     if(st==='task_started'){ (p.r.taskOf=p.r.taskOf||{})[m.task_id]=agid; }
-    if(st==='task_progress' && m.description){ ag.last=String(m.description).split('\n')[0].slice(0,120); agentUpd(p, ag); }
-    if(st==='task_notification') agentState(p, ag, m.status && m.status!=='completed' ? 'err' : 'done');
+    ag.at=Date.now();
+    if(m.usage) agentSet(ag, {tokens:m.usage.total_tokens, tools:m.usage.tool_uses, ms:m.usage.duration_ms});
+    if(st==='task_progress'){ var lt=m.last_tool_name ? String(m.last_tool_name).replace(/^mcp__(?:claude_ai_)?/,'') : '';
+      if(m.summary || lt || m.description) ag.last=String(m.summary || lt || m.description).split('\n')[0].slice(0,120); agentUpd(p, ag); }
+    if(st==='task_notification') agentState(p, ag, !m.status || m.status==='completed' ? 'done' : m.status==='stopped' ? 'stopped' : 'err');
     return;
   }
   var g=p.r.skills && p.r.skills[m.task_id]; if(!g) return;
@@ -2072,7 +2101,8 @@ function agentRow(p, b, into){
     '<div class="body"><details class="aprompt"><summary class="lbl">prompt</summary><pre>'+esc(String(inp.prompt||'').slice(0,20000))+'</pre></details>'+
     '<div class="subfeed"></div></div>';
   var ag={id:b.id, p:p, row:d, feed:d.querySelector('.subfeed'), name:nm, desc:desc, prompt:String(inp.prompt||''),
-          bg:!!inp.run_in_background, state:'run', steps:0, last:'', t0:Date.now()};
+          bg:!!inp.run_in_background, state:'run', steps:0, last:'', t0:MSG_TS||Date.now(), at:MSG_TS||Date.now(),
+          model:'', tokens:null, tools:null, ms:null, msAt:0};
   d.querySelector('.agopen').addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); openAgent(p, ag.id); });
   (p.r.agents=p.r.agents||{})[b.id]=ag; p.r.tools[b.id]=d;
   if(into===p.inner) before(p);
@@ -2080,24 +2110,71 @@ function agentRow(p, b, into){
   if(into===p.inner) scrollEnd(p);
   return ag;
 }
+var AG_STATE={run:'running', err:'failed', stopped:'stopped', done:'done'};
+function fmtTok(n){ return n>=1e6 ? (n/1e6).toFixed(n>=1e7?0:1)+'M' : n>=1e3 ? (n/1e3).toFixed(n>=1e4?0:1)+'k' : String(n); }
+function fmtDur(ms){ var s=Math.max(0,Math.round(ms/1000)); return s<60 ? s+'s' : s<3600 ? Math.floor(s/60)+'m '+('0'+s%60).slice(-2)+'s' : Math.floor(s/3600)+'h '+('0'+Math.floor(s%3600/60)).slice(-2)+'m'; }
+// running · 2m 14s · 18 tools · 48.2k tok · opus-5-5 · Read   (· quiet 1m 05s when nothing came for a while)
+function agentDesc(a){
+  var now=Date.now(), n=Math.max(a.steps, a.tools||0), bits=[AG_STATE[a.state]||a.state];
+  var ms=a.state==='run' ? (a.ms!=null && a.msAt ? a.ms+(now-a.msAt) : now-a.t0) : a.ms;
+  if(ms!=null && ms>0) bits.push(fmtDur(ms));
+  bits.push(n+(n===1?' tool':' tools'));
+  if(a.tokens) bits.push(fmtTok(a.tokens)+' tok');
+  if(a.model) bits.push(a.model.replace(/^claude-/,''));
+  if(a.state==='run'){ if(a.last) bits.push(a.last); if(now-a.at>45000) bits.push('quiet '+fmtDur(now-a.at)); }
+  return bits.join(' · ');
+}
 function agentUpd(p, ag){
-  var s=ag.state==='run' ? 'running' : ag.state==='err' ? 'failed' : 'done';
-  var bits=[s, ag.steps+(ag.steps===1?' step':' steps')]; if(ag.state==='run' && ag.last) bits.push(ag.last);
-  ag.row.querySelector('.ag').textContent=bits.join(' · ');
+  ag.row.querySelector('.ag').textContent=agentDesc(ag);
   if(AGV.ag===ag) agvHead();
   renderAgBar(p);
 }
+// totals from the agent's result text (<usage>…</usage>, as Claude Code appends it)
+function agentUsage(t){
+  var u=/<usage>([\s\S]{0,400}?)<\/usage>/.exec(String(t||'')); if(!u) return {};
+  function num(k){ var r=new RegExp('(?:^|[^a-z_])'+k+'(?:>|:\\s*)(\\d+)').exec(u[1]); return r ? +r[1] : null; }
+  var o={}, tok=num('subagent_tokens'); if(tok==null) tok=num('total_tokens');
+  if(tok!=null) o.tokens=tok; if(num('tool_uses')!=null) o.tools=num('tool_uses'); if(num('duration_ms')!=null) o.ms=num('duration_ms');
+  return o;
+}
+function agentSet(ag, o){
+  ['model','tokens','tools','ms'].forEach(function(k){ if(o[k]!=null && o[k]!=='') ag[k]=o[k]; });
+  if(o.ms!=null) ag.msAt=Date.now();
+}
 function agentState(p, ag, st){
+  if(st!=='run' && ag.state==='run' && ag.msAt) ag.ms+=Date.now()-ag.msAt;   // freeze the clock where it stopped
+  if(st!=='run') ag.msAt=0;
   ag.state=st; ag.row.classList.toggle('pending', st==='run'); ag.row.classList.toggle('err', st==='err');
   agentUpd(p, ag);
 }
+// After history: the server's facts (transcript + the live process) say how each agent ended and
+// which are still running. One with no word either way is not running when the session is not.
 function agentsSettle(p){
-  var a=p.r.agents||{}; Object.keys(a).forEach(function(k){ if(a[k].state==='run') agentState(p, a[k], 'done'); });
+  var a=p.r.agents||{}, f=p.agFacts||{}, live=/running|starting|requires_action|idle/.test(p.state);
+  Object.keys(a).forEach(function(k){
+    var x=f[k], ag=a[k];
+    if(x){ agentSet(ag, {model:x.model, tokens:x.tokens, tools:x.tools});
+      if(x.ms!=null && (x.state!=='run' || ag.ms==null)){ ag.ms=x.ms; ag.msAt=x.state==='run' ? (x.at||Date.now()) : 0; }
+      if(x.at) ag.at=Math.max(ag.at, x.at); }
+    var st=x && x.state ? x.state : ag.state;
+    if(st==='run' && !(live && x)) st='stopped';
+    agentState(p, ag, st);
+  });
 }
+// running agents: the clock and "quiet" tick without new messages
+setInterval(function(){
+  Object.keys(PANES).forEach(function(k){ var p=PANES[k], a=p.r && p.r.agents; if(!a) return;
+    var any=false; Object.keys(a).forEach(function(id){ var ag=a[id]; if(ag.state!=='run') return; any=true;
+      ag.row.querySelector('.ag').textContent=agentDesc(ag); if(AGV.ag===ag) agvHead(); });
+    if(any && p.agbar) [].forEach.call(p.agbar.querySelectorAll('.agit'), function(it){ var ag=a[it.dataset.id]; if(ag) it.querySelector('.d').textContent=agentDesc(ag); });
+  });
+}, 1000);
 function agentFeed(p, ag, m){
   var c=(m.message||{}).content, f=ag.feed, near=f.scrollHeight-f.scrollTop-f.clientHeight<40;
   var host=AGV.ag===ag ? $('agvbody') : null, hnear=host && host.scrollHeight-host.scrollTop-host.clientHeight<60;
   if(typeof c==='string') c=[{type:'text', text:c}];
+  if(m.type==='assistant' && m.message && m.message.model) ag.model=m.message.model;
+  ag.at=Math.max(ag.at, m.ts||Date.now());
   (Array.isArray(c)?c:[]).forEach(function(b){
     if(m.type==='assistant' && b.type==='text' && b.text && b.text.trim()) f.appendChild(el('div','msg asst', md(b.text)));
     else if(m.type==='assistant' && b.type==='tool_use'){
@@ -2113,6 +2190,7 @@ function agentFeed(p, ag, m){
   if(near) f.scrollTop=f.scrollHeight;
   if(hnear) host.scrollTop=host.scrollHeight;
 }
+function agDot(a){ return a.state==='run' ? (Date.now()-a.at>45000 ? ' run quiet' : ' run') : a.state==='err' ? ' err' : a.state==='stopped' ? ' stop' : ''; }
 function agentList(p){
   var a=p.r.agents||{}; return Object.keys(a).map(function(k){ return a[k]; })
     .sort(function(x,y){ return (x.state==='run'?0:1)-(y.state==='run'?0:1) || y.t0-x.t0; });
@@ -2120,17 +2198,20 @@ function agentList(p){
 function renderAgBar(p){
   if(!p.agbar) return;
   var list=agentList(p), run=list.filter(function(a){ return a.state==='run'; }).length;
+  var tok=list.reduce(function(n,a){ return n+(a.tokens||0); }, 0);
   p.agbar.classList.toggle('hidden', !list.length);
   if(!list.length){ p.agbar.innerHTML=''; return; }
   var open=!!p.agbar.querySelector('.agpop:not(.hidden)');
   p.agbar.innerHTML='<button class="agpill'+(run?' run':'')+'" type="button" title="Sub-agents of this session"><i></i>🤖 '+
-    (run ? run+' running' : list.length+(list.length===1?' agent':' agents'))+(run && list.length>run ? ' · '+(list.length-run)+' done' : '')+'</button>'+
+    (run ? run+' running' : list.length+(list.length===1?' agent':' agents'))+(run && list.length>run ? ' · '+(list.length-run)+' done' : '')+
+    (tok ? ' · '+fmtTok(tok)+' tok' : '')+'</button>'+
     '<div class="agpop'+(open?'':' hidden')+'" role="listbox"></div>';
   var pop=p.agbar.lastChild;
   list.forEach(function(a){
-    var it=el('div','agit','<span class="agdot'+(a.state==='run'?' run':a.state==='err'?' err':'')+'"></span><div class="b"><div class="nm"></div><div class="d"></div></div>');
+    var it=el('div','agit','<span class="agdot'+agDot(a)+'"></span><div class="b"><div class="nm"></div><div class="d"></div></div>');
+    it.dataset.id=a.id;
     it.querySelector('.nm').textContent=a.name+(a.desc?' — '+a.desc:'');
-    it.querySelector('.d').textContent=(a.state==='run'?'running':a.state==='err'?'failed':'done')+' · '+a.steps+(a.steps===1?' step':' steps')+(a.state==='run'&&a.last?' · '+a.last:'');
+    it.querySelector('.d').textContent=agentDesc(a);
     it.addEventListener('click', function(){ pop.classList.add('hidden'); openAgent(p, a.id); });
     pop.appendChild(it);
   });
@@ -2144,8 +2225,8 @@ var AGV={ag:null, mark:null, panel:false};
 function agvHead(){
   var a=AGV.ag; if(!a) return;
   $('agvnm').textContent='🤖 '+a.name+(a.desc?' — '+a.desc:'');
-  $('agvd').textContent=(a.state==='run'?'running':a.state==='err'?'failed':'done')+' · '+a.steps+(a.steps===1?' step':' steps')+(a.state==='run'&&a.last?' · '+a.last:'');
-  $('agvdot').className='agdot'+(a.state==='run'?' run':a.state==='err'?' err':'');
+  $('agvd').textContent=agentDesc(a);
+  $('agvdot').className='agdot'+agDot(a);
 }
 function openAgent(p, id){
   var a=p.r.agents && p.r.agents[id]; if(!a) return;
@@ -2237,12 +2318,70 @@ function renderStatus(p){
   var st=p.state, cls={running:'run',starting:'run',requires_action:'wait',idle:'idle'}[st]||'';
   var lbl={running:'working…',starting:'starting…',requires_action:'needs your answer',idle:'ready',stopped:'not running — send a message to resume'}[st]||st;
   if(!p.token && st==='stopped') lbl='new session in '+(p.cwd||'');
-  var bits=[lbl]; if(p.info.model) bits.push(p.info.model.replace(/^claude-/,''));
+  var bits=[lbl];
   if(p.info.cost!=null) bits.push('$'+Number(p.info.cost).toFixed(2));
+  if(p.mdlb){ var cur=mdlCurrent(p); p.mdlb.textContent=mdlName(p, cur)+(p.info.effort ? ' · '+p.info.effort : '');
+    if(p.mdlEl && !p.mdlEl.classList.contains('hidden')) mdlRender(p); }
   p.stat.className='stat '+cls; p.stat.querySelector('span').textContent=bits.join(' · ');
   renderCtx(p);
   p.stopb.classList.toggle('hidden', !(st==='running'||st==='requires_action'||st==='starting'));
 }
+
+// ---------- model picker ----------
+// The list comes from the claude process (supportedModels, cached by the server). A pick applies to
+// this session at once (setModel / effort) and becomes the default for new sessions on this browser.
+function mdlRows(p){ return (p.info && p.info.models) || []; }
+function mdlCurrent(p){
+  var rows=mdlRows(p), pick=p.info.modelPick, m=p.info.model||'';
+  if(pick) return rows.filter(function(r){ return r.value===pick; })[0] || {value:pick, displayName:pick, efforts:[]};
+  var def=rows.filter(function(r){ return r.value==='default'; })[0];
+  if(def && (!m || def.resolvedModel===m)) return def;
+  return rows.filter(function(r){ return r.value!=='default' && (r.resolvedModel===m || r.value===m); })[0] || def || null;
+}
+function mdlName(p, cur){
+  var m=p.info.model||'';
+  if(cur && cur.value==='default') return (m || cur.resolvedModel || 'default').replace(/^claude-/,'');
+  return cur ? cur.displayName : (m ? m.replace(/^claude-/,'') : 'model');
+}
+function mdlRender(p){
+  var rows=mdlRows(p), cur=mdlCurrent(p), h='<div class="mh">Select a model</div>';
+  if(!rows.length) h+='<div class="mnote">Loading the model list…</div>';
+  rows.forEach(function(r, i){
+    var on=cur && cur.value===r.value;
+    h+='<div class="mi'+(on?' on':'')+'" data-i="'+i+'" role="option" aria-selected="'+on+'"><div class="mt"><b>'+esc(r.displayName)+'</b>'+
+       (r.description?'<small>'+esc(r.description)+'</small>':'')+'</div>'+(on?'<span class="ck">✓</span>':'')+'</div>';
+  });
+  var efforts=(cur && cur.efforts) || [];
+  if(efforts.length){
+    h+='<div class="meff"><span>Effort</span><span class="seg">'+efforts.map(function(e){
+      return '<button type="button" data-e="'+e+'" class="'+(p.info.effort===e?'on':'')+'">'+e+'</button>'; }).join('')+'</span></div>';
+  }
+  h+='<div class="mcust"><input name="mcustom" type="text" spellcheck="false" placeholder="Other model id… (Enter)" value="'+
+     esc(cur && !rows.some(function(r){ return r.value===cur.value; }) ? cur.value : '')+'"></div>';
+  p.mdlEl.innerHTML=h;
+}
+function mdlToggle(p){ if(p.mdlEl.classList.contains('hidden')){ cmdClose(p); mdlRender(p); p.mdlEl.classList.remove('hidden'); } else mdlClose(p); }
+function mdlClose(p){ if(p.mdlEl) p.mdlEl.classList.add('hidden'); }
+function mdlClick(p, e){
+  var it=e.target.closest('.mi'), eb=e.target.closest('.meff button');
+  if(it){ var r=mdlRows(p)[+it.dataset.i]; if(r){ mdlPick(p, {model:r.value}); mdlClose(p); } }
+  else if(eb) mdlPick(p, {effort:eb.dataset.e});
+}
+function mdlPick(p, o){
+  var msg={op:'model', key:p.wire};
+  if(o.model!==undefined){ msg.model=o.model; ls('cb.model', o.model); }
+  if(o.effort!==undefined){ msg.effort=o.effort; ls('cb.effort', o.effort); }
+  if(p.token) msg.token=p.token; else msg.cwd=p.cwd;
+  wsSend(msg);
+}
+// a brand-new session starts on the model picked last in this browser
+function mdlDefault(p){
+  var m=ls('cb.model'), e=ls('cb.effort'), o={};
+  if(m && m!=='default' && !p.info.modelPick) o.model=m;
+  if(e && !p.info.effort) o.effort=e;
+  if(o.model!==undefined || o.effort!==undefined) mdlPick(p, o);
+}
+document.addEventListener('click', function(){ Object.keys(PANES).forEach(function(k){ mdlClose(PANES[k]); }); });
 
 // ---------- permission / question cards ----------
 function renderPerm(p, r){
@@ -2303,11 +2442,12 @@ function onEvent(p, o){
       (o.items||[]).forEach(function(m){ renderItem(p,m); });
       setOlder(p, o.more, o.items);
       if(!o.items || !o.items.length) p.inner.appendChild(el('div','note hint', p.token?'(empty session)':'Start the conversation below.'));
-      p.info=o.info||{}; p.consoleActive=!!o.console; renderBanner(p); applyMode(p);
+      if(!p.token && (!o.items || !o.items.length) && !p.mdlInit){ p.mdlInit=true; p.info=o.info||{}; mdlDefault(p); }
+      p.info=o.info||{}; p.agFacts=o.agents||{}; p.consoleActive=!!o.console; renderBanner(p); applyMode(p);
       (o.perms||[]).forEach(function(r){ renderPerm(p,r); });
       if(o.token && o.token!==p.token) rekey(p,o.token);
       setState(p, o.state||'stopped');
-      if(!/running|starting|requires_action/.test(p.state)) agentsSettle(p);
+      agentsSettle(p);
       renderAgBar(p);
       p.ready=true;
       (p.queue||[]).splice(0).forEach(function(q){ p.ta.value=q.t; p.files=q.files; p.voiced=q.voice||''; send(p); });
