@@ -470,13 +470,19 @@ function readerFor(chat) {
 }
 // Consume one more window moving toward the file start, until the collected tail holds at least
 // minPrompts user prompts (or the file start is reached).
+// Agent-heavy sessions go megabytes without a single user prompt, so counting prompts alone made
+// the reader consume whole transcripts (hundreds of MB of JS objects -> OOM-ish heap). Reading is
+// bounded by bytes and items as well: a page may carry fewer prompts than requested.
+const READER_MAX_BYTES = 4 * 1024 * 1024;
+const READER_MAX_ITEMS = 1200;
 function extendBack(entry, chat, minPrompts) {
   const f = transcriptPath(chat.cid, chat.cwd);
   if (!f) { entry.atStart = true; return; }
   let size; try { size = fs.statSync(f).size; } catch (_) { entry.atStart = true; return; }
-  if (entry.file !== f) { Object.assign(entry, { file: f, front: size, items: [], extras: new Map(), times: new Map(), atStart: false }); }
+  if (entry.file !== f) { Object.assign(entry, { file: f, front: size, items: [], extras: new Map(), times: new Map(), atStart: false, read: 0 }); }
   const prompts = () => entry.items.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
-  while (!entry.atStart && prompts() < minPrompts) {
+  const enough = () => prompts() >= minPrompts || entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES;
+  while (!entry.atStart && !enough()) {
     const end = entry.front, start = Math.max(0, end - WINDOW);
     const fd = fs.openSync(f, 'r');
     let buf;
@@ -505,7 +511,8 @@ function extendBack(entry, chat, minPrompts) {
       entry.extras.set(k, v.concat(entry.extras.get(k) || []));
     }
     entry.front = start;
-    if (start <= 0) entry.atStart = true;
+    entry.read += end - start;
+    if (start <= 0 || entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES) entry.atStart = true;
   }
 }
 // The page the browser shows: the last PAGE_PROMPTS prompts counting from the end, or — with
