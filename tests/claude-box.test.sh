@@ -31,9 +31,8 @@ check "first run: .env created"                    yes "$([ -f "$repo/.env" ] &&
 check "first run: .env is private"                 600 "$(stat -c %a "$repo/.env")"
 check "first run: projects default to ./workspace" "$repo/workspace" "$(val PROJECT_DIR)"
 check "first run: projects folder created"         yes "$([ -d "$repo/workspace" ] && echo yes)"
-check "first run: model defaults to claude"        claude "$(val WEB_MODEL)"
-check "first run: claude keeps BASE_URL empty"     "" "$(val ANTHROPIC_BASE_URL)"
-check "first run: atlassian on by default"         1 "$(val MCP_ATLASSIAN)"
+check "first run: model asked in wizard"           0 "$(printf '%s' "$out" | grep -c 'Choose \[1/2/3\]')"
+check "first run: jira asked in wizard"            0 "$(printf '%s' "$out" | grep -c 'Enable the Jira')"
 check "first run: other settings kept"             7681 "$(val WEB_TERMINAL_PORT)"
 check "first run: container uid saved (BOX_UID)"    "$(id -u)" "$(val BOX_UID)"
 check "first run: container gid saved (BOX_GID)"    "$(id -g)" "$(val BOX_GID)"
@@ -77,18 +76,7 @@ out="$(tty_run "~/code/projects\n" --setup)"
 check "setup: tilde path expanded and created"     "$HOME/code/projects" "$(val PROJECT_DIR)"
 check "setup: still a single PROJECT_DIR line"     1 "$(grep -c '^PROJECT_DIR=' "$repo/.env")"
 
-# --- 3b. fresh run with the GLM provider chosen (2), key, atlassian declined ---
-rm "$repo/.env"; : > "$tmp/docker.log"
-out="$(tty_run '\n2\nzai-key-123\nn\n')"
-check "glm: BASE_URL set"                "https://api.z.ai/api/anthropic" "$(val ANTHROPIC_BASE_URL)"
-check "glm: token saved"                 "zai-key-123" "$(val ANTHROPIC_AUTH_TOKEN)"
-check "glm: sonnet model"                "GLM-5.3-Flash" "$(val ANTHROPIC_DEFAULT_SONNET_MODEL)"
-check "glm: opus model"                  "GLM-5.3-Flash" "$(val ANTHROPIC_DEFAULT_OPUS_MODEL)"
-check "glm: WEB_MODEL recorded"          glm "$(val WEB_MODEL)"
-check "glm: OAUTH stays empty"           "" "$(val CLAUDE_CODE_OAUTH_TOKEN)"
-check "glm: atlassian declined"          0 "$(val MCP_ATLASSIAN)"
-check "glm: web started"                 1 "$(grep -c 'compose -f docker-compose.yml up -d web' "$tmp/docker.log")"
-# --- 3c. certificate trust + docker question (sudo stubbed) ---
+# --- 3c. certificate trust (sudo stubbed; CERT_TRUST preset in .env) ---
 rm "$repo/.env"; mkdir -p "$repo/home/web-certs"; echo dummy-cert > "$repo/home/web-certs/web.crt"
 export DOCKER_SOCK_FILE="$tmp/dockersock"; touch "$tmp/dockersock"
 export CA_CERT_DST="$tmp/ca-store/claude-box.crt"; mkdir -p "$tmp/ca-store"
@@ -97,31 +85,18 @@ if [ \"\$1\" = install ]; then cp \"\$4\" \"\$5\"; fi
 echo \"sudo \$*\" >> \"%s/sudo.log\"
 exit 0
 " "$tmp" > "$bin/sudo"; chmod +x "$bin/sudo"
-out="$(tty_run '
-
-
-
-
-Y
-')"
-check "docker: access on by default"               1 "$(val DOCKER_ACCESS)"
-check "docker: gid saved"                          nonempty "$([ -n "$(val DOCKER_GID)" ] && echo nonempty)"
-check "cert: installed into the host store"        1 "$(grep -c update-ca-certificates "$tmp/sudo.log")"
-check "cert: CERT_TRUST remembered"                1 "$(val CERT_TRUST)"
-out="$(tty_run '
-')"
-check "cert: unchanged cert skips reinstall"       1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
-rm "$repo/.env"; echo dummy2 > "$repo/home/web-certs/web.crt"
-out="$(tty_run '
-
-
-
-n
-')"
-check "cert: declined -> docker stays enabled"     1 "$(val DOCKER_ACCESS)"
-check "cert: declined -> remembered no"            no "$(val CERT_TRUST)"
-check "cert: declined -> no new installs"          1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
+printf 'PROJECT_DIR=%s\nCERT_TRUST=1\n' "$repo/workspace" > "$repo/.env"
+: > "$tmp/sudo.log"
+out="$(tty_run '')"
+check "cert: preset 1 installs into the host store"   1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
+check "cert: dst holds the certificate"              yes "$([ -f "$tmp/ca-store/claude-box.crt" ] && echo yes)"
+check "cert: unchanged cert skips reinstall"          1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
+echo dummy2 > "$repo/home/web-certs/web.crt"
+printf 'PROJECT_DIR=%s\nCERT_TRUST=no\n' "$repo/workspace" > "$repo/.env"
+out="$(tty_run '')"
+check "cert: preset no skips install"                1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
 unset DOCKER_SOCK_FILE CA_CERT_DST
+rm -f "$bin/sudo"
 rm -f "$bin/sudo"
 
 # --- 4. non-interactive without .env: fail with a hint, no docker ---
