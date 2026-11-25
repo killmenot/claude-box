@@ -212,24 +212,31 @@ iface="$(env_get WEB_TERMINAL_INTERFACE)"; iface="${iface:-127.0.0.1}"
 host="$iface"
 [ "$iface" = 127.0.0.1 ] && host="localhost"
 [ "$iface" = 0.0.0.0 ] && host="$(hostname -I 2>/dev/null | awk '{print $1}')" && host="${host:-localhost}"
-if [ "$(env_get WEB_TLS)" = 0 ]; then url="http://${host}:${port}"; url_note=""
-else url="https://${host}:${tls_port}"; url_note="   (self-signed; enables clipboard and notifications)"; fi
-# A one-time sign-in link: the key goes to ./home/.claude (the box's own home, private), the
-# browser that opens the link within 15 minutes is signed in and the key is used up.
-signin_link() {
+# Both addresses are printed when TLS is on: https (self-signed, the browser warns until the
+# cert is trusted) and plain http, which needs no cert (on localhost it is a secure context too).
+http_url="http://${host}:${port}"
+if [ "$(env_get WEB_TLS)" = 0 ]; then url="$http_url"; url_note=""; alt_url=""
+else url="https://${host}:${tls_port}"; url_note="   (self-signed cert; enables clipboard and notifications)"
+  alt_url="$http_url"; fi
+alt_note="   (plain http, no certificate warning)"
+# A one-time sign-in key: it goes to ./home/.claude (the box's own home, private), the browser
+# that opens a link with it within 15 minutes is signed in and the key is used up. One key serves
+# both addresses, so either link works, but only once.
+signin_links() {
   local key
   mkdir -p ./home/.claude
   key="$(head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-32)"
   ( umask 077; printf '%s\n' "$key" > ./home/.claude/web-login-key )
-  printf '%s/?key=%s' "$url" "$key"
+  echo "  ${url}/?key=${key}"
+  [ -z "$alt_url" ] || echo "  ${alt_url}/?key=${key}"
 }
 # a login exists: set in the UI (web-auth.json) or the old WEB_TERMINAL_PASSWORD in .env
 has_login() { [ -n "$(env_get WEB_TERMINAL_PASSWORD)" ] || grep -q '"hash"' ./home/.claude/web-auth.json 2>/dev/null; }
 
 case "$action" in
   login)
-    echo "Sign in to claude-box (one-time link, valid 15 minutes):"
-    echo "  $(signin_link)"
+    echo "Sign in to claude-box (one-time link, valid 15 minutes; either address):"
+    signin_links
     exit 0
     ;;
   stop)
@@ -293,11 +300,12 @@ WEB_TUNNEL="$([ "$tunnel" = 1 ] && echo 1 || true)" dc up -d ${recreate[@]+"${re
 echo
 echo "claude-box is up:"
 echo "  ${url}${url_note}"
+[ -z "$alt_url" ] || echo "  ${alt_url}${alt_note}"
 echo "  network: ${bind_name}"
 echo
-if has_login; then echo "Sign in with your login and password, or on this computer with this one-time link (15 min):"
-else echo "Open this one-time link to sign in (15 min); the page then asks you to pick a login and password:"; fi
-echo "  $(signin_link)"
+if has_login; then echo "Sign in with your login and password, or on this computer with a one-time link (15 min, either address):"
+else echo "Open a one-time link to sign in (15 min, either address); the page then asks you to pick a login and password:"; fi
+signin_links
 
 if [ "$tunnel" = 1 ]; then
   if [ -n "$(env_get NGROK_AUTHTOKEN)" ]; then echo "Bringing up a public tunnel (ngrok)…"

@@ -43,6 +43,7 @@ key="$(cat "$key_file" 2>/dev/null)"
 check "first run: one-time key written"            32 "${#key}"
 check "first run: key file is private"             600 "$(stat -c %a "$key_file")"
 check "first run: prints the sign-in link"         1 "$(printf '%s' "$out" | grep -c "https://localhost:8443/?key=$key")"
+check "first run: http link with the same key"     1 "$(printf '%s' "$out" | grep -c "http://localhost:7681/?key=$key")"
 check "first run: says the login is picked in the UI" 1 "$(printf '%s' "$out" | grep -c 'pick a login and password')"
 
 # --- 2. second run: nothing to ask, a fresh key every start ---
@@ -53,7 +54,7 @@ check "second run: no auth hint"                   0 "$(printf '%s' "$out" | gre
 check "second run: web started"                    1 "$(grep -c 'up -d web' "$tmp/docker.log")"
 check "second run: a new key"                      no "$([ "$(cat "$key_file")" = "$key" ] && echo yes || echo no)"
 check "second run: prints the https address"       2 "$(printf '%s' "$out" | grep -c 'https://localhost:8443')"   # the address + the sign-in link
-check "second run: no plain http address"          0 "$(printf '%s' "$out" | grep -c 'http://localhost')"
+check "second run: plain http address too"         2 "$(printf '%s' "$out" | grep -c 'http://localhost:7681')"    # the address + the sign-in link
 printf 'WEB_TLS=0\n' >> "$repo/.env"
 out="$(tty_run '')"
 check "TLS off: prints the http address instead"   1 "$(printf '%s' "$out" | grep -c 'http://localhost:7681/?key=')"
@@ -63,7 +64,7 @@ sed -i '/^WEB_TLS=0$/d' "$repo/.env"
 # --login: a fresh link, docker untouched
 : > "$tmp/docker.log"
 out="$(bash "$repo/claude-box" --login </dev/null 2>&1)"
-check "--login: prints a link"                     1 "$(printf '%s' "$out" | grep -c "?key=$(cat "$key_file")")"
+check "--login: https and http links, one key"     2 "$(printf '%s' "$out" | grep -c "?key=$(cat "$key_file")")"
 check "--login: docker untouched"                  0 "$(wc -l < "$tmp/docker.log" | tr -d ' ')"
 # --tunnel without any login: refused, the UI still comes up locally
 out="$(tty_run '' --tunnel)"

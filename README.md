@@ -35,8 +35,10 @@ The old `--web` / `--build` flags are still accepted and do the same as a plain 
 1. creates `.env` from `.env.example` if there is none (tokens and the rest live there);
 2. asks for the **projects folder** — the host folder with your projects, mounted as `/workspace`
    (default `workspace/` next to the script, git-ignored, created if missing) and saves it as `PROJECT_DIR`;
-3. prints a **one-time sign-in link** (`https://localhost:8443/?key=…`, valid 15 minutes, works once).
-   Open it: the browser is signed in, and the first visit asks for a **login and password** (for your
+3. prints a **one-time sign-in link** (`https://localhost:8443/?key=…`, valid 15 minutes, works once),
+   plus the same key on plain http (`http://localhost:7681/?key=…`): the https one uses a self-signed
+   certificate the browser warns about until you trust it, the http one has no warning (localhost is a
+   secure context either way). Open either: the browser is signed in, and the first visit asks for a **login and password** (for your
    phone, other computers and the public tunnel), then offers to **connect GitHub** (the same device
    code as `gh auth login --web`; optional, also in Settings).
 
