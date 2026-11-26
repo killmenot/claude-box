@@ -1,7 +1,7 @@
 ---
 name: pr-review
-description: Full pull request review. Collects every project rule (CLAUDE.md files, .claude/, AGENTS.md, contributing and lint conventions), checks PR hygiene, runs the project's real tests/lint/typecheck, runs code-review plus three agents (rules compliance; task intent and rollout needs; the team reviewers' recurring remarks), re-verifies every finding independently, skips what others already said, explains the result in the user's language and, only after an explicit "yes", publishes short review comments and approves. Use when the user asks to review a pull request ("review this PR", "check it before merge", "what should I comment", in any language) or invokes /pr-review.
-argument-hint: "<PR url | PR number | branch> [--level high|xhigh|max] [--no-run] [--refresh-habits] [--auto]"
+description: Full pull request review. Also reviews your own branch before the PR is opened (local mode: committed and uncommitted changes, checks, a draft PR). Collects every project rule (CLAUDE.md files, .claude/, AGENTS.md, contributing and lint conventions), checks PR hygiene, runs the project's real tests/lint/typecheck, runs code-review plus three agents (rules compliance; task intent and rollout needs; the team reviewers' recurring remarks), re-verifies every finding independently, skips what others already said, explains the result in the user's language and, only after an explicit "yes", publishes short review comments and approves. Use when the user asks to review a pull request ("review this PR", "check it before merge", "what should I comment", in any language) or invokes /pr-review.
+argument-hint: "<PR url | PR number | branch> [--level high|xhigh|max] [--no-run] [--refresh-habits] [--local] [--auto]"
 ---
 
 # PR review: rules + checks + code-review + intent/rollout + reviewer habits + verification
@@ -11,7 +11,10 @@ implements and what the team's reviewers usually ask for; plus what the rollout 
 user in their language, and — only when the user says so — published as short English review comments.
 
 Arguments: `$ARGUMENTS`
-- target: PR URL, PR number (in the current repo) or branch. Empty → the current branch's PR or diff.
+- target: PR URL, PR number (in the current repo) or branch. Empty → the current branch: its PR if one
+  is open, otherwise **local mode** — a review of your own work before you push and open the PR (see
+  "Local mode" below). `--local` forces local mode even when a PR exists (e.g. to check new local
+  commits before pushing them).
 - `--level <lvl>`: code-review effort, default `high`. `xhigh`/`max` only when the user asked for it.
 - `--no-run`: skip Step 2 (running tests/lint/typecheck).
 - `--refresh-habits`: rebuild the reviewer-habits cache even if it is fresh.
@@ -26,6 +29,33 @@ Hard rules for the whole flow:
 - Every PR or issue key you mention to the user is a clickable link with its title in parentheses.
 - Follow the user's own `~/.claude/CLAUDE.md` where it is stricter than this file.
 - Nothing that leaves the machine mentions Claude, AI or a tool that wrote it.
+
+## Local mode (no PR yet) — what changes
+
+Used for the current branch when it has no open PR, or with `--local`. Same review, adjusted:
+- Code: the current folder as it is — committed work on the branch **plus** uncommitted and staged
+  changes (`git diff <merge-base>` covers both; list untracked files with `git status --porcelain` and
+  include new source files). Base: the branch it will go into — the repo's default branch or the one
+  named in the rules/task (e.g. `develop`); `git fetch` it first and use `git merge-base origin/<base> HEAD`.
+  Never switch branches, stash, commit or reset here.
+- In a task folder that holds several repos (e.g. `/workspace/tasks/<task>/<repo>/`), review every repo
+  there that has changes against its base, one report section per repo (or the one the user named).
+- Issue: from the branch name, commit messages or the task folder's `.task.json`.
+- Step 0 items 3–4: no PR comments to read; skip.
+- Step 1b hygiene: commit messages (AI traces, issue key, convention), fixup/wip commits to squash, how
+  far behind `origin/<base>` the branch is and whether it merges cleanly (`git merge-tree --write-tree
+  origin/<base> HEAD`), uncommitted files that would be left out, files that should not be committed
+  (secrets, `.env`, local configs, large generated files, debug code).
+- Step 2: run the checks on the working tree (this is the main value before a push — the pre-push hook
+  and CI will run the same).
+- Step 3 D (reviewer habits) works the same: it tells what the team will ask once the PR is open.
+- Report: title "Pre-PR review: <branch> → <base>" and a verdict "ready to open a PR" / "fix first".
+  Instead of "Proposed comments", give **Fix before the PR** (numbered, with the fix) and a **draft PR**:
+  title in the repo's convention with the issue key, and a description following the PR template (what
+  and why, how it was tested, rollout notes from Step 3 C), in English, no AI mentions.
+- Step 6 instead: on the user's command fix the chosen items (then re-run the checks), commit following
+  the repo's convention, push and open the PR with the draft (`gh pr create --base <base> --title …
+  --body-file …`, `--draft` if the user says so). Each of these only when the user asks.
 
 ## Step 0 — Context and the PR itself
 
