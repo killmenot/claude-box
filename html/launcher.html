@@ -1194,7 +1194,15 @@ var MAXCODE=3;        // Code tabs kept loaded (each is a VS Code window with it
 var MAXCONSOLES=8;     // console iframes kept warm (each holds a websocket + a tmux client)
 var newSeq=0;
 var CLOSED=JSON.parse(ls('cb.closed')||'{}');
-var CATS={cats:[], map:{}};   // sidebar categories (server-side, shared by all devices)
+var CATS={cats:[], map:{}};
+// The system category: every session with activity in the last ACTIVE_DAYS shows up here as well as
+// in its own place. It can be renamed and moved like any category, but not deleted or dropped onto.
+var ACTIVE_CAT='__active', ACTIVE_DAYS=2;
+function ensureActiveCat(){
+  if(!CATS.cats.some(function(c){ return c.id===ACTIVE_CAT; })) CATS.cats.unshift({id:ACTIVE_CAT, name:'Active ('+ACTIVE_DAYS+' days)'});
+  Object.keys(CATS.map).forEach(function(k){ if(CATS.map[k]===ACTIVE_CAT) delete CATS.map[k]; });
+}
+ensureActiveCat();   // sidebar categories (server-side, shared by all devices)
 var DRAGGING=false;
 var views=$('views');
 
@@ -3001,11 +3009,13 @@ function renderList(force){
        '<span class="nm">'+(p.shell?'&gt;_ Terminal':p.title?esc(p.title):'New session')+(p.cwd&&!p.title?' · '+esc(base(p.cwd)):'')+'</span></div>'; });
   // user categories (in their saved order); members newest first
   h+='<div class="sectlbl">Categories<button type="button" data-act="newcat" title="New category">＋</button></div>';
-  if(!CATS.cats.length) h+='<div class="drop zone" data-cat="__new">Drag a session here to create a category</div>';
+  if(!CATS.cats.some(function(c){ return c.id!==ACTIVE_CAT; })) h+='<div class="drop zone" data-cat="__new">Drag a session here to create a category</div>';
   CATS.cats.forEach(function(c){
-    var arr=(inCat[c.id]||[]).slice().sort(function(a,b){ return (b.lastActivity||0)-(a.lastActivity||0); });
-    h+='<div class="zone" data-cat="'+esc(c.id)+'">'+group('c:'+c.id, c.name, c.name, arr, false, c.id)+
-       (arr.length||isClosed('c:'+c.id,false)?'':'<div class="drop">Drop sessions here</div>')+'</div>';
+    var sys=c.id===ACTIVE_CAT;
+    var arr=(sys ? rows.filter(function(s){ return now-(s.lastActivity||0) < ACTIVE_DAYS*86400; }) : (inCat[c.id]||[]))
+      .slice().sort(function(a,b){ return (b.lastActivity||0)-(a.lastActivity||0); });
+    h+='<div class="zone'+(sys?' sys':'')+'" data-cat="'+esc(c.id)+'">'+group('c:'+c.id, c.name, sys?'Sessions with activity in the last '+ACTIVE_DAYS+' days (they stay in their own place too)':c.name, arr, false, c.id)+
+       (arr.length||isClosed('c:'+c.id,false)?'':'<div class="drop">'+(sys?'Nothing in the last '+ACTIVE_DAYS+' days':'Drop sessions here')+'</div>')+'</div>';
   });
   // everything else: by folder, then "Older"
   var recent=rest.filter(function(s){ return s.live || now-(s.lastActivity||0)<RECENT_SEC; });
@@ -3031,7 +3041,7 @@ function group(id, label, tip, arr, defClosed, catId){
         (catId?'<span class="acts"><button type="button" class="mv" data-act="catup" data-cat="'+esc(catId)+'" title="Move up">↑</button>'+
                '<button type="button" class="mv" data-act="catdown" data-cat="'+esc(catId)+'" title="Move down">↓</button>'+
                '<button type="button" data-act="rencat" data-cat="'+esc(catId)+'" title="Rename">✎</button>'+
-               '<button type="button" data-act="delcat" data-cat="'+esc(catId)+'" title="Delete category">✕</button></span>':'')+'</div>';
+               (catId===ACTIVE_CAT?'':'<button type="button" data-act="delcat" data-cat="'+esc(catId)+'" title="Delete category">✕</button>')+'</span>':'')+'</div>';
   if(closed) return h;
   arr.forEach(function(s){
     var cls=statusClass(s), dn=dispName(s);
@@ -3155,12 +3165,12 @@ inboxLoad(); inboxPoll();
 // ---------- categories: storage + actions ----------
 function loadCats(){
   return fetch('categories').then(function(r){ return r.ok?r.json():null; }).then(function(o){
-    if(o && o.cats){ CATS={cats:o.cats, map:o.map||{}}; renderList(true); } }).catch(function(){});
+    if(o && o.cats){ CATS={cats:o.cats, map:o.map||{}}; ensureActiveCat(); renderList(true); } }).catch(function(){});
 }
 function saveCats(){
   renderList(true);
   fetch('categories',{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(CATS)})
-    .then(function(r){ return r.ok?r.json():null; }).then(function(o){ if(o&&o.cats){ CATS=o; renderList(true); } })
+    .then(function(r){ return r.ok?r.json():null; }).then(function(o){ if(o&&o.cats){ CATS=o; ensureActiveCat(); renderList(true); } })
     .catch(function(){ alert('Failed to save categories'); });
 }
 function newCategory(thenAssign){
@@ -3172,6 +3182,7 @@ function newCategory(thenAssign){
 }
 function assign(tok, catId){
   if(catId==='__new'){ newCategory(tok); return; }
+  if(catId===ACTIVE_CAT) return;                 // filled automatically
   if(catId) CATS.map[tok]=catId; else delete CATS.map[tok];
   saveCats();
 }
@@ -3181,6 +3192,7 @@ function renameCategory(id){
   c.name=name.slice(0,80); saveCats();
 }
 function deleteCategory(id){
+  if(id===ACTIVE_CAT) return;
   var c=CATS.cats.filter(function(x){ return x.id===id; })[0]; if(!c) return;
   if(!confirm('Delete category "'+c.name+'"? Its sessions go back to the folder list.')) return;
   CATS.cats=CATS.cats.filter(function(x){ return x.id!==id; });
@@ -3220,7 +3232,7 @@ var menuEl=$('menu');
 function openMenu(tok, anchor){
   var cur=CATS.map[tok]||'';
   var h='<button type="button" data-act="rename">✎ Rename…</button><button type="button" data-act="wire">🔍 Model traffic &amp; actions</button><hr><div class="mh">Move to</div>';
-  CATS.cats.forEach(function(c){ h+='<button type="button" data-cat="'+esc(c.id)+'"'+(cur===c.id?' class="cur"':'')+'>'+esc(c.name)+'</button>'; });
+  CATS.cats.forEach(function(c){ if(c.id===ACTIVE_CAT) return; h+='<button type="button" data-cat="'+esc(c.id)+'"'+(cur===c.id?' class="cur"':'')+'>'+esc(c.name)+'</button>'; });
   h+='<button type="button" data-cat=""'+(cur?'':' class="cur"')+'>No category</button><hr>'+
      '<button type="button" data-cat="__new">＋ New category…</button>';
   menuEl.innerHTML=h; menuEl.dataset.tok=tok; menuEl.dataset.mode='session'; menuEl.classList.remove('sessm'); menuEl.style.display='block';
@@ -3277,7 +3289,7 @@ listEl0.addEventListener('dragover', function(e){
     var r=cz.getBoundingClientRect(); setIns(cz, e.clientY > r.top + r.height/2);
     return;
   }
-  if(!dragTok) return; var z=e.target.closest('.zone'); if(!z) { setOver(null); return; }
+  if(!dragTok) return; var z=e.target.closest('.zone'); if(!z || z.getAttribute('data-cat')===ACTIVE_CAT) { setOver(null); return; }
   e.preventDefault(); try{ e.dataTransfer.dropEffect='move'; }catch(_){} setOver(z);
 });
 listEl0.addEventListener('dragleave', function(e){ if(!listEl0.contains(e.relatedTarget)) setOver(null); });
@@ -3290,6 +3302,7 @@ listEl0.addEventListener('drop', function(e){
   }
   var z=e.target.closest('.zone'); if(!dragTok || !z) return; e.preventDefault();
   var tok=dragTok, cat=z.getAttribute('data-cat'); endDrag();
+  if(cat===ACTIVE_CAT) return;
   if((CATS.map[tok]||'')!==cat) assign(tok, cat);
 });
 function endDrag(){ dragTok=null; dragCat=null; DRAGGING=false; setOver(null); setIns(null);
