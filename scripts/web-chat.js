@@ -1043,7 +1043,12 @@ async function stopByToken(token) {
   for (const c of CHATS) if (c.token === token) await c.stop();
 }
 
-async function info() { await sdkReady; return { enabled: !!sdk, error: loadError }; }
+// workspaceHost: where /workspace lives on the host (PROJECT_DIR from the env file), so the
+// launcher can offer "open in VS Code" for file links when the browser runs on that machine
+async function info() {
+  await sdkReady;
+  return { enabled: !!sdk, error: loadError, workspace: WS_ROOT, workspaceHost: process.env.PROJECT_DIR || '' };
+}
 
 // ---------- resume /loop-style sessions after a restart ----------
 // A self-paced loop lives in the claude process: each tick ends with ScheduleWakeup(delay, prompt)

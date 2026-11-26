@@ -16,7 +16,7 @@ function lift(name, until) {
   const end = html.indexOf(until, start + 1);
   return html.slice(start, end);
 }
-const ctx = { PANES: { a: { cwd: '/workspace/proj' } }, ACTIVE: 'a' };
+const ctx = { PANES: { a: { cwd: '/workspace/proj' } }, ACTIVE: 'a', WS_ROOT: '/workspace', WS_HOST: '', CODE_ON: false };
 vm.createContext(ctx);
 vm.runInContext([
   html.slice(html.indexOf('function esc('), html.indexOf('\n', html.indexOf('function esc('))),
@@ -39,8 +39,10 @@ function assertSafe(out, input) {
     assert.ok(ALLOWED.has(m[1].toLowerCase()), 'unexpected <' + m[1] + '> for ' + input + ':\n' + out);
     const attrs = m[2].trim();
     if (m[1].toLowerCase() === 'a' && !m[0].startsWith('</')) {
-      // links; image links (class="mdimg") and image-path code links also carry a title
-      assert.ok(['href="" target="" rel=""', 'href="" target="" rel="" title=""', 'class="" href="" target="" rel="" title=""'].includes(attrs),
+      // links; image links (class="mdimg") and image-path code links also carry a title; file links
+      // carry their workspace path (data-ws), the VS Code icon next to one has no target
+      assert.ok(['href="" target="" rel=""', 'href="" target="" rel="" title=""', 'class="" href="" target="" rel="" title=""',
+        'href="" target="" rel="" data-ws=""', 'class="" href="" title=""'].includes(attrs),
         'extra attributes on <a> for ' + input + ':\n' + out);
     } else if (m[1].toLowerCase() === 'img') {
       assert.strictEqual(attrs, 'src="" alt="" loading=""', 'attributes on <img> for ' + input + ':\n' + out);
@@ -48,8 +50,10 @@ function assertSafe(out, input) {
       assert.ok(attrs === '' || attrs === '/', 'attributes on <' + m[1] + '> for ' + input + ':\n' + out);
     }
   }
-  // the href value itself: always http(s), never broken out of
-  for (const h of out.matchAll(/<a (?:class="mdimg" )?href="([^"]*)"/g)) assert.match(h[1], /^(https?:\/\/|workspace\/image\?p=|data:image\/)/);
+  // the href value itself: http(s), the box's own file routes or a VS Code file link, never broken out of
+  for (const h of out.matchAll(/<a (?:class="(?:mdimg|vsc)" )?href="([^"]*)"/g)) {
+    assert.match(h[1], /^(https?:\/\/|workspace\/(image|file)\?p=|data:image\/|vscode:\/\/file\/)/);
+  }
   for (const h of out.matchAll(/<img src="([^"]*)"/g)) assert.match(h[1], /^(https?:\/\/|workspace\/image\?p=|data:image\/)/);
 }
 
@@ -73,6 +77,11 @@ const PAYLOADS = [
   '![x](/tmp/a.png" onerror="alert(1))',
   '![x](data:text/html,<script>alert(1)</script>)',
   '`/tmp/a"onerror=alert(1).png`',
+  '[x](a.md" onclick="alert(1))',
+  '[x](<a.md"onclick=alert(1)>)',
+  '[x](%22%20onclick%3D%22alert(1).md)',
+  '[x](vbscript:msgbox)',
+  '[x](//evil.example/a.md)',
 ];
 
 test('pictures: markdown images and image paths in code', () => {
@@ -112,4 +121,40 @@ test('ordinary markdown still renders', () => {
   assert.strictEqual(mdInline('[`cmd`](https://example.com)'),
     '<a href="https://example.com" target="_blank" rel="noopener"><code>cmd</code></a>');
   assert.strictEqual(mdInline('a < b & c > d'), 'a &lt; b &amp; c &gt; d');
+});
+
+test('file links: paths in the workspace open in the launcher, anything else stays text', () => {
+  assert.strictEqual(mdInline('[r.md](tmp/cur/r.md)'),
+    '<a href="workspace/file?p=proj%2Ftmp%2Fcur%2Fr.md" target="_blank" rel="noopener" data-ws="proj/tmp/cur/r.md">r.md</a>');
+  assert.match(mdInline('[d](tmp/cur/)'), /data-ws="proj\/tmp\/cur"/);
+  assert.match(mdInline('[x](../other/x.ts#L42)'), /data-ws="other\/x\.ts"/);
+  assert.match(mdInline('[x](/workspace/a/b.md)'), /data-ws="a\/b\.md"/);
+  assert.match(mdInline('[x](file:///workspace/a%20b.md)'), /data-ws="a b\.md"/);
+  assert.match(mdInline('[`f.md`](./f.md)'), /data-ws="proj\/f\.md"><code>f\.md<\/code><\/a>/);
+  // outside the workspace, other schemes, anchors: plain text as before
+  for (const t of ['[x](/etc/passwd)', '[x](../../etc/passwd)', '[x](#top)', '[x](mailto:a@b.c)', '[x](javascript:alert(1))']) {
+    assert.doesNotMatch(mdInline(t), /<a /, t);
+  }
+});
+
+test('file links: a VS Code icon only when the host folder is known', () => {
+  assert.doesNotMatch(mdInline('[r](r.md)'), /vscode:/);
+  ctx.WS_HOST = '/Users/me/My Projects/';
+  try {
+    const out = mdInline('[r](sub/r.md#L7) and [w](/workspace)');
+    assert.match(out, /<a class="vsc" href="vscode:\/\/file\/Users\/me\/My%20Projects\/proj\/sub\/r\.md:7" title="[^"]+">/);
+    assert.match(out, /href="vscode:\/\/file\/Users\/me\/My%20Projects"/);
+    for (const p of PAYLOADS) assertSafe(mdInline(p), p);
+  } finally { ctx.WS_HOST = ''; }
+});
+
+test('file links: with the VS Code of the box (--vscode) the icon opens the VS Code tab of the session', () => {
+  ctx.CODE_ON = true; ctx.WS_HOST = '/Users/me/ws';
+  try {
+    const out = mdInline('[r](sub/r.md#L7)');
+    assert.match(out, /<a class="vsc" href="#" data-code="proj\/sub\/r\.md" data-line="7" title="Open in VS Code">/);
+    assert.match(out, /data-ws="proj\/sub\/r\.md" data-line="7"/);
+    assert.doesNotMatch(out, /vscode:/);
+    for (const p of PAYLOADS) assertSafe(mdInline(p), p);
+  } finally { ctx.CODE_ON = false; ctx.WS_HOST = ''; }
 });
