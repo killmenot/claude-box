@@ -326,6 +326,8 @@ class Chat {
     // a task folder: each of its repos is an extra directory, so their CLAUDE.md and skills load
     const repoDirs = taskDirs(this.cwd); this.repoDirs = repoDirs.join('\n');
     if (repoDirs.length) env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1';
+    // which window of the box browser Claude's playwright tools get (web-browser.js resolves the name)
+    env.CB_SESSION = this.token || this.name;
     this.wire = wire ? await wire.begin('chat', this.name, env, { token: this.token, cid: this.cid, cwd: this.cwd })
       : { id: null, env, update() {}, finish() {} };
     const options = {

@@ -28,6 +28,7 @@ Guidance for Claude Code (and other agents) working in this repository.
   `scripts/cb-mcp.js` — the box's own MCP server (`claude-box`): `show_artifact` for the artifact panel; `scripts/web-artifact.js` serves those files sandboxed at `/artifact/`.
   `scripts/web-browser.js` — the session's Browser tab: one Chromium for the box (only with `./claude-box --browser`) on Xvfb, shown via x11vnc on a unix socket + noVNC at `/browser/`; Claude's playwright MCP drives it over CDP.
   `scripts/web-archive.js` — archive / restore / delete a session with its own folder (tasks/ or tmp/ only, losses confirmed first) and the Storage list (`/sessions/*`).
+  `scripts/web-cdp-filter.js` — one session's DevTools view of the box browser: only its own window's tabs (web-browser.js serves it at `127.0.0.1:9334/s/<session>`).
   `scripts/web-context.js` — the session's context strip: PRs, Slack threads and Jira issues found in its transcript and task folder, with facts from gh and the Today snapshot (`/context`).
   `scripts/web-code.js` — the session's Code tab: code-server (only with `./claude-box --vscode`) on a private unix socket, proxied at `/code/`.
   `scripts/claude-default.sh` — starts console `claude` with the default model and, in a task folder, its repos as `--add-dir`.

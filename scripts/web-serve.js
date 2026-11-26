@@ -102,10 +102,15 @@ function seedDefaults() {
   if (mcp && mcp.mcpServers) {
     const servers = {};
     for (const [k, v] of Object.entries(mcp.mcpServers)) servers[k] = v && v.url ? Object.assign({}, v, { url: expandUrl(v.url) }) : v;
-    // --browser: Claude's playwright tools drive the box's own Chromium (the Browser tab), not a browser of their own
-    if (env.WEB_BROWSER === '1' && servers.playwright && Array.isArray(servers.playwright.args)) {
-      servers.playwright = Object.assign({}, servers.playwright, { args: servers.playwright.args.filter((a, i, l) => a !== '--cdp-endpoint' && l[i - 1] !== '--cdp-endpoint')
-        .concat(['--cdp-endpoint', 'http://127.0.0.1:' + (env.CB_BROWSER_CDP_PORT || '9333')]) });
+    // --browser: Claude's playwright tools drive the box's own Chromium (the Browser tab), not a browser of
+    // their own, and see only their session's window there (web-browser.js): the endpoint names the
+    // session from CB_SESSION, which a chat (web-chat.js) or a console (claude-default.sh) sets. A shell
+    // reads it when the server starts, so one config serves every session.
+    if (env.WEB_BROWSER === '1' && servers.playwright && Array.isArray(servers.playwright.args) && servers.playwright.command) {
+      const own = servers.playwright.args.filter((a, i, l) => a !== '--cdp-endpoint' && l[i - 1] !== '--cdp-endpoint');
+      servers.playwright = Object.assign({}, servers.playwright, { command: 'sh', args: ['-c',
+        'exec "$0" "$@" --cdp-endpoint "http://127.0.0.1:' + (env.CB_BROWSER_SESSION_PORT || '9334') + '/s/${CB_SESSION:-console}"',
+        servers.playwright.command].concat(own) });
     }
     config.mcpServers = Object.assign({}, config.mcpServers, servers);
   }

@@ -36,6 +36,9 @@ const webGuard = require('./web-guard.js');
 const code = require('./web-code.js');
 const artifact = require('./web-artifact.js');
 const browser = require('./web-browser.js');
+// Claude's playwright tools name their session by token, or (a new chat, a console) by the chat's or
+// tmux session's name; the Browser tab uses the token
+browser.setKeyResolver((k) => { try { const r = registry.list().find((x) => x.token === k || x.name === k || x.tmuxSession === k); return r ? r.token : k; } catch (_) { return k; } });
 const context = require('./web-context.js');
 const guard = webGuard.makeGuard();
 
@@ -197,7 +200,7 @@ function archiveReady() {
   archiveWired = true;
   archive.init({ registry, tasks, transcriptPath: (cid, cwd) => (chat && chat.transcriptPath ? chat.transcriptPath(cid, cwd) : null),
     // the chat process, and the console's tmux session if this session runs there
-    stop: (tok) => Promise.resolve(chat && chat.stopByToken(tok)).catch(() => {}).then(() => {
+    stop: (tok) => Promise.resolve(chat && chat.stopByToken(tok)).catch(() => {}).then(() => browser.closeWindows(tok)).catch(() => {}).then(() => {
       let name = null; try { name = registry.owns(tok); } catch (_) {}
       if (name) return new Promise((r) => require('child_process').execFile('tmux', ['kill-session', '-t', '=' + name], () => r()));
     }) });
@@ -232,7 +235,7 @@ const handler = (req, res) => {
     if (path === '/browser/status') { browser.status().then((st) => json(res, 200, st)); return; }
     if (path === '/browser/open' && req.method === 'POST') {             // a link from the context strip or the chat
       if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
-      readJson(req, 8192, (o) => { browser.openUrl(o && o.url).then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message })); });
+      readJson(req, 8192, (o) => { browser.openUrl(o && o.url, o && o.id).then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message })); });
       return;
     }
     if (path === '/context') {                                             // the session's PRs, Slack threads, Jira issues
@@ -245,6 +248,11 @@ const handler = (req, res) => {
       if (!/^\/workspace(\/|$)/.test(cwd)) cwd = '';
       try { items = context.forSession(file, cwd); } catch (e) { console.error('context:', e.message); }
       json(res, 200, { items });
+      return;
+    }
+    if (path === '/browser/focus' && req.method === 'POST') {           // the Browser tab shows this session's window, or the shared one
+      if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
+      readJson(req, 1024, (o) => { browser.focus(o && o.id).then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message })); });
       return;
     }
     if (path === '/browser/clipboard') {                                // Cmd+C / Cmd+V in the Browser tab

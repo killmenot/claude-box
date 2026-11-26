@@ -76,8 +76,14 @@ edge to resize it (kept per browser; double-click resets).
 x11vnc and noVNC; a few hundred MB more) and every session gets a **Browser** tab: one Chromium for the
 whole box, shown live, where you click, type and sign in like in any browser. The profile (logins,
 cookies) is kept in `home/.config/claude-box-browser`, so a login survives restarts and serves every
-session. Claude drives the same browser with its `playwright` tools (pointed at it with
-`--cdp-endpoint`); while it does, the tab shows a pill with **Stop Claude**. In a chat session the first browser action asks
+session. **Each session has a window of its own** in that one Chromium: its PRs, issues and the pages
+Claude opens; Slack lives in one **Shared** window for every session (one Slack, not one per session).
+The Browser tab shows the session's window, the switch at its bottom left shows the shared one, and a
+session's windows close when it is archived or deleted. Claude drives the same browser with its
+`playwright` tools, but through a filtered DevTools view (`127.0.0.1:9334/s/<session>`, set by
+`CB_SESSION`): it sees, opens and closes only its own session's tabs, never another session's or the
+shared window; a new page it opens lands in its session's window. While it works, the tab shows a pill
+with **Stop Claude**. In a chat session the first browser action asks
 once (**Allow for this session**), in any permission mode: what Claude does there, it does as you,
 in every site you signed in to. Chromium is reinstalled once a week on start (security updates; the
 logins stay), and `--tunnel` with `--browser` warns that the public address leads to that browser. The screen goes through
@@ -98,7 +104,8 @@ session deals with: links anywhere in its transcript, plus a task folder's issue
 branches. A PR shows `#number`, its state as one letter (O open, D draft, M merged, C closed), CI, review and comments (repo and title on hover); a Slack thread its
 channel and author; a Jira issue its status (Slack and Jira details come from the Today panel). One
 line while there is at most one of each, a line per kind once there are more. A click, or a click on
-such a link in the chat, opens it in the Browser tab (a PR or issue in its own tab, Slack in one tab),
+such a link in the chat, opens it in the Browser tab (a PR or issue in its own tab of the session's
+window, Slack in the one tab of the shared window),
 or in a new tab of your browser without `--browser`.
 
 **Archive, restore, delete**: a session's menu has **Archive…**: it stops the session, removes the

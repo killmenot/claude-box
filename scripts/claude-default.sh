@@ -6,6 +6,10 @@
 #   so each repo's CLAUDE.md and skills load (the same as web-chat.js does for chats).
 # Console (tmux) sessions start through this.
 f="${HOME:-/home/node}/.claude/web-provider.env"
+# the box browser's window for this session (web-browser.js): the tmux session's name
+if [ -z "${CB_SESSION:-}" ] && [ -n "${TMUX:-}" ]; then
+  CB_SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null) && export CB_SESSION
+fi
 [ -r "$f" ] && . "$f"
 if [ -f .task.json ]; then
   for d in */; do

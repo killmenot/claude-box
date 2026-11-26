@@ -288,6 +288,10 @@
   #views iframe.on{visibility:visible}
   .bpill{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:5;display:flex;align-items:center;gap:10px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:5px 6px 5px 12px;font-size:12.5px;box-shadow:0 6px 20px rgba(0,0,0,.18);white-space:nowrap}
   .bpill.hidden{display:none}
+  .bwsw{position:absolute;left:12px;bottom:12px;z-index:5;display:flex;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:2px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.16)}
+  .bwsw.hidden{display:none}
+  .bwsw button{border:0;background:none;color:var(--mute);font:500 12px var(--sans);padding:4px 11px;border-radius:999px;cursor:pointer}
+  .bwsw button.on{background:var(--iris);color:#fff}
   .bpill i{width:8px;height:8px;border-radius:50%;background:var(--work);animation:bpulse 1.4s ease-in-out infinite}
   @keyframes bpulse{50%{opacity:.35}}
   @media (prefers-reduced-motion:reduce){.bpill i{animation:none}}
@@ -1888,6 +1892,8 @@ function activate(key){
   if(p.wview && !BROWSER_ON) p.wview=false;
   if(p.wview) ensureBrowser();
   if(BFRAME) BFRAME.classList.toggle('on', !!p.wview);
+  if(BSW && !p.wview) BSW.classList.add('hidden');
+  if(p.wview) browserShow(p);
   Object.keys(PANES).forEach(function(k){ var q=PANES[k], vis=k===key && !p.fview && !p.tview && !p.cview && !p.wview;
     if(q.cframe) q.cframe.classList.toggle('on', k===key && !!p.cview && !p.fview && !p.tview && !p.wview);
     if(q.el) q.el.classList.toggle('on', vis && q.mode==='chat');
@@ -1949,8 +1955,20 @@ function ensureCode(p, src){
     .forEach(function(k){ var q=PANES[k]; q.cframe.remove(); q.cframe=null; q.cview=false; });
 }
 // The session's Browser tab: the box's one Chromium (web-browser.js), the same frame for every
-// session. While Claude's playwright tools are at work in the session, a pill says so and stops it.
-var BFRAME=null, BPILL=null;
+// session. Each session has a window of its own there and Slack lives in a shared one: showing the
+// tab brings the session's window (or the shared one, the switch at the bottom left) to the screen.
+// While Claude's playwright tools are at work in the session, a pill says so and stops it.
+var BFRAME=null, BPILL=null, BSW=null, BSHOWN='';
+function browserKey(p){ return p.bshared ? 'shared' : (p.token||''); }
+function browserShow(p, force){
+  if(!BFRAME || !p || !p.wview) return;
+  var k=browserKey(p);
+  if(BSW){ BSW.classList.toggle('hidden', !p.token);
+    [].forEach.call(BSW.querySelectorAll('button'), function(b){ b.classList.toggle('on', (b.dataset.w==='shared')===!!p.bshared); }); }
+  if(!k || (k===BSHOWN && !force)) return;
+  BSHOWN=k;
+  fetch('browser/focus',{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({id:k})}).catch(function(){ BSHOWN=''; });
+}
 function ensureBrowser(){
   if(BFRAME) return;
   BFRAME=document.createElement('iframe');
@@ -1961,6 +1979,10 @@ function ensureBrowser(){
   BPILL=el('div','bpill hidden','<i></i><span>Claude is using the browser</span><button type="button">Stop Claude</button>');
   BPILL.querySelector('button').onclick=function(){ var p=PANES[ACTIVE]; if(p) wsSend({op:'interrupt', key:p.wire}); };
   views.appendChild(BPILL);
+  BSW=el('div','bwsw hidden','<button type="button" data-w="session" title="This session\'s window: its PRs, issues and the pages Claude opens">This session</button><button type="button" data-w="shared" title="The window every session shares: Slack">Shared</button>');
+  BSW.addEventListener('click', function(e){ var b=e.target.closest('button'), p=PANES[ACTIVE]; if(!b || !p) return;
+    p.bshared=b.dataset.w==='shared'; browserShow(p); try{ BFRAME.contentWindow.focus(); }catch(_){} });
+  views.appendChild(BSW);
 }
 function browserPill(){
   if(!BPILL) return;
@@ -2023,8 +2045,12 @@ function ctxRender(){
 function ctxOpen(url){
   var p=PANES[ACTIVE];
   if(!BROWSER_ON || !p){ window.open(url, '_blank', 'noopener'); return; }
-  fetch('browser/open',{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({url:url})})
-    .then(function(r){ if(!r.ok) throw new Error(); }).catch(function(){ window.open(url, '_blank', 'noopener'); });
+  // the server shows the window it opened the link in (Slack: the shared one); the switch follows
+  p.bshared=/^https:\/\/[\w-]+\.slack\.com\//.test(url); BSHOWN=browserKey(p);
+  fetch('browser/open',{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({url:url, id:p.token||''})})
+    .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
+    .then(function(o){ if(o && o.key){ p.bshared=o.key==='shared'; BSHOWN=o.key; browserShow(p); } })
+    .catch(function(){ window.open(url, '_blank', 'noopener'); });
   p.wview=true; p.fview=false; p.tview=false; p.cview=false; activate(p.key);
 }
 var CTX_URL=/^https:\/\/(github\.com\/[^/]+\/[^/]+\/pull\/\d+|[\w-]+\.slack\.com\/archives\/|[\w-]+\.atlassian\.net\/browse\/)/;

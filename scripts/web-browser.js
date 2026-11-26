@@ -2,7 +2,13 @@
 // The built-in browser for the session's Browser tab: one Chromium for the whole box, only when the
 // box was started with `./claude-box --browser` (the image then carries Chromium, Xvfb, x11vnc and
 // noVNC, and WEB_BROWSER=1). The user works in it through the tab; Claude drives the same browser
-// through the playwright MCP server, which connects to its DevTools port (see web-serve.js).
+// through the playwright MCP server (see web-serve.js).
+//
+// Windows: one Chromium (one profile, so the logins are shared), but every session has a window of its
+// own, and Slack lives in one "shared" window for all of them. The Browser tab shows the window of the
+// session it is in (the others wait off the screen), or the shared one. Claude's playwright tools in a
+// session connect to 127.0.0.1:<CB_BROWSER_SESSION_PORT>/s/<session> and see only that session's
+// tabs (web-cdp-filter.js), not Chromium's own DevTools port.
 //
 //   Xvfb :DISPLAY (no TCP) -> Chromium (profile in ~/.config/claude-box-browser, sandboxed: the
 //   compose overlay's seccomp profile allows its namespaces) -> x11vnc on a unix socket in a
@@ -23,6 +29,7 @@ const NOVNC = process.env.CB_NOVNC_DIR || '/opt/novnc';
 const VIEWER = process.env.CB_BROWSER_PAGE || '/usr/local/share/claude-web/browser.html';
 const DISPLAY = process.env.CB_BROWSER_DISPLAY || ':77';
 const CDP_PORT = parseInt(process.env.CB_BROWSER_CDP_PORT || '9333', 10);
+const SESSION_PORT = parseInt(process.env.CB_BROWSER_SESSION_PORT || '9334', 10);
 // The virtual screen is as big as a view may get; the VNC picture and the Chromium windows follow the
 // size of the Browser tab (resize()), so the tab shows the browser 1:1 with no black bars.
 const MAX = (process.env.CB_BROWSER_MAX || '3840x2160').split('x').map(Number);
@@ -97,7 +104,7 @@ function ensure() {
         '-noprimary', '-noclipboard']);
     }
     for (let i = 0; i < 100; i++) {
-      if (await sockAlive(VNC_SOCK) && await cdpAlive()) { brandAsChrome().catch((e) => log('brand:', e.message)); return; }
+      if (await sockAlive(VNC_SOCK) && await cdpAlive()) { brandAsChrome().catch((e) => log('brand:', e.message)); listenSessions(); return; }
       await sleep(150);
     }
     throw new Error('the browser did not start');
@@ -131,8 +138,10 @@ async function brandAsChrome() {
   const ws = new WebSocket(v.webSocketDebuggerUrl);
   brander = ws;
   let id = 0; const pend = new Map();
+  // a call that gets no answer (a page that went away, one still paused) gives up after 10 s
   const send = (method, params, sessionId) => new Promise((res) => {
     const i = ++id; pend.set(i, res);
+    setTimeout(() => { if (pend.delete(i)) { log('no answer:', method); res({}); } }, 10000);
     try { ws.send(JSON.stringify(Object.assign({ id: i, method, params: params || {} }, sessionId ? { sessionId } : {}))); } catch (_) { res({}); }
   });
   bsend = send;
@@ -142,11 +151,19 @@ async function brandAsChrome() {
     if (o.id && pend.has(o.id)) { pend.get(o.id)(o.result || {}); pend.delete(o.id); return; }
     if (o.method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = o.params;
+    // a new tab or popup a page opened arrives twice: here under its opener and at the top level.
+    // Both copies hold it paused, so this copy only lets go; the top-level one does the work.
+    if (o.sessionId && targetInfo.type === 'page') {
+      send('Runtime.runIfWaitingForDebugger', {}, sessionId); send('Target.detachFromTarget', { sessionId }, o.sessionId);
+      return;
+    }
     if (targetInfo.type === 'page') pageSessions.set(targetInfo.targetId, sessionId);
-    if (brandMeta) await send('Network.setUserAgentOverride', { userAgent: ua, userAgentMetadata: brandMeta }, sessionId);
-    if (/^(page|iframe)$/.test(targetInfo.type)) await attach(sessionId);       // its frames and workers too
+    // sent in order without waiting for the answers: the target runs them before it resumes, and a tab
+    // window.open() made answers only once it runs (waiting here would hold it, and its opener, 10 s)
+    if (brandMeta) send('Network.setUserAgentOverride', { userAgent: ua, userAgentMetadata: brandMeta }, sessionId);
+    if (/^(page|iframe)$/.test(targetInfo.type)) attach(sessionId);              // its frames and workers too
+    await send('Runtime.runIfWaitingForDebugger', {}, sessionId);
     if (targetInfo.type === 'page') fitWindow(targetInfo.targetId);                // a new window takes the tab's size
-    send('Runtime.runIfWaitingForDebugger', {}, sessionId);
   };
   ws.onclose = () => {
     if (brander === ws) { brander = null; bsend = null; }
@@ -171,11 +188,111 @@ async function brandAsChrome() {
   await attach();                                                                 // pages open now and every new one
 }
 
+// ---------- windows: one per session, one shared ----------
+// owner: windowId -> key (a session's token, or "shared"); main: key -> its first window. A window is
+// on the screen when its owner is the key the Browser tab shows; the others wait to the right of the
+// screen (x11vnc shows only the top-left corner), so no window manager is needed to raise one.
+const owner = new Map(), main = new Map();
+let shown = '';
+const OFF = () => MAX[0] + 400;
+const SHARED = 'shared';
+async function winOf(targetId) { const r = await bsend('Browser.getWindowForTarget', { targetId }); return (r && r.windowId) || null; }
+async function pagesNow() { const t = await bsend('Target.getTargets', {}); return (t.targetInfos || []).filter((i) => i.type === 'page'); }
+// windowId -> its pages, for the windows open now (the closed ones leave the maps)
+async function windowsNow() {
+  const all = new Map();
+  for (const p of await pagesNow()) { const w = await winOf(p.targetId); if (!w) continue; if (!all.has(w)) all.set(w, []); all.get(w).push(p); }
+  for (const w of [...owner.keys()]) if (!all.has(w)) owner.delete(w);
+  for (const [k, w] of [...main]) if (!all.has(w)) main.delete(k);
+  return all;
+}
+async function placeWindow(windowId) {
+  const k = owner.get(windowId), on = !shown || !k || k === shown;
+  await bsend('Browser.setWindowBounds', { windowId, bounds: { left: on ? 0 : OFF(), top: 0, width: view.w, height: view.h, windowState: 'normal' } });
+}
+// the key's window; with create, a new one if it has none
+async function windowFor(key, create) {
+  const all = await windowsNow();
+  let w = main.get(key);
+  if (w && all.has(w)) return w;
+  w = [...all.keys()].find((x) => owner.get(x) === key);
+  // the window Chromium starts with (or any nobody owns) becomes the shared one
+  if (!w && key === SHARED) w = [...all.keys()].find((x) => !owner.has(x));
+  if (w) { main.set(key, w); owner.set(w, key); return w; }
+  if (!create) return null;
+  const n = await bsend('Target.createTarget', { url: 'about:blank', newWindow: true });
+  w = n && n.targetId ? await winOf(n.targetId) : null;
+  if (!w) throw new Error('could not open a browser window');
+  main.set(key, w); owner.set(w, key); await placeWindow(w);
+  return w;
+}
+const BLANK = /^(about:blank|chrome:\/\/(new-tab-page|newtab)\/?)$/;
+// a new tab in the key's window: window.open from one of its pages (Chromium opens it in that same
+// window; DevTools cannot name a window for a new tab), else a window of its own
+async function newTab(key, url, reuseBlank) {
+  const w = await windowFor(key, true);
+  const mine = (await windowsNow()).get(w) || [];
+  if (reuseBlank) {
+    const b = mine.find((p) => BLANK.test(p.url) && pageSessions.has(p.targetId));
+    if (b) { await bsend('Page.navigate', { url }, pageSessions.get(b.targetId)); return b.targetId; }
+  }
+  const from = mine.find((p) => pageSessions.has(p.targetId));
+  if (from) {
+    const before = new Set((await pagesNow()).map((p) => p.targetId));
+    await bsend('Runtime.evaluate', { expression: 'void window.open(' + JSON.stringify(url) + ', "_blank", "noopener")', userGesture: true }, pageSessions.get(from.targetId));
+    for (let i = 0; i < 30; i++) {
+      const n = (await pagesNow()).find((p) => !before.has(p.targetId));
+      if (n) { const nw = await winOf(n.targetId); if (nw && !owner.has(nw)) owner.set(nw, key); return n.targetId; }
+      await sleep(100);
+    }
+  }
+  const n = await bsend('Target.createTarget', { url, newWindow: true });
+  if (!n || !n.targetId) throw new Error('could not open a tab');
+  const nw = await winOf(n.targetId); if (nw) { owner.set(nw, key); await placeWindow(nw); }
+  return n.targetId;
+}
+async function connected() {
+  await ensure();
+  for (let i = 0; i < 50 && !bsend; i++) await sleep(100);
+  if (!bsend) throw new Error('the browser is not connected');
+}
+const KEY = /^[\w.:-]{1,100}$/;
+// the Browser tab shows this key's windows (made if it has none) and the tab the user was on there
+async function focus(key) {
+  if (!KEY.test(String(key || ''))) throw new Error('bad window');
+  await connected();
+  const w = await windowFor(key, true);
+  shown = key;
+  const all = await windowsNow();
+  for (const x of all.keys()) if (!owner.has(x)) { owner.set(x, SHARED); if (!main.has(SHARED)) main.set(SHARED, x); }
+  for (const x of all.keys()) await placeWindow(x);
+  const pages = all.get(w) || [];
+  let front = null;
+  for (const p of pages) {
+    const sid = pageSessions.get(p.targetId); if (!sid) continue;
+    const r = await bsend('Runtime.evaluate', { expression: 'document.visibilityState', returnByValue: true }, sid);
+    if (r && r.result && r.result.value === 'visible') { front = p; break; }
+  }
+  front = front || pages[0];
+  if (front) await bsend('Target.activateTarget', { targetId: front.targetId });
+  return { key, tabs: pages.length };
+}
+// a session is archived or deleted: its windows close
+async function closeWindows(key) {
+  if (!bsend || !key || key === SHARED) return;
+  const all = await windowsNow();
+  for (const [w, pages] of all) if (owner.get(w) === key) for (const p of pages) await bsend('Target.closeTarget', { targetId: p.targetId });
+  main.delete(key); if (shown === key) shown = '';
+}
+
 // ---------- the Browser tab's size ----------
 async function fitWindow(targetId) {
   if (!bsend) return;
-  const w = await bsend('Browser.getWindowForTarget', targetId ? { targetId } : {});
-  if (w && w.windowId) await bsend('Browser.setWindowBounds', { windowId: w.windowId, bounds: { left: 0, top: 0, width: view.w, height: view.h, windowState: 'normal' } });
+  const w = targetId ? await winOf(targetId) : null;
+  if (!w) return;
+  // a window that appears on its own (a popup, a window the user opened) belongs to what is on the screen
+  if (!owner.has(w) && shown) owner.set(w, shown);
+  await placeWindow(w);
 }
 let fitting = Promise.resolve();
 function resize(w, h) {
@@ -267,21 +384,23 @@ async function slackPastRedirect(targetId) {
 }
 
 // ---------- open a link from claude-box (the context strip, links in the chat) ----------
-// A PR or Jira issue already open comes to the front; Slack keeps one tab, moved to the thread
-// (its web app is heavy); anything else opens in a new tab. Only https links.
-async function openUrl(url) {
+// In the session's window: a PR or Jira issue already open there comes to the front, anything else
+// opens in a new tab. Slack goes to the shared window and keeps one tab there, moved to the thread
+// (its web app is heavy). Only https links. Returns the key whose window now shows.
+async function openUrl(url, session) {
   let u; try { u = new URL(String(url || '')); } catch (_) { throw new Error('not a link'); }
   if (u.protocol !== 'https:') throw new Error('only https links');
-  await ensure();
-  for (let i = 0; i < 30 && !bsend; i++) await sleep(100);
-  if (!bsend) throw new Error('the browser is not connected');
+  await connected();
   const href = u.href;
   const pr = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.exec(href);
   const jira = /\/browse\/([A-Z][A-Z0-9]+-\d+)/.exec(u.pathname);
   const slack = /\.slack\.com$/.test(u.hostname);
-  const t = await bsend('Target.getTargets', {});
-  const pages = (t.targetInfos || []).filter((i) => i.type === 'page');
-  slackLearn(pages);
+  const key = slack ? SHARED : (KEY.test(String(session || '')) ? String(session) : SHARED);
+  slackLearn(await pagesNow());
+  await windowFor(key, true);
+  const all = await windowsNow();
+  const pages = [];
+  for (const [w, ps] of all) if (owner.get(w) === key) pages.push(...ps);
   const web = slack ? slackWebUrl(href, slackTeam) : null;
   const go = web || href;
   let hit = null;
@@ -293,15 +412,65 @@ async function openUrl(url) {
     const sid = pageSessions.get(hit.targetId);
     if (sid) await bsend('Page.navigate', { url: go }, sid);
   }
-  let id = hit && hit.targetId;
-  if (hit) await bsend('Target.activateTarget', { targetId: hit.targetId });
-  else {
-    const n = await bsend('Target.createTarget', { url: go });
-    id = n && n.targetId;
-    if (id) await bsend('Target.activateTarget', { targetId: id });
-  }
+  const id = hit ? hit.targetId : await newTab(key, go, true);
+  await focus(key);
+  if (id) await bsend('Target.activateTarget', { targetId: id });
   if (slack && !web && id) slackPastRedirect(id).catch(() => {});
-  return { ok: !!id, reused: !!hit, url: go };
+  return { ok: !!id, reused: !!hit, url: go, key };
+}
+
+// ---------- Claude's view: 127.0.0.1:SESSION_PORT/s/<session> ----------
+// GET /s/<key>/json/version names the WebSocket; WS /s/<key> is DevTools filtered to <key>'s windows.
+// resolveKey maps what a session calls itself (its token, or the chat's / tmux session's name) to the
+// key its Browser tab uses; set by the server (the registry knows both).
+let resolveKey = (k) => k, sessionServer = null;
+function setKeyResolver(fn) { resolveKey = fn; }
+function wsLib() {
+  try { return require(path.join(process.env.WEB_CHAT_MODULES || '/opt/claude-web-chat/node_modules', 'ws')); }
+  catch (_) { try { return require('ws'); } catch (__) { return null; } }
+}
+function listenSessions() {
+  if (sessionServer) return;
+  const lib = wsLib();
+  if (!lib) { log('session view: no ws module'); return; }
+  const http = require('http');
+  const { Filter } = require('./web-cdp-filter.js');
+  const wssS = new lib.WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: 256 << 20 });
+  const keyOf = (url) => { const m = /^\/s\/([\w.:-]{1,100})(\/|$)/.exec(String(url || '').split('?')[0]); return m ? m[1] : null; };
+  sessionServer = http.createServer(async (req, res) => {
+    const raw = keyOf(req.url);
+    if (!raw || !/\/json\/version\/?$/.test(req.url.split('?')[0])) { res.writeHead(404); res.end(); return; }
+    try {
+      const v = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
+      v.webSocketDebuggerUrl = `ws://127.0.0.1:${SESSION_PORT}/s/${raw}`;
+      res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(v));
+    } catch (e) { res.writeHead(503); res.end(); }
+  });
+  sessionServer.on('upgrade', (req, socket, head) => {
+    const raw = keyOf(req.url);
+    if (!raw) { socket.end('HTTP/1.1 404 Not Found\r\n\r\n'); return; }
+    connected().then(async () => {
+      const key = String(resolveKey(raw) || raw);
+      const v = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
+      const up = new lib.WebSocket(v.webSocketDebuggerUrl, { perMessageDeflate: false, maxPayload: 256 << 20 });
+      await new Promise((ok, no) => { up.once('open', ok); up.once('error', no); });
+      wssS.handleUpgrade(req, socket, head, (ws) => {
+        const send = (s, o) => { if (s.readyState === 1) s.send(JSON.stringify(o)); };
+        const f = new Filter({
+          inScope: async (targetId) => { const w = await winOf(targetId); return !!w && owner.get(w) === key; },
+          claim: async (targetId) => { const w = await winOf(targetId); if (w && !owner.has(w)) owner.set(w, key); },
+          createTab: (url) => newTab(key, url, false),
+          toClient: (o) => send(ws, o), toBrowser: (o) => send(up, o),
+        });
+        ws.on('message', (m) => { let o; try { o = JSON.parse(String(m)); } catch (_) { return; } f.fromClient(o); });
+        up.on('message', (m) => { let o; try { o = JSON.parse(String(m)); } catch (_) { return; } f.fromBrowser(o); });
+        const end = () => { try { up.close(); } catch (_) {} try { ws.close(); } catch (_) {} };
+        ws.on('close', end); up.on('close', end); ws.on('error', end); up.on('error', end);
+      });
+    }).catch((e) => { log('session view:', e.message); socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n'); });
+  });
+  sessionServer.on('error', (e) => { log('session view:', e.message); sessionServer = null; });
+  sessionServer.listen(SESSION_PORT, '127.0.0.1');
 }
 
 async function status() {
@@ -355,7 +524,8 @@ function _bridge(req, socket, head, WSS) { WebSocketServer = WSS; bridge(req, so
 
 function stop() {
   stopping = true;
+  if (sessionServer) { try { sessionServer.close(); } catch (_) {} sessionServer = null; }
   for (const k of ['vnc', 'chrome', 'xvfb']) { const p = procs[k]; if (p) try { p.kill('SIGTERM'); } catch (_) {} }
 }
 
-module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, clipboardGet, clipboardPaste, openUrl, slackWebUrl, _bridge, chromeMeta, CDP_PORT, VNC_SOCK, PROFILE };
+module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, clipboardGet, clipboardPaste, openUrl, focus, closeWindows, setKeyResolver, slackWebUrl, _bridge, chromeMeta, CDP_PORT, SESSION_PORT, VNC_SOCK, PROFILE };
