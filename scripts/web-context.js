@@ -45,6 +45,13 @@ function extract(text) {
 
 // ---------- the transcript, read incrementally ----------
 const SCANS = new Map();           // file -> {size, rest, items: Map(key -> item)}
+// Only the conversation itself counts: user and assistant turns (tool results included). The
+// transcript also stores what the harness injects (CLAUDE.md and memory as "attachment" lines, the raw
+// request blobs, skill instructions as meta turns); links there are examples, not this session's work.
+function fromConversation(line) {
+  let o; try { o = JSON.parse(line); } catch (_) { return false; }
+  return !!o && (o.type === 'user' || o.type === 'assistant') && !o.isMeta;
+}
 function scanFile(file) {
   let st; try { st = fs.statSync(file); } catch (_) { return []; }
   let c = SCANS.get(file);
@@ -60,7 +67,11 @@ function scanFile(file) {
         const cut = text.lastIndexOf('\n');
         const whole = cut < 0 ? '' : text.slice(0, cut);
         c.rest = cut < 0 ? text : text.slice(cut + 1);
-        for (const it of extract(whole)) if (!c.items.has(it.key)) c.items.set(it.key, it);
+        for (const line of whole.split('\n')) {
+          const found = extract(line);
+          if (!found.length || !fromConversation(line)) continue;
+          for (const it of found) if (!c.items.has(it.key)) c.items.set(it.key, it);
+        }
       }
     } finally { fs.closeSync(fd); }
     c.size = st.size;
