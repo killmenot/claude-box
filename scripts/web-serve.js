@@ -12,6 +12,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
+// The Agent SDK calls process.report.getReport() on every query() to tell musl from glibc. The
+// report's network section lists every open socket and resolves its peer names, which takes 15+ s
+// with many connections open and blocks this whole process (terminals, chats, every endpoint).
+// Nothing here needs that section, so leave it out of every report.
+try { process.report.excludeNetwork = true; } catch (_) {}
+
 const HOME = process.env.HOME || '/home/node';
 const CLAUDE_DIR = path.join(HOME, '.claude');
 const env = process.env;
