@@ -292,10 +292,20 @@ guard_owner
 # Build bypassing the proxy: compose reads .env at build time too and would pick up HTTPS_PROXY
 # (it is meant only for Claude -> Anthropic at run time). Through the proxy BuildKit fails to
 # resolve FROM (Docker Hub anon token -> 401) and GitHub release downloads time out.
-dc build \
-  --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY= \
-  --build-arg http_proxy= --build-arg https_proxy= \
-  --build-arg NO_PROXY='*' --build-arg no_proxy='*' web
+build_args=(
+  --build-arg HTTP_PROXY= --build-arg HTTPS_PROXY=
+  --build-arg http_proxy= --build-arg https_proxy=
+  --build-arg NO_PROXY='*' --build-arg no_proxy='*'
+)
+# The build runs on the host network (build.network: host in docker-compose.yml). Newer compose
+# always builds through `buildx bake`, which refuses that without --allow=network.host, and
+# `compose build` has no way to pass it. So compose only renders the bake definition and bake
+# builds it with the entitlement granted. Older compose/buildx without --print: plain build.
+if bake_def="$(dc build --print "${build_args[@]}" web 2>/dev/null)" && [ -n "$bake_def" ]; then
+  printf '%s\n' "$bake_def" | docker buildx bake --allow=network.host -f - web
+else
+  dc build "${build_args[@]}" web
+fi
 
 tunnel=0
 if [ "$want_tunnel" = 1 ]; then
