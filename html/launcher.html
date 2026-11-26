@@ -26,6 +26,7 @@
     --needs:#9a6a00; --needs-line:#e9c46a; --problem-line:#f0c2ad; --warn-bg:#fffbea;
     --tint:#eef0fd; --tint-2:#f3f3fe; --tint-3:#e9e9fb; --focus:#c9cce0; --next-bg:#e7eefc;
     --ok:#2f7d4f; --bad:#b91c1c; --bad-bg:#fdecec; --backdrop:rgba(14,17,22,.38);
+    --cat1:#257de0; --cat2:#f47230; --cat3:#00b894; --cat4:#f2a600; --cat5:#ee7fac; --cat6:#008a17; --cat7:#6a4ce2; --cat8:#ec4647;
     color-scheme:light;
     --sans:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
     --display:'Space Grotesk',system-ui,sans-serif;
@@ -42,6 +43,7 @@
     --needs:#e3b341; --needs-line:#7a5f1c; --problem-line:#7a3d26; --warn-bg:#29230f;
     --tint:#242853; --tint-2:#1f2245; --tint-3:#2d3163; --focus:#4b5268; --next-bg:#1b2747;
     --ok:#6fcf97; --bad:#f28b82; --bad-bg:#3a1719; --backdrop:rgba(0,0,0,.58);
+    --cat1:#338ced; --cat2:#e76624; --cat3:#00a888; --cat4:#d28e05; --cat5:#e24d8b; --cat6:#0aac23; --cat7:#9887ef; --cat8:#eb6263;
     color-scheme:dark;
   }
   *{box-sizing:border-box}
@@ -545,6 +547,48 @@
   #setd label.opt:hover{background:var(--hover)}
   #setd label.opt input{margin-top:3px}
   #setd label.opt small{display:block;color:var(--mute);font-size:12px}
+  /* /context and /usage dialogs (statd) */
+  #statd{position:fixed;inset:0;z-index:60;background:var(--backdrop);display:none;align-items:flex-start;justify-content:center;padding:7vh 16px 16px}
+  #statd.on{display:flex}
+  #statd .tbox{width:min(540px,100%);max-height:86vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28)}
+  #statd .thead{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);font-size:15px}
+  #statd .tbody{padding:14px 16px 18px;font-size:13.5px;color:var(--body)}
+  #statd .sh{margin:18px 0 6px;font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);display:flex;justify-content:space-between;gap:10px}
+  #statd .sh:first-child{margin-top:0}
+  #statd .mdl{font:600 13px var(--mono);color:var(--ink)}
+  #statd .big{margin:2px 0 10px;font-variant-numeric:tabular-nums}
+  #statd .sbar{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden;background:var(--hover)}
+  #statd .sbar i{display:block;height:100%;flex:0 0 auto;min-width:3px}
+  #statd .sbar i:last-child{border-radius:0 4px 4px 0}
+  #statd .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:9px;vertical-align:-1px;flex:0 0 auto}
+  #statd .sw.buf,#statd .sbar i.buf{background:repeating-linear-gradient(135deg,var(--mute) 0 2px,transparent 2px 5px)}
+  #statd .sw.free{background:var(--hover);box-shadow:inset 0 0 0 1px var(--line)}
+  #statd .sw.none{background:transparent;box-shadow:inset 0 0 0 1px var(--mute)}
+  #statd table{width:100%;border-collapse:collapse;margin-top:12px;font-variant-numeric:tabular-nums}
+  #statd th{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--mute);text-align:right;padding:4px 0 4px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  #statd td{padding:5px 0 5px 10px;text-align:right;white-space:nowrap}
+  #statd th:first-child,#statd td:first-child{text-align:left;padding-left:0;white-space:normal}
+  #statd tr.muted td{color:var(--mute)}
+  #statd .kv{display:flex;justify-content:space-between;gap:14px;padding:4px 0;font-variant-numeric:tabular-nums}
+  #statd .kv>span:first-child{color:var(--slate);flex:0 0 auto}
+  #statd .kv>span:last-child{color:var(--ink);text-align:right;overflow-wrap:anywhere;min-width:0}
+  #statd .kv.path>span:first-child{font:12px var(--mono);color:var(--body);overflow-wrap:anywhere;flex:1 1 auto}
+  #statd .kv.path>span:last-child{flex:0 0 auto}
+  #statd .meter{margin:8px 0 14px}
+  #statd .meter .top{display:flex;justify-content:space-between;gap:10px;color:var(--ink);font-variant-numeric:tabular-nums}
+  #statd .meter .tr{height:8px;border-radius:4px;background:var(--hover);margin:5px 0 3px;overflow:hidden}
+  #statd .meter .tr i{display:block;height:100%;border-radius:4px;background:var(--iris)}
+  #statd .meter.hi .tr i{background:var(--bad)}
+  #statd .meter.hi .top b{color:var(--bad)}
+  #statd .fine{font-size:12px;color:var(--mute);margin:4px 0}
+  #statd .err{color:var(--bad)}
+  #statd .tabs{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:2px 0 6px}
+  #statd .tabs button{border:0;background:transparent;color:var(--slate);font:inherit;font-size:12.5px;padding:3px 12px;cursor:pointer}
+  #statd .tabs button.on{background:var(--tint);color:var(--ink);font-weight:600}
+  #statd .rec{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-top:1px solid var(--line)}
+  #statd .rec:first-of-type{border-top:0}
+  #statd .rec b{color:var(--ink);font-weight:600} #statd .rec small{color:var(--mute);font-size:12.5px}
+  #statd .rec>span:last-child{color:var(--ink);font-variant-numeric:tabular-nums;flex:0 0 auto}
   #agv{position:fixed;inset:0;z-index:60;background:var(--backdrop);display:none;align-items:flex-start;justify-content:center;padding:6vh 16px 16px}
   #agv.on{display:flex}
   #agv .abox{width:min(900px,100%);max-height:86vh;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28);display:flex;flex-direction:column;overflow:hidden}
@@ -653,7 +697,7 @@
   .box .stat.run i{background:var(--work);animation:pulse 1.2s infinite} .box .stat.wait i{background:var(--wait)} .box .stat.idle i{background:var(--live)}
   /* context fill ring: grey up to 20%, then yellow, orange (over 30%), red (over 40%) */
   .box .barsp{flex:1}
-  .ctxm{position:relative;display:inline-flex;align-items:center;gap:5px;font:11.5px var(--mono);color:var(--mute);cursor:default;border-radius:6px;padding:2px 3px;outline:none;flex:0 0 auto;--c:var(--mute)}
+  .ctxm{position:relative;display:inline-flex;align-items:center;gap:5px;font:11.5px var(--mono);color:var(--mute);cursor:pointer;border-radius:6px;padding:2px 3px;outline:none;flex:0 0 auto;--c:var(--mute)}
   .ctxm:focus-visible{box-shadow:0 0 0 2px var(--iris)}
   .ctxm svg{width:14px;height:14px;display:block}
   .ctxm .tr{stroke:var(--line)} .ctxm .fg{stroke:var(--c)}
@@ -859,6 +903,10 @@
       <div id="tdrepos"><span class="lbl">Repos for this task</span><span id="tdchips"></span>
         <input class="finput" id="tdrq" placeholder="Add a repo: type to search GitHub" autocomplete="off"><div class="rpick" id="tdrlist"></div></div>
     </div>
+  </div></div>
+  <div id="statd" role="dialog" aria-label="Usage"><div class="tbox">
+    <div class="thead"><b id="statt"></b><button class="btn ghost" type="button" id="statclose">Close</button></div>
+    <div class="tbody" id="statbody"></div>
   </div></div>
   <div id="setd" role="dialog" aria-label="Settings"><div class="tbox">
     <div class="thead"><b>Settings</b><button class="btn ghost" type="button" id="setclose">Close</button></div>
@@ -1199,7 +1247,7 @@ function buildChat(p){
     '<div class="bar"><button class="attbtn" type="button" title="Attach files — or paste / drop them here"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button>'+
     '<input type="file" multiple hidden>'+
     '<span class="stat"><i></i><span></span></span><button class="mdlbtn" type="button" title="Model and effort"></button>'+
-    '<span class="ctxm hidden" tabindex="0" role="img"></span><span class="barsp"></span>'+
+    '<span class="ctxm hidden" tabindex="0" role="button"></span><span class="barsp"></span>'+
     (VOICE.supported ? '<button class="langbtn" type="button" title="Voice input language"></button>'+
       '<button class="micbtn" type="button" title="Voice input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>' : '')+
     '<button class="sendbtn stopbtn hidden" type="button" title="Stop (Esc)">■</button>'+
@@ -1210,6 +1258,8 @@ function buildChat(p){
   p.log.addEventListener('scroll', function(){ checkOlder(p); }, {passive:true});
   p.ta=c.querySelector('textarea'); p.go=c.querySelector('.go'); p.stopb=c.querySelector('.stopbtn');
   p.stat=c.querySelector('.stat'); p.ctxm=c.querySelector('.ctxm');
+  p.ctxm.addEventListener('click', function(){ statsOpen(p,'context','/context'); });
+  p.ctxm.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); statsOpen(p,'context','/context'); } });
   p.mdlb=c.querySelector('.mdlbtn'); p.mdlEl=c.querySelector('.mdlpop');
   p.mdlb.addEventListener('click', function(e){ e.stopPropagation(); mdlToggle(p); });
   p.mdlEl.addEventListener('click', function(e){ e.stopPropagation(); mdlClick(p, e); });
@@ -1392,13 +1442,19 @@ function send(p){
   function clear(){ p.ta.value=''; p.ta.style.height='auto'; p.files=[]; p.voiced=''; renderAtts(p);
     clearTimeout(p.draftT); p.draftAt=Date.now(); draftStore(p,''); }
   if(!p.ready){ (p.queue=p.queue||[]).push({t:t, files:files, voice:voiced}); clear(); return; }
+  // /context and /usage open a dialog instead of going to Claude (statsOpen falls back to sending them)
+  var sk=!files.length && STATS_CMDS[t.trim()];
+  if(sk){ clear(); statsOpen(p, sk, t.trim()); return; }
+  if(sendNow(p, t, files, voiced)) clear();
+}
+function sendNow(p, t, files, voiced){
   var wire=files.map(function(a){ return {name:a.name, type:a.type, data:a.data}; });
-  if(!wsSend({op:'send', key:p.wire, text:voiced?voiceNote(voiced)+'\n'+t:t, files:wire})){ note(p,'Not connected to the server — retrying…',true); return; }
-  clear();
+  if(!wsSend({op:'send', key:p.wire, text:voiced?voiceNote(voiced)+'\n'+t:t, files:wire})){ note(p,'Not connected to the server — retrying…',true); return false; }
   var hint=p.inner.querySelector('.note.hint'); if(hint) hint.remove();
   if(!p.firstText) p.firstText=(t.replace(/\s+/g,' ').trim()||(files[0]&&files[0].name)||'').slice(0,80);
   addUser(p, t, true, files, voiced); scrollEnd(p, true);
   if(p.state==='stopped'||p.state==='idle') setState(p,'starting');
+  return true;
 }
 
 function activate(key){
@@ -2306,13 +2362,170 @@ function renderCtx(p){
   var r=5.5, C=2*Math.PI*r, off=C*(1-Math.min(pct,100)/100);
   var tip='<span class="tip" role="tooltip"><div class="h">Context: '+Number(c.total).toLocaleString('en-US')+' of '+Number(c.max).toLocaleString('en-US')+' tokens ('+pct+'%)</div>'+
     (c.cats||[]).map(function(k){ return '<div class="r"><span>'+esc(k.name)+(k.kind==='buffer'?' (reserve)':'')+'</span><span>'+ctxK(k.tokens)+'</span></div>'; }).join('')+
-    '<div class="f">'+(c.estimated?'Estimated from the last answer; exact after the next turn. ':'')+'Claude Code compacts the conversation automatically near the limit.</div></span>';
+    '<div class="f">'+(c.estimated?'Estimated from the last answer; exact after the next turn. ':'')+'Claude Code compacts the conversation automatically near the limit. Click for details.</div></span>';
   m.className='ctxm l'+lv;
   m.setAttribute('aria-label','Context '+pct+'% full');
   m.innerHTML='<svg viewBox="0 0 14 14" aria-hidden="true"><circle class="tr" cx="7" cy="7" r="'+r+'" fill="none" stroke-width="2.4"/>'+
     '<circle class="fg" cx="7" cy="7" r="'+r+'" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="'+C.toFixed(2)+'" stroke-dashoffset="'+off.toFixed(2)+'" transform="rotate(-90 7 7)"/></svg>'+
     '<span class="n">'+pct+'%</span>'+tip;
 }
+// ---------- /context and /usage dialogs ----------
+// The data comes from web-chat.js (op 'stats'): getContextUsage, and the SDK's /usage data (plan
+// limits, account, this session's totals) plus a slower scan of this box's sessions (behaviors).
+var STATS_CMDS={'/context':'context', '/usage':'usage'};
+var STATD=null, statSeq=0;
+// one fixed slot per row id (the categorical order, never cycled); unknown rows stay neutral
+var CAT_SLOT={system_prompt:1, system_tools:2, mcp_tools:3, mcp_instructions:4, mcp_server_instructions:4, custom_agents:5,
+  memory_files:6, skills:7, messages:8};
+function catId(k){ return k.id || String(k.name||'').toLowerCase().replace(/[^a-z]+/g,'_').replace(/^_|_$/g,''); }
+function catSw(k){
+  if(k.kind==='buffer') return {cls:'buf', st:''};
+  if(k.kind==='free') return {cls:'free', st:''};
+  if(k.kind==='deferred') return {cls:'none', st:''};
+  var n=CAT_SLOT[catId(k)]; return {cls:'', st:'background:'+(n?'var(--cat'+n+')':'var(--mute)')};
+}
+function pctOf(n, max){ if(!max || !n) return '0%'; var v=n/max*100; return v<0.1?'&lt;0.1%':(v<10?v.toFixed(1):Math.round(v))+'%'; }
+function fmtDur(ms){ var s=Math.round((ms||0)/1000), h=Math.floor(s/3600), m=Math.floor(s%3600/60); s=s%60;
+  return h?h+'h '+m+'m':m?m+'m '+s+'s':s+'s'; }
+function fmtAgo(t){ var s=Math.max(0,(Date.now()-t)/1000); return s<90?'just now':s<5400?Math.round(s/60)+' min ago':s<129600?Math.round(s/3600)+' h ago':Math.round(s/86400)+' days ago'; }
+function fmtReset(iso){
+  var d=new Date(iso); if(isNaN(d)) return '';
+  var tm=d.toLocaleTimeString('en-US',{hour:'numeric', minute:'2-digit'});
+  return d.toDateString()===new Date().toDateString() ? 'Resets at '+tm
+    : 'Resets '+d.toLocaleDateString('en-US',{weekday:'short', month:'short', day:'numeric'})+' at '+tm;
+}
+function homeShort(f){ return String(f||'').replace(/^\/home\/[^\/]+(?=\/|$)/,'~'); }
+function kv(k, v){ return '<div class="kv"><span>'+esc(k)+'</span><span>'+v+'</span></div>'; }
+
+function statsOpen(p, kind, cmd){
+  STATD={p:p, kind:kind, cmd:cmd, req:++statSeq, data:null, beh:undefined, win:'day'};
+  $('statt').textContent=kind==='context'?'Context usage':'Account & usage';
+  $('statbody').innerHTML='<div class="fine">Loading…</div>';
+  $('statd').classList.add('on');
+  if(!wsSend({op:'stats', key:p.wire, kind:kind, req:STATD.req})){ statsClose(); note(p,'Not connected to the server — retrying…',true); }
+}
+function statsClose(){ STATD=null; $('statd').classList.remove('on'); }
+function statsIn(p, o){
+  var s=STATD; if(!s || s.p!==p || s.req!==o.req) return;
+  if(o.part==='behaviors'){ s.beh=o.behaviors||null; if(s.data) statsRender(); return; }
+  if(o.error){ $('statbody').innerHTML='<div class="err">'+esc(o.error)+'</div>'; return; }
+  // not available here (an SDK without the call): run the command as before, its text shows in the chat
+  if(!o.data){ statsClose(); sendNow(p, s.cmd, [], ''); return; }
+  s.data=o; statsRender();
+}
+function statsRender(){
+  var s=STATD; if(!s || !s.data) return;
+  $('statbody').innerHTML=s.kind==='context'?ctxHtml(s.data):usageHtml(s.data, s.beh, s.win);
+}
+function ctxHtml(o){
+  var c=o.data, max=c.max, cats=c.cats||[];
+  if(!max) return '<div class="big">About '+ctxK(c.total)+' tokens</div><div class="fine">Estimated from the last answer; the details show once the session runs again.</div>';
+  var inWin=cats.filter(function(k){ return k.kind==='used' || k.kind==='buffer'; }),
+      free=cats.filter(function(k){ return k.kind==='free'; })[0],
+      deferred=cats.filter(function(k){ return k.kind==='deferred'; });
+  if(!inWin.length && c.total) inWin=[{name:'Used', tokens:c.total, kind:'used'}];
+  // the last measurement kept for a stopped session has no free-space row
+  if(!free) free={name:'Free space', kind:'free', tokens:Math.max(0, max-inWin.reduce(function(n,k){ return n+k.tokens; },0))};
+  var h='<div class="mdl">'+esc(c.model||'')+'</div><div class="big">'+ctxK(c.total)+' / '+ctxK(max)+' tokens ('+c.pct+'%)</div>';
+  h+='<div class="sbar" role="img" aria-label="Context '+c.pct+'% full">'+inWin.map(function(k){
+    var w=catSw(k); return '<i class="'+w.cls+'" style="width:'+(k.tokens/max*100).toFixed(2)+'%;'+w.st+'" title="'+esc(k.name)+': '+ctxK(k.tokens)+'"></i>'; }).join('')+'</div>';
+  var row=function(k, muted, label){ var w=catSw(k);
+    return '<tr'+(muted?' class="muted"':'')+'><td><span class="sw '+w.cls+'" style="'+w.st+'"></span>'+esc(label||k.name)+'</td><td>'+ctxK(k.tokens)+'</td><td>'+(muted?'—':pctOf(k.tokens, max))+'</td></tr>'; };
+  h+='<table><tr><th>Category</th><th>Tokens</th><th>Usage</th></tr>'+
+    inWin.map(function(k){ return row(k); }).join('')+
+    (free?row(free, false, 'Free space'):'')+
+    deferred.map(function(k){ return row(k, true, k.name.replace(/\s*\(deferred\)$/i,'')+' — loaded on demand'); }).join('')+'</table>';
+  var m=c.msgs;
+  if(m && (m.toolCalls||m.toolResults||m.user||m.assistant||m.attachments)){
+    h+='<div class="sh">Messages</div>'+kv('Tool calls', ctxK(m.toolCalls))+kv('Tool results', ctxK(m.toolResults))+
+      kv('Your messages', ctxK(m.user))+kv("Claude's messages", ctxK(m.assistant))+(m.attachments?kv('Attachments', ctxK(m.attachments)):'');
+  }
+  if(c.memory && c.memory.length){
+    h+='<div class="sh"><span>Memory files</span></div>'+c.memory.map(function(f){
+      return '<div class="kv path"><span title="'+esc(f.type||'')+'">'+esc(homeShort(f.path))+'</span><span>'+ctxK(f.tokens)+'</span></div>'; }).join('');
+  }
+  if(c.mcp && c.mcp.length){
+    h+='<div class="sh"><span>MCP servers</span></div>'+c.mcp.map(function(x){
+      return kv(x.name, x.tools+(x.tools===1?' tool':' tools')+(x.loaded<x.tools?' ('+x.loaded+' loaded)':'')+' · '+ctxK(x.tokens)); }).join('');
+  }
+  if(c.skills && c.skills.total) h+='<div class="fine" style="margin-top:12px">Skills: '+c.skills.included+' of '+c.skills.total+' listed · '+ctxK(c.skills.tokens)+' tokens.</div>';
+  var foot=[];
+  if(o.baseline) foot.push('No messages yet: this is what every new session in this folder starts with.');
+  else if(!o.live) foot.push((c.estimated?'Estimated from the last answer':'Measured '+fmtAgo(c.at||0))+'; the session is not running.');
+  if(c.autoCompact===false) foot.push('Auto-compact is off.');
+  else if(typeof c.autoCompact==='number') foot.push('Auto-compact at '+ctxK(c.autoCompact)+' tokens.');
+  if(foot.length) h+='<div class="fine" style="margin-top:12px">'+esc(foot.join(' '))+'</div>';
+  return h;
+}
+var AUTH_PROVIDERS={bedrock:'Amazon Bedrock', vertex:'Google Vertex AI', foundry:'Microsoft Foundry', gateway:'Enterprise gateway',
+  anthropicAws:'Anthropic on AWS', anthropicGoogleCloud:'Anthropic on Google Cloud', mantle:'Mantle'};
+var LIMIT_ROWS=[['five_hour','Session (5h)'],['seven_day','Weekly (7 day)'],['seven_day_opus','Weekly · Opus'],['seven_day_sonnet','Weekly · Sonnet'],['seven_day_oauth_apps','Weekly · apps']];
+var BEHAV_LBL={cache_miss:'Prompt cache misses', long_context:'Long context', subagent_heavy:'Heavy sub-agent use', high_parallel:'Many sessions at once',
+  cron:'Scheduled and looping runs', max_effort:'Max effort', workflow:'Workflows', always_on_context:'Always-on context', large_tool_results:'Large tool results'};
+function meter(label, w){
+  var u=Math.max(0, Math.min(100, Math.round(w.utilization)));
+  return '<div class="meter'+(u>=90?' hi':'')+'"><div class="top"><span>'+esc(label)+'</span><b>'+u+'%</b></div>'+
+    '<div class="tr" role="img" aria-label="'+esc(label)+' '+u+'% used"><i style="width:'+u+'%"></i></div>'+
+    (w.resets_at?'<div class="fine">'+esc(fmtReset(w.resets_at))+'</div>':'')+'</div>';
+}
+function usageHtml(o, beh, win){
+  var d=o.data, a=d.account||{}, h='';
+  var auth=a.provider && a.provider!=='firstParty' ? (AUTH_PROVIDERS[a.provider]||a.provider)
+    : a.apiKeySource ? 'API key ('+a.apiKeySource+')' : (a.tokenSource && a.tokenSource!=='none') ? 'Claude account' : '';
+  var plan=d.plan ? 'Claude '+d.plan.charAt(0).toUpperCase()+d.plan.slice(1) : '';
+  if(auth||a.email||a.organization||plan){
+    h+='<div class="sh">Account</div>'+(auth?kv('Auth method', esc(auth)):'')+(a.email?kv('Email', esc(a.email)):'')+
+      (a.organization?kv('Organization', esc(a.organization)):'')+(plan?kv('Plan', esc(plan)):'');
+  }
+  h+='<div class="sh">Plan usage</div>';
+  var L=d.limits;
+  if(d.limitsAvailable && L){
+    var rows=LIMIT_ROWS.filter(function(r){ return L[r[0]] && L[r[0]].utilization!=null; }).map(function(r){ return meter(r[1], L[r[0]]); });
+    (L.model_scoped||[]).forEach(function(m){ if(m && m.utilization!=null) rows.push(meter('Weekly · '+m.display_name, m)); });
+    var x=L.extra_usage;
+    if(x && x.is_enabled){
+      var cur=x.currency||'', amt=function(v){ return v==null?'—':(cur==='USD'||!cur?'$':'')+Number(v).toFixed(2)+(cur&&cur!=='USD'?' '+cur:''); };
+      rows.push(x.utilization!=null ? meter('Extra usage · '+amt(x.used_credits)+' of '+amt(x.monthly_limit), x) : kv('Extra usage', amt(x.used_credits)+' of '+amt(x.monthly_limit)));
+    }
+    h+=rows.join('')||'<div class="fine">No usage windows reported.</div>';
+  } else h+='<div class="fine">Plan limits don\'t apply to this login (an API key or another provider).</div>';
+  h+='<div class="sh">This session</div>';
+  var s=d.session;
+  if(s){
+    h+=kv('Cost', '$'+Number(s.cost||0).toFixed(2))+kv('API time', fmtDur(s.apiMs))+kv('Wall time', fmtDur(s.wallMs))+
+      kv('Code changes', '+'+(s.added||0)+' / −'+(s.removed||0)+' lines');
+    var ms=Object.keys(s.models||{});
+    if(ms.length) h+='<table><tr><th>Model</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th><th>Cost</th></tr>'+ms.map(function(k){
+      var m=s.models[k]; return '<tr><td style="font:12px var(--mono)">'+esc(k)+'</td><td>'+ctxK(m.input)+'</td><td>'+ctxK(m.output)+'</td><td>'+ctxK(m.cacheRead)+
+        '</td><td>'+ctxK(m.cacheWrite)+'</td><td>'+(m.cost!=null?'$'+Number(m.cost).toFixed(2):'—')+'</td></tr>'; }).join('')+'</table>';
+  } else h+='<div class="fine">'+(o.live?'No totals yet.':'Totals show while the session is running.')+'</div>';
+  if(beh===undefined) h+='<div class="sh">What\'s contributing to your limits usage</div><div class="fine">Scanning this box\'s sessions…</div>';
+  else if(beh && (beh.day||beh.week)){
+    var w=beh[win];
+    h+='<div class="sh">What\'s contributing to your limits usage</div>'+
+      '<div class="tabs" role="tablist"><button type="button" data-win="day" class="'+(win==='day'?'on':'')+'">Day</button><button type="button" data-win="week" class="'+(win==='week'?'on':'')+'">Week</button></div>';
+    if(!w) return h+'<div class="fine">No data for this period.</div>';
+    h+='<div class="fine">Approximate · sessions in this box only · '+(win==='week'?'last 7 days':'last 24h')+': '+(w.request_count||0)+' requests in '+(w.session_count||0)+' sessions · shares overlap</div>';
+    var recs=w.recommendations||[];
+    if(recs.length) h+=recs.map(function(r){ return '<div class="rec"><span><b>'+esc(r.title)+'</b>'+(r.detail?' <small>· '+esc(r.detail)+'</small>':'')+'</span><span>'+Math.round(r.pct)+'%</span></div>'; }).join('');
+    else h+=(w.behaviors||[]).filter(function(b){ return b.pct>=1; }).map(function(b){
+      return '<div class="rec"><span><b>'+esc(BEHAV_LBL[b.key]||b.key)+'</b> <small>· '+b.count+' requests</small></span><span>'+Math.round(b.pct)+'%</span></div>'; }).join('')||
+      '<div class="fine">Nothing stands out.</div>';
+    [['mcp_servers','MCP servers'],['skills','Skills'],['agents','Agents'],['plugins','Plugins']].forEach(function(g){
+      var list=(w[g[0]]||[]).filter(function(x){ return x.pct>=1; }).slice(0,6);
+      if(list.length) h+='<div class="sh"><span>'+g[1]+'</span><span>% of usage</span></div>'+list.map(function(x){ return kv(x.name, Math.round(x.pct)+'%'); }).join('');
+    });
+  }
+  return h;
+}
+$('statclose').addEventListener('click', statsClose);
+$('statd').addEventListener('click', function(e){
+  if(e.target===this){ statsClose(); return; }
+  var b=e.target.closest && e.target.closest('[data-win]');
+  if(b && STATD){ STATD.win=b.getAttribute('data-win'); statsRender(); }
+});
+document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('statd').classList.contains('on')){ e.stopPropagation(); e.preventDefault(); statsClose(); } }, true);
+
 function renderStatus(p){
   if(!p.stat) return;
   var st=p.state, cls={running:'run',starting:'run',requires_action:'wait',idle:'idle'}[st]||'';
@@ -2469,6 +2682,7 @@ function onEvent(p, o){
     case 'state': setState(p, o.state); if(o.state==='stopped'||o.state==='idle') finishLive(p); break;
     case 'info': p.info=o.info||{}; renderStatus(p); if(p.cmdEl && !p.cmdEl.classList.contains('hidden')) cmdUpdate(p); break;
     case 'token': rekey(p, o.token); break;
+    case 'stats': statsIn(p,o); break;
     case 'perm': renderPerm(p,o); before(p); scrollEnd(p); break;
     case 'perm_done': if(p.perms[o.id]){ p.perms[o.id].remove(); delete p.perms[o.id]; } break;
     case 'error': note(p, esc(o.text), true); if(p.state==='starting') setState(p,'stopped'); break;

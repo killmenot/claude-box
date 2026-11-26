@@ -23,6 +23,7 @@
 //     {op:'draft', key, text, voice}   the unsent composer text (kept per session, sent to other viewers);
 //                                      voice: the dictation language when part of it was dictated
 //     {op:'older', key, before}        an older page of history, ending before message uuid `before`
+//     {op:'stats', key, kind, req}     the data behind /context or /usage (kind) for the launcher's dialog
 //   server -> client:
 //     {ev:'history', key, items, state, console, info, more}   more = older items not sent yet
 //     {ev:'older', key, items, more}
@@ -33,6 +34,8 @@
 //     {ev:'perm', key, id, tool, input, reason, suggestions}
 //     {ev:'perm_done', key, id}
 //     {ev:'info', key, info}           model, permissionMode, cwd, slash commands, last cost
+//     {ev:'stats', key, kind, req, live, data, baseline?, error?}   data null: not available, send the command instead
+//     {ev:'stats', key, kind:'usage', req, part:'behaviors', behaviors}   the slower second half of /usage
 //     {ev:'released', key} / {ev:'console', key, active}
 //     {ev:'error', key, text}
 
@@ -198,32 +201,45 @@ function rememberModels(list) {
   for (const c of CHATS) { c.info.models = MODELS; c.emit({ ev: 'info', info: c.info }); }
   return MODELS;
 }
+// A claude process that is never sent a prompt: it answers control requests (supportedCommands,
+// getContextUsage, …) with no API call and no transcript of its own, and is closed after `fn`.
+// Never with `resume`: a resumed process appends a cost-state record (zeroed totals) to the
+// session's transcript even when nothing is sent.
+async function withProbe(cwd, fn, ms = 30000) {
+  await sdkReady;
+  if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
+  let stop = null, q = null;
+  const never = { [Symbol.asyncIterator]() { return { next: () => new Promise((r) => { stop = () => r({ done: true, value: undefined }); }) }; } };
+  const timer = setTimeout(() => { try { q && q.close(); } catch (_) {} }, ms);
+  try {
+    q = sdk.query({ prompt: never, options: { cwd, systemPrompt: { type: 'preset', preset: 'claude_code' }, env: sessionEnv() } });
+    return await fn(q);
+  } finally { clearTimeout(timer); if (stop) stop(); try { q && q.close(); } catch (_) {} }
+}
 // Ask a claude process for the lists without sending it anything: it starts, answers
-// supportedCommands() / supportedModels() (~1 s, no API call, no transcript) and is closed again.
+// supportedCommands() / supportedModels() (~1 s) and is closed again.
 const WARMING = new Set();
 async function warmCommands(cwd) {
   if (!cwd || WARMING.has(cwd) || (CMD.byCwd[cwd] && modelsFresh)) return;
   WARMING.add(cwd);
-  let stop = null, q = null;
-  const never = { [Symbol.asyncIterator]() { return { next: () => new Promise((r) => { stop = () => r({ done: true, value: undefined }); }) }; } };
-  const timer = setTimeout(() => { try { q && q.close(); } catch (_) {} }, 30000);
   try {
     await sdkReady; if (!sdk) return;
-    q = sdk.query({ prompt: never, options: { cwd, systemPrompt: { type: 'preset', preset: 'claude_code' },
-      env: sessionEnv() } });
-    if (q.supportedModels && !modelsFresh) rememberModels(await q.supportedModels());
-    if (q.getSettings && defaultEffort == null) {
-      const a = (await q.getSettings() || {}).applied;
-      if (a && a.effort) {
-        defaultEffort = a.effort;
-        for (const c of CHATS) if (!c.q && !c.desiredEffort && !c.info.effort) { c.info.effort = defaultEffort; c.emit({ ev: 'info', info: c.info }); }
-      }
-    }
-    if (!q.supportedCommands || CMD.byCwd[cwd]) return;
-    const list = rememberCommands(cwd, await q.supportedCommands());
-    for (const c of CHATS) if (c.cwd === cwd && !c.q) { c.info.commandList = list; c.emit({ ev: 'info', info: c.info }); }
+    await withProbe(cwd, (q) => warmFrom(q, cwd));
   } catch (e) { log('warm commands', cwd, e.message); }
-  finally { clearTimeout(timer); if (stop) stop(); try { q && q.close(); } catch (_) {} WARMING.delete(cwd); }
+  finally { WARMING.delete(cwd); }
+}
+async function warmFrom(q, cwd) {
+  if (q.supportedModels && !modelsFresh) rememberModels(await q.supportedModels());
+  if (q.getSettings && defaultEffort == null) {
+    const a = (await q.getSettings() || {}).applied;
+    if (a && a.effort) {
+      defaultEffort = a.effort;
+      for (const c of CHATS) if (!c.q && !c.desiredEffort && !c.info.effort) { c.info.effort = defaultEffort; c.emit({ ev: 'info', info: c.info }); }
+    }
+  }
+  if (!q.supportedCommands || CMD.byCwd[cwd]) return;
+  const list = rememberCommands(cwd, await q.supportedCommands());
+  for (const c of CHATS) if (c.cwd === cwd && !c.q) { c.info.commandList = list; c.emit({ ev: 'info', info: c.info }); }
 }
 
 // ---------- sub-agents ----------
@@ -437,6 +453,38 @@ class Chat {
       this.emit({ ev: 'info', info: this.info });
     } catch (e) { log(this.name, 'settings', e.message); }
   }
+  // The data behind /context and /usage for the launcher's dialogs; data null = not available
+  // here (the launcher then sends the command as before). A running session answers itself. A
+  // stopped one is not resumed for it (see withProbe): /context shows its last measurement (or
+  // the folder's baseline before the first one), /usage asks a fresh process for the plan limits.
+  async stats(kind) {
+    await sdkReady;
+    if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
+    const q = this.q;
+    if (kind === 'context') {
+      if (q && typeof q.getContextUsage === 'function') {
+        const u = await q.getContextUsage({ detail: 'full' }), s = ctxSummary(u);
+        if (s && this.cid) applyCtx(this, s);         // the ring gets the fresh numbers too
+        return { live: true, data: ctxView(u) };
+      }
+      const last = (this.cid && CTX[this.cid]) || null;
+      if (last) return { live: false, data: last };
+      const base = await withProbe(this.cwd, async (p) => typeof p.getContextUsage === 'function' ? ctxView(await p.getContextUsage({ detail: 'full' })) : null);
+      return { live: false, baseline: true, data: base };
+    }
+    if (kind === 'usage') {
+      const ask = async (p) => {
+        const f = usageFn(p);
+        if (!f) return null;
+        const [u, a] = await Promise.all([f({ skipBehaviors: true }), typeof p.accountInfo === 'function' ? p.accountInfo().catch(() => null) : null]);
+        return usageView(u, a);
+      };
+      const data = q ? await ask(q) : await withProbe(this.cwd, ask);
+      if (data && !q) data.session = null;            // a fresh process has no totals of this session
+      return { live: !!q, data };
+    }
+    throw new Error('unknown stats: ' + kind);
+  }
   askPermission(tool, input, o) {
     return new Promise((resolve) => {
       const id = 'p' + (++permSeq);
@@ -518,18 +566,82 @@ function saveCtx() {
     try { fs.writeFileSync(CTX_FILE + '.tmp', JSON.stringify(CTX)); fs.renameSync(CTX_FILE + '.tmp', CTX_FILE); } catch (e) { log('context save', e.message); }
   }, 1000);
 }
+// The ring's numbers from a getContextUsage reply (camelCase: SDKControlGetContextUsageResponse).
+function ctxSummary(u) {
+  const max = u && (u.rawMaxTokens || u.maxTokens), total = u && u.totalTokens;
+  if (!max || total == null) return null;
+  return { total, max, pct: u.percentage != null ? Math.round(u.percentage) : Math.round(total / max * 100), model: u.model || '', at: Date.now(),
+    cats: (u.categories || []).filter((k) => k.kind !== 'free' && k.tokens > 0).map((k) => ({ id: k.id || '', name: k.name, tokens: k.tokens, kind: k.kind })) };
+}
+function applyCtx(chat, c) {
+  if (chat.cid) { CTX[chat.cid] = c; CTX._max = c.max; saveCtx(); }
+  chat.info.context = c; chat.emit({ ev: 'info', info: chat.info });
+}
 async function measureCtx(chat) {
   if (!chat.q || typeof chat.q.getContextUsage !== 'function' || !chat.cid) return;
   try {
     const u = await chat.q.getContextUsage({ detail: 'summary' });
-    // the control reply is camelCase (SDKControlGetContextUsageResponse)
-    const max = u && (u.rawMaxTokens || u.maxTokens), total = u && u.totalTokens;
-    if (!max || total == null) { log(chat.name, 'context usage: unexpected reply', Object.keys(u || {}).join(',')); return; }
-    const c = { total, max, pct: u.percentage != null ? Math.round(u.percentage) : Math.round(total / max * 100), model: u.model || '', at: Date.now(),
-      cats: (u.categories || []).filter((k) => k.kind !== 'free' && k.tokens > 0).map((k) => ({ name: k.name, tokens: k.tokens, kind: k.kind })) };
-    CTX[chat.cid] = c; CTX._max = c.max; saveCtx();
-    chat.info.context = c; chat.emit({ ev: 'info', info: chat.info });
+    const c = ctxSummary(u);
+    if (!c) { log(chat.name, 'context usage: unexpected reply', Object.keys(u || {}).join(',')); return; }
+    applyCtx(chat, c);
   } catch (e) { log(chat.name, 'context usage', e.message); }
+}
+// What the /context dialog shows, from a getContextUsage({detail:'full'}) reply: the ring's numbers
+// plus every row (free space and on-demand tools included), memory files, MCP servers, message parts.
+function ctxView(u) {
+  const s = ctxSummary(u);
+  if (!s) return null;
+  const servers = new Map();
+  for (const t of u.mcpTools || []) {
+    const k = t.serverName || '?', x = servers.get(k) || { name: k, tokens: 0, tools: 0, loaded: 0 };
+    x.tokens += t.tokens || 0; x.tools++; if (t.isLoaded !== false) x.loaded++;
+    servers.set(k, x);
+  }
+  const mb = u.messageBreakdown;
+  return Object.assign(s, {
+    cats: (u.categories || []).filter((k) => k.tokens > 0 || k.kind === 'free').map((k) => ({ id: k.id || '', name: k.name, tokens: k.tokens, kind: k.kind })),
+    memory: (u.memoryFiles || []).map((f) => ({ path: f.path, type: f.type, tokens: f.tokens })),
+    mcp: [...servers.values()].sort((a, b) => b.tokens - a.tokens),
+    skills: u.skills ? { total: u.skills.totalSkills, included: u.skills.includedSkills, tokens: u.skills.tokens } : null,
+    msgs: mb ? { toolCalls: mb.toolCallTokens, toolResults: mb.toolResultTokens, attachments: mb.attachmentTokens,
+      assistant: mb.assistantMessageTokens, user: mb.userMessageTokens } : null,
+    autoCompact: u.isAutoCompactEnabled ? (u.autoCompactThreshold || true) : false,
+  });
+}
+
+// ---------- plan usage ----------
+// The /usage data: SDKControlGetUsageResponse. The method is experimental and will be renamed
+// when it is stabilized; without it the launcher falls back to sending /usage as a command.
+const USAGE_FNS = ['getUsage', 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET'];
+function usageFn(q) {
+  const n = USAGE_FNS.find((k) => q && typeof q[k] === 'function');
+  return n ? (o) => q[n](o) : null;
+}
+function usageView(u, a) {
+  if (!u || typeof u !== 'object' || !('rate_limits_available' in u || 'session' in u)) return null;
+  const s = u.session || null, models = {};
+  if (s && s.model_usage) for (const [k, m] of Object.entries(s.model_usage)) models[k] = { input: m.inputTokens, output: m.outputTokens,
+    cacheRead: m.cacheReadInputTokens, cacheWrite: m.cacheCreationInputTokens, cost: m.costUSD };
+  a = a || {};
+  return { plan: u.subscription_type || a.subscriptionType || null, limitsAvailable: !!u.rate_limits_available, limits: u.rate_limits || null,
+    session: s && { cost: s.total_cost_usd, apiMs: s.total_api_duration_ms, wallMs: s.total_duration_ms,
+      added: s.total_lines_added, removed: s.total_lines_removed, models },
+    account: { email: a.email || '', organization: a.organization || '', tokenSource: a.tokenSource || '',
+      apiKeySource: a.apiKeySource || '', provider: a.apiProvider || '' } };
+}
+// "What's contributing to your limits usage": a scan of every transcript touched in the last
+// seven days. It runs in its own process (a session's process would stall its turn meanwhile),
+// one at a time, and is reused for a couple of minutes.
+const BEHAV_TTL = 120000;
+let behav = null, behavRun = null;
+function usageBehaviors(cwd) {
+  if (behav && Date.now() - behav.at < BEHAV_TTL) return Promise.resolve(behav.data);
+  if (!behavRun) {
+    behavRun = withProbe(cwd, async (q) => { const f = usageFn(q); const u = f ? await f({}) : null; return (u && u.behaviors) || null; }, 60000)
+      .then((d) => { behav = { at: Date.now(), data: d }; return d; })
+      .finally(() => { behavRun = null; });
+  }
+  return behavRun;
 }
 // Before the first measurement: an estimate from the last main-loop answer's usage in the transcript.
 function estimateCtx(items) {
@@ -779,6 +891,15 @@ function onConnection(ws) {
         case 'perm': chat.answer(msg.id, msg); break;
         case 'mode': await chat.setMode(String(msg.mode)); break;
         case 'model': await chat.setModel(msg.model, msg.effort); break;
+        case 'stats': {
+          // not awaited: a fresh process takes a few seconds and the socket's other ops must not wait
+          const kind = String(msg.kind || ''), req = msg.req, base = { ev: 'stats', key, kind, req };
+          const fail = (e) => reply(Object.assign({}, base, { error: String((e && e.message) || e) }));
+          chat.stats(kind).then((r) => reply(Object.assign({}, base, r)), fail);
+          if (kind === 'usage') usageBehaviors(chat.cwd).then((b) => reply(Object.assign({}, base, { part: 'behaviors', behaviors: b })),
+            (e) => reply(Object.assign({}, base, { part: 'behaviors', behaviors: null, error: String((e && e.message) || e) })));
+          break;
+        }
         case 'release': await chat.stop(); reply({ ev: 'released', key }); break;
         case 'takeover':
           if (await tmuxAlive(chat.name)) {
@@ -1075,5 +1196,5 @@ async function sendTo(token, text) {
   return { via: 'chat' };
 }
 
-module.exports = { launchDir, sessionTitles, transcriptExtras, agentUsage, agentFacts, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+module.exports = { Chat, ctxView, usageView, launchDir, sessionTitles, transcriptExtras, agentUsage, agentFacts, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };
