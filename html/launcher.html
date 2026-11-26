@@ -381,6 +381,18 @@
   code{font-family:var(--mono);font-size:.88em;background:var(--codebg);border-radius:5px;padding:.1em .35em}
   pre{font-family:var(--mono);font-size:13px;line-height:1.5;background:var(--codebg);border-radius:10px;padding:12px 14px;
       overflow-x:auto;margin:.7em 0;white-space:pre} pre code{background:none;padding:0;font-size:inherit}
+  /* a copy icon in the top-right corner of every code block (added by decorateCode) */
+  .cbcode{position:relative;margin:.7em 0}
+  .cbcode>pre{margin:0}
+  .tool .body .cbcode{margin:4px 0}
+  .cbcode>.ccopy{position:absolute;top:6px;right:6px;display:flex;align-items:center;justify-content:center;width:28px;height:28px;
+      padding:0;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--mute);cursor:pointer;
+      opacity:0;transition:opacity .12s,color .12s}
+  .cbcode:hover>.ccopy,.cbcode>.ccopy:focus-visible,.cbcode>.ccopy.done{opacity:1}
+  .cbcode>.ccopy:hover{color:var(--ink)}
+  .cbcode>.ccopy.done{color:var(--ok)}
+  .cbcode>.ccopy svg{width:15px;height:15px}
+  @media (hover:none){ .cbcode>.ccopy{opacity:.85} }
   .msg.live .cursor{display:inline-block;width:8px;height:1em;vertical-align:-2px;background:var(--work);margin-left:2px;animation:pulse 1s infinite}
   .tool{margin:8px 0;font-size:14px}
   .tool > summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:8px;color:var(--slate);padding:2px 0}
@@ -1760,6 +1772,38 @@ function copyText(t){
     try{ document.execCommand('copy')?ok():no(new Error('copy failed')); }catch(e){ no(e); } ta.remove();
   });
 }
+// ---- a copy icon on every code block in the chat (markdown code, tool commands and results).
+// md() stays tag-for-tag plain (see tests/launcher-md.test.js), so the icon is added after
+// rendering: new <pre>s are wrapped in .cbcode with a button, whichever path drew them (history,
+// a finished message, a streaming one that is redrawn on every chunk).
+var COPY_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
+var DONE_ICON='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+function decorateCode(root){
+  (root||document).querySelectorAll('.msg pre, .tool .body pre').forEach(function(pre){
+    if(pre.parentNode && pre.parentNode.classList && pre.parentNode.classList.contains('cbcode')) return;
+    if(pre.closest('.codeblk')) return;          // markdown code blocks already have Copy in their bar
+    var w=document.createElement('div'); w.className='cbcode';
+    pre.parentNode.insertBefore(w, pre); w.appendChild(pre);
+    var b=document.createElement('button'); b.type='button'; b.className='ccopy';
+    b.title='Copy'; b.setAttribute('aria-label','Copy code'); b.innerHTML=COPY_ICON;
+    w.appendChild(b);
+  });
+}
+var CODE_PENDING=false;
+new MutationObserver(function(){
+  if(CODE_PENDING) return; CODE_PENDING=true;
+  requestAnimationFrame(function(){ CODE_PENDING=false; decorateCode(); });
+}).observe(document.body, {childList:true, subtree:true});
+document.addEventListener('click', function(e){
+  var b=e.target.closest && e.target.closest('.cbcode>.ccopy'); if(!b) return;
+  var pre=b.parentNode.querySelector('pre'); if(!pre) return;
+  var t=pre.textContent;
+  // a Bash tool row shows its command as "$ cmd": copy the command alone
+  if(b.closest('.tool') && /^\$ /.test(t)) t=t.slice(2);
+  copyText(t).then(function(){ b.innerHTML=DONE_ICON; b.classList.add('done'); b.title='Copied'; },
+    function(){ b.title='Copy failed'; })
+    .then(function(){ setTimeout(function(){ b.innerHTML=COPY_ICON; b.classList.remove('done'); b.title='Copy'; }, 1500); });
+});
 // what a person would read out: no code, no link targets, no markdown marks
 function speakable(t){
   return String(t||'').replace(/```[\s\S]*?```/g,' (code) ').replace(/`([^`\n]+)`/g,'$1')
