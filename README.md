@@ -35,8 +35,10 @@ The old `--web` / `--build` flags are still accepted and do the same as a plain 
 1. creates `.env` from `.env.example` if there is none (tokens and the rest live there);
 2. asks for the **projects folder** — the host folder with your projects, mounted as `/workspace`
    (default `workspace/` next to the script, git-ignored, created if missing) and saves it as `PROJECT_DIR`;
-3. prints a **one-time sign-in link** (`https://localhost:8443/?key=…`, valid 15 minutes, works once).
-   Open it: the browser is signed in, and a setup wizard walks through four steps:
+3. prints a **one-time sign-in link** (`https://localhost:8443/?key=…`, valid 15 minutes, works once),
+   plus the same key on plain http (`http://localhost:7681/?key=…`): the https one uses a self-signed
+   certificate the browser warns about until you trust it, the http one has no warning (localhost is a
+   secure context either way, so clipboard and notifications work on both). Open either: the browser is signed in, and a setup wizard walks through four steps:
    - **Login** (required): a login and password for your phone, other computers and the public tunnel;
    - **Model**: **Sign in with Claude** runs `claude auth login` in the box: open claude.ai, sign in,
      paste back the code it shows. Or pick GLM / Abliteration and paste an API key;
