@@ -17,6 +17,7 @@ with state and plugins preserved between runs.
 ./claude-box            # build (cached) and start the web UI, print its address
 ./claude-box --status   # is it running, where, which console sessions
 ./claude-box --stop     # stop it (running sessions come back on the next start)
+./claude-box --restart  # rebuild (cached) and recreate the container
 ./claude-box --setup    # re-run the first-run setup
 ./claude-box --install  # print how to add claude-box to PATH (changes nothing)
 ```
@@ -182,7 +183,7 @@ Open `.env`, uncomment the line and paste the token:
 GH_TOKEN=ghp_xxx
 ```
 
-Restart claude-box (`./claude-box --stop && ./claude-box`) — and `gh` is ready:
+Restart claude-box (`./claude-box --restart`) — and `gh` is ready:
 
 ```bash
 # in the web terminal:

@@ -195,7 +195,7 @@ async function main() {
     if (e && /EACCES/.test(String(e.code || e.message))) {
       warn(`${e.message}`);
       warn(`${HOME} is not writable by uid ${process.getuid()} — the ./home bind mount belongs to another user.`);
-      warn(`Re-run 'claude-box' so it fills BOX_UID/BOX_GID in .env, then 'claude-box --stop && claude-box'.`);
+      warn(`Re-run 'claude-box' so it fills BOX_UID/BOX_GID in .env, then 'claude-box --restart'.`);
       process.exit(1);
     }
     throw e;
