@@ -117,14 +117,14 @@ function ciOf(rollup) {
 function prFacts(o) {
   const state = o.state === 'MERGED' ? 'merged' : o.state === 'CLOSED' ? 'closed' : o.isDraft ? 'draft' : 'open';
   const review = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQUIRED: 'review' }[o.reviewDecision] || '';
-  return { state, ci: ciOf(o.statusCheckRollup), review, comments: (o.comments || []).length + (o.reviews || []).filter((r) => r && r.body).length,
+  return { title: String(o.title || '').slice(0, 200), author: (o.author && o.author.login) || '', state, ci: ciOf(o.statusCheckRollup), review, comments: (o.comments || []).length + (o.reviews || []).filter((r) => r && r.body).length,
     labels: (o.labels || []).map((l) => l && l.name).filter(Boolean).slice(0, 3) };
 }
 function prInfo(url) {
   let c = PR_FACTS.get(url);
   if (!c) { c = { at: 0, facts: null, busy: null }; PR_FACTS.set(url, c); }
   if (!c.busy && Date.now() - c.at > PR_TTL) {
-    c.busy = run('gh', ['pr', 'view', url, '--json', 'state,isDraft,reviewDecision,comments,reviews,labels,statusCheckRollup'])
+    c.busy = run('gh', ['pr', 'view', url, '--json', 'title,author,state,isDraft,reviewDecision,comments,reviews,labels,statusCheckRollup'])
       .then((out) => { if (out) { try { c.facts = prFacts(JSON.parse(out)); } catch (_) {} } c.at = Date.now(); })
       .finally(() => { c.busy = null; });
   }

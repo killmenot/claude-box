@@ -42,7 +42,7 @@ test('CI, review and comments of a PR from gh', () => {
   assert.strictEqual(ctx.ciOf([{ conclusion: 'FAILURE' }, { status: 'IN_PROGRESS' }]), 'fail');
   assert.deepStrictEqual(ctx.prFacts({ state: 'OPEN', isDraft: false, reviewDecision: 'APPROVED', comments: [{}, {}], reviews: [{ body: 'lgtm' }, { body: '' }],
     labels: [{ name: 'bug' }], statusCheckRollup: [{ conclusion: 'SUCCESS' }] }),
-  { state: 'open', ci: 'ok', review: 'approved', comments: 3, labels: ['bug'] });
+  { title: '', author: '', state: 'open', ci: 'ok', review: 'approved', comments: 3, labels: ['bug'] });
   assert.strictEqual(ctx.prFacts({ state: 'OPEN', isDraft: true }).state, 'draft');
   assert.strictEqual(ctx.prFacts({ state: 'MERGED' }).state, 'merged');
 });

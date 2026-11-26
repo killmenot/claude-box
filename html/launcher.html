@@ -1820,12 +1820,16 @@ function ctxAgo(sec){ var d=Date.now()/1000-sec; return d<3600?Math.max(1,Math.r
 function ctxChip(it){
   var h='<span class="ci '+it.kind+'">'+CTX_KIND[it.kind].i+'</span>', tip=it.url;
   if(it.kind==='pr'){
-    h+='<span class="k">'+esc(it.repo+'#'+it.number)+'</span>';
-    if(it.state) h+='<span class="t '+it.state+'">'+{open:'Open',draft:'Draft',merged:'Merged',closed:'Closed'}[it.state]+'</span>';
-    if(it.ci) h+='<span class="t '+it.ci+'">'+{ok:'✓ CI',fail:'✕ CI',pend:'● CI'}[it.ci]+'</span>';
-    if(it.review && it.state!=='merged') h+='<span class="t '+it.review+'">'+{approved:'Approved',changes:'Changes requested',review:'Review needed'}[it.review]+'</span>';
-    if(it.comments) h+='<span class="m">💬 '+it.comments+'</span>';
-    (it.labels||[]).forEach(function(l){ h+='<span class="t lab">'+esc(l)+'</span>'; });
+    // the chip stays short: #number and state marks; the repo, title and labels are in the tooltip
+    var ST={open:'Open',draft:'Draft',merged:'Merged',closed:'Closed'}, CI={ok:'CI passed',fail:'CI failed',pend:'CI running'},
+        RV={approved:'approved',changes:'changes requested',review:'review needed'};
+    h+='<span class="k">#'+esc(String(it.number))+'</span>';
+    if(it.state) h+='<span class="t '+it.state+'">'+ST[it.state]+'</span>';
+    if(it.ci) h+='<span class="t '+it.ci+'">'+{ok:'✓',fail:'✕',pend:'●'}[it.ci]+'</span>';
+    if(it.review && it.state!=='merged' && it.state!=='closed') h+='<span class="t '+it.review+'">'+{approved:'👍',changes:'✎',review:'👀'}[it.review]+'</span>';
+    if(it.comments) h+='<span class="m">💬'+it.comments+'</span>';
+    tip=it.owner+'/'+it.repo+' #'+it.number+(it.title?'\n'+it.title:'')+(it.author?'\nby '+it.author:'')+
+      '\n'+[it.state&&ST[it.state], it.ci&&CI[it.ci], it.review&&RV[it.review], it.comments?it.comments+' comments':'', (it.labels||[]).length?'labels: '+it.labels.join(', '):''].filter(Boolean).join(' · ');
   } else if(it.kind==='slack'){
     h+='<span class="k">'+esc(it.channelName ? (it.channelName.charAt(0)==='#'?it.channelName:'#'+it.channelName) : '#'+String(it.channel||'').slice(0,7)+'…')+'</span>';
     if(it.from) h+='<span class="m">'+esc(it.from)+'</span>';
