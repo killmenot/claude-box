@@ -90,7 +90,11 @@ function ensure() {
     if (!procs.vnc) {
       try { fs.unlinkSync(VNC_SOCK); } catch (_) {}
       run('vnc', 'x11vnc', ['-display', DISPLAY, '-unixsock', VNC_SOCK, '-rfbport', '0', '-forever', '-shared',
-        '-nopw', '-quiet', '-noxdamage', '-cursor', 'arrow', '-clip', `${view.w}x${view.h}+0+0`]);
+        '-nopw', '-quiet', '-noxdamage', '-cursor', 'arrow', '-clip', `${view.w}x${view.h}+0+0`,
+        // X autorepeat stays off (x11vnc's default): the viewer turns the Mac's own key repeats into
+        // presses, so a held key repeats at the Mac's rate. The clipboard goes over DevTools
+        // (clipboardGet/Paste below): this x11vnc does not notice Chromium's copies.
+        '-noprimary', '-noclipboard']);
     }
     for (let i = 0; i < 100; i++) {
       if (await sockAlive(VNC_SOCK) && await cdpAlive()) { brandAsChrome().catch((e) => log('brand:', e.message)); return; }
@@ -108,6 +112,7 @@ function ensure() {
 // gives it Chromium's own list with "Google Chrome" added, like Google's build. Google Chrome itself
 // has no Linux build for ARM, so it cannot simply be installed here. CB_BROWSER_BRAND=0 turns it off.
 let brander = null, brandMeta = null, bsend = null;
+const pageSessions = new Map();     // targetId -> DevTools session of that page (for the clipboard)
 function chromeMeta(own, fullList, full) {
   const add = (list, version) => {
     const out = (list && list.length ? list : [{ brand: 'Chromium', version }]).filter((b) => b.brand !== 'Google Chrome');
@@ -137,6 +142,7 @@ async function brandAsChrome() {
     if (o.id && pend.has(o.id)) { pend.get(o.id)(o.result || {}); pend.delete(o.id); return; }
     if (o.method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = o.params;
+    if (targetInfo.type === 'page') pageSessions.set(targetInfo.targetId, sessionId);
     if (brandMeta) await send('Network.setUserAgentOverride', { userAgent: ua, userAgentMetadata: brandMeta }, sessionId);
     if (/^(page|iframe)$/.test(targetInfo.type)) await attach(sessionId);       // its frames and workers too
     if (targetInfo.type === 'page') fitWindow(targetInfo.targetId);                // a new window takes the tab's size
@@ -190,6 +196,40 @@ function resize(w, h) {
     }
   }).catch((e) => log('resize:', e.message));
   return fitting.then(() => Object.assign({ changed: true }, view));
+}
+
+// ---------- the clipboard, over DevTools ----------
+// The page the user is in: the one whose document has focus (else the first visible one).
+async function activeSession() {
+  if (!bsend) throw new Error('the browser is not connected');
+  const t = await bsend('Target.getTargets', {});
+  const live = new Set((t.targetInfos || []).filter((i) => i.type === 'page').map((i) => i.targetId));
+  for (const id of [...pageSessions.keys()]) if (!live.has(id)) pageSessions.delete(id);
+  let visible = null;
+  for (const [, sid] of pageSessions) {
+    const r = await bsend('Runtime.evaluate', { expression: '[document.hasFocus(), document.visibilityState]', returnByValue: true }, sid);
+    const v = r && r.result && r.result.value;
+    if (v && v[0]) return sid;
+    if (!visible && v && v[1] === 'visible') visible = sid;
+  }
+  if (!visible) throw new Error('no page is open');
+  return visible;
+}
+// what the user just copied in the box (Ctrl+C there) -> the viewer puts it on the Mac's clipboard
+async function clipboardGet() {
+  const sid = await activeSession();
+  await bsend('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] });
+  const r = await bsend('Runtime.evaluate', { expression: 'navigator.clipboard.readText()', awaitPromise: true, returnByValue: true, userGesture: true }, sid);
+  const text = r && r.result && typeof r.result.value === 'string' ? r.result.value : '';
+  return { text: text.slice(0, 1 << 20) };
+}
+// the Mac's clipboard -> typed into the focused field of the page in the box
+async function clipboardPaste(text) {
+  text = String(text || '').slice(0, 1 << 20);
+  if (!text) return { ok: false };
+  const sid = await activeSession();
+  await bsend('Input.insertText', { text }, sid);
+  return { ok: true };
 }
 
 async function status() {
@@ -246,4 +286,4 @@ function stop() {
   for (const k of ['vnc', 'chrome', 'xvfb']) { const p = procs[k]; if (p) try { p.kill('SIGTERM'); } catch (_) {} }
 }
 
-module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, _bridge, chromeMeta, CDP_PORT, VNC_SOCK, PROFILE };
+module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, clipboardGet, clipboardPaste, _bridge, chromeMeta, CDP_PORT, VNC_SOCK, PROFILE };
