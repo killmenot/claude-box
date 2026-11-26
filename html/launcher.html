@@ -1481,6 +1481,7 @@ function buildChat(p){
   p.el=c; p.log=c.querySelector('.log'); p.inner=c.querySelector('.inner'); p.inner.dataset.key=p.wire;
   p.inner.appendChild(el('div','loading','Loading session…'));   // the history reply clears it
   p.log.addEventListener('scroll', function(){ checkOlder(p); }, {passive:true});
+  p.log.tabIndex=-1; watchScroll(p);
   p.ta=c.querySelector('textarea'); p.go=c.querySelector('.go'); p.stopb=c.querySelector('.stopbtn');
   p.stat=c.querySelector('.stat'); p.ctxm=c.querySelector('.ctxm'); p.modelb=c.querySelector('.modelbtn');
   p.modelb.addEventListener('click', function(e){ e.stopPropagation(); openModelMenu(p, p.modelb); });
@@ -1676,7 +1677,10 @@ function activate(key){
   var p=PANES[key]; if(!p) return;
   if(INBOX.open) closeInbox(true);
   if(VOICE.active && VOICE.active!==p) VOICE.stop(true);
+  var switched=ACTIVE!==key;
   ACTIVE=key; p.used=Date.now();
+  // opening a session from the sidebar lands on its last message (switching its own tabs does not)
+  if(switched && p.log){ p.stick=true; requestAnimationFrame(function(){ scrollEnd(p); }); setTimeout(function(){ scrollEnd(p); }, 50); }
   if(p.mode==='console') ensureIframe(p); else { if(!p.el) openChat(p); }
   if(p.cview && !CODE_ON) p.cview=false;
   if(p.tview) ensureTerm(p);
@@ -1822,8 +1826,36 @@ function toChat(p){
 
 // ======================= chat rendering =======================
 function nearEnd(p){ return p.log.scrollHeight-p.log.scrollTop-p.log.clientHeight < 80; }
-function scrollEnd(p, force){ if(force || p.stick) p.log.scrollTop=p.log.scrollHeight; }
-function before(p){ p.stick=!p.prepending && nearEnd(p); }
+// Sticking to the bottom follows what the user does, not where the view happens to be: any
+// upward wheel / touch drag / key unsticks at once (re-checking "near the end" on every streamed
+// chunk pulled a reader who had just started scrolling back down, the jitter), and reaching the
+// bottom again sticks. While stuck, a ResizeObserver keeps the view at the end as content grows
+// (streaming, images, late layout), so opening a session lands on the last message.
+function scrollEnd(p, force){
+  if(force) p.stick=true;
+  if(!p.stick || !p.log) return;
+  p.progTop=p.log.scrollHeight-p.log.clientHeight;
+  p.log.scrollTop=p.log.scrollHeight;
+}
+function before(p){ if(p.stick===undefined) p.stick=!p.prepending && nearEnd(p); }
+function watchScroll(p){
+  var log=p.log, unstick=function(){ p.stick=false; };
+  log.addEventListener('wheel', function(e){ if(e.deltaY<0) unstick(); }, {passive:true});
+  var ty=null;
+  log.addEventListener('touchstart', function(e){ ty=e.touches[0].clientY; }, {passive:true});
+  log.addEventListener('touchmove', function(e){ if(ty!=null && e.touches[0].clientY>ty+4) unstick(); }, {passive:true});
+  log.addEventListener('keydown', function(e){ if(/^(PageUp|ArrowUp|Home)$/.test(e.key)) unstick(); });
+  log.addEventListener('mousedown', function(e){ if(e.target===log && e.offsetX>log.clientWidth) unstick(); });   // the scrollbar
+  log.addEventListener('scroll', function(){
+    // our own scroll to the end: not the user's
+    if(p.progTop!=null && Math.abs(log.scrollTop-p.progTop)<2){ p.progTop=null; return; }
+    p.progTop=null;
+    // only the user's own input unsticks (above): the browser also scrolls by itself when content
+    // changes (clamping, scroll anchoring), and that must not count
+    if(nearEnd(p)) p.stick=true;
+  }, {passive:true});
+  if(window.ResizeObserver) new ResizeObserver(function(){ if(p.stick && !p.prepending) scrollEnd(p); }).observe(p.inner);
+}
 // Older history: the server sends the last few prompts first; scrolling near the top asks for
 // the previous page, which is rendered off-screen and inserted above without moving the view.
 function setOlder(p, more, items){
@@ -3224,7 +3256,9 @@ function onEvent(p, o){
       p.ready=true;
       (p.queue||[]).splice(0).forEach(function(q){ p.ta.value=q.t; p.files=q.files; p.voiced=q.voice||''; send(p); });
       draftRestore(p, o.draft);
-      requestAnimationFrame(function(){ scrollEnd(p,true); checkOlder(p); });
+      scrollEnd(p,true);                      // stick now; the observer keeps it there while layout settles
+      requestAnimationFrame(function(){ scrollEnd(p); checkOlder(p); });
+      setTimeout(function(){ scrollEnd(p); }, 300);
       break;
     case 'msg':
       before(p);
