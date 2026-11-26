@@ -232,6 +232,40 @@ async function clipboardPaste(text) {
   return { ok: true };
 }
 
+// ---------- Slack: permalinks straight into the web app ----------
+// A permalink (https://<ws>.slack.com/archives/C…/p…) first shows "Launching <workspace>…", which tries
+// the desktop app; the web app's own address skips that, but needs the workspace's team id (T…),
+// which no permalink carries. It is learned from any open app.slack.com/client/T… page; until then
+// the permalink opens and its "open this link in your browser" is clicked for the user.
+let slackTeam = '';
+function slackLearn(pages) {
+  for (const p of pages) { const m = /^https:\/\/app\.slack\.com\/client\/(T[A-Z0-9]+)/.exec(p.url); if (m) { slackTeam = m[1]; return; } }
+}
+// https://<ws>.slack.com/archives/C…/p1795610923135229[?thread_ts=…] -> app.slack.com/client/T…/C…/thread/C…-1795610923.135229
+function slackWebUrl(href, team) {
+  let u; try { u = new URL(href); } catch (_) { return null; }
+  if (!team || !/\.slack\.com$/.test(u.hostname) || u.hostname === 'app.slack.com') return null;
+  const m = /^\/archives\/([A-Z0-9]+)(?:\/p(\d{16}))?/.exec(u.pathname);
+  if (!m) return null;
+  const ch = m[1], thr = u.searchParams.get('thread_ts') || (m[2] ? m[2].slice(0, 10) + '.' + m[2].slice(10) : '');
+  return `https://app.slack.com/client/${team}/${ch}` + (/^\d+\.\d+$/.test(thr) ? `/thread/${ch}-${thr}` : '');
+}
+// no team id yet: wait for the "Launching…" page and press its open-in-browser link
+async function slackPastRedirect(targetId) {
+  for (let i = 0; i < 30; i++) {
+    await sleep(500);
+    const t = await bsend('Target.getTargets', {});
+    const page = (t.targetInfos || []).find((x) => x.targetId === targetId);
+    if (!page) return;
+    if (/^https:\/\/app\.slack\.com\//.test(page.url)) { slackLearn([page]); return; }
+    const sid = pageSessions.get(targetId);
+    if (!sid) continue;
+    const r = await bsend('Runtime.evaluate', { returnByValue: true, expression:
+      '(()=>{const a=[...document.querySelectorAll("a[href]")].find((x)=>/app\\.slack\\.com\\/client|\\/messages\\//.test(x.href)||/open this link in your browser/i.test(x.textContent));if(!a)return "";a.click();return a.href;})()' }, sid);
+    if (r && r.result && r.result.value) { await sleep(1500); }
+  }
+}
+
 // ---------- open a link from claude-box (the context strip, links in the chat) ----------
 // A PR or Jira issue already open comes to the front; Slack keeps one tab, moved to the thread
 // (its web app is heavy); anything else opens in a new tab. Only https links.
@@ -247,19 +281,27 @@ async function openUrl(url) {
   const slack = /\.slack\.com$/.test(u.hostname);
   const t = await bsend('Target.getTargets', {});
   const pages = (t.targetInfos || []).filter((i) => i.type === 'page');
+  slackLearn(pages);
+  const web = slack ? slackWebUrl(href, slackTeam) : null;
+  const go = web || href;
   let hit = null;
   if (pr) hit = pages.find((p) => p.url.startsWith(pr[0]) && /^(\/|$|#|\?)/.test(p.url.slice(pr[0].length)));
   else if (jira) hit = pages.find((p) => p.url.includes('/browse/' + jira[1]));
   else if (slack) hit = pages.find((p) => /^https:\/\/(app\.slack\.com|[\w-]+\.slack\.com)\//.test(p.url));
   else hit = pages.find((p) => p.url === href);
-  if (hit && slack && !hit.url.startsWith(href)) {
+  if (hit && slack && !hit.url.startsWith(go)) {
     const sid = pageSessions.get(hit.targetId);
-    if (sid) await bsend('Page.navigate', { url: href }, sid);
+    if (sid) await bsend('Page.navigate', { url: go }, sid);
   }
-  if (hit) { await bsend('Target.activateTarget', { targetId: hit.targetId }); return { ok: true, reused: true }; }
-  const n = await bsend('Target.createTarget', { url: href });
-  if (n && n.targetId) await bsend('Target.activateTarget', { targetId: n.targetId });
-  return { ok: !!(n && n.targetId), reused: false };
+  let id = hit && hit.targetId;
+  if (hit) await bsend('Target.activateTarget', { targetId: hit.targetId });
+  else {
+    const n = await bsend('Target.createTarget', { url: go });
+    id = n && n.targetId;
+    if (id) await bsend('Target.activateTarget', { targetId: id });
+  }
+  if (slack && !web && id) slackPastRedirect(id).catch(() => {});
+  return { ok: !!id, reused: !!hit, url: go };
 }
 
 async function status() {
@@ -316,4 +358,4 @@ function stop() {
   for (const k of ['vnc', 'chrome', 'xvfb']) { const p = procs[k]; if (p) try { p.kill('SIGTERM'); } catch (_) {} }
 }
 
-module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, clipboardGet, clipboardPaste, openUrl, _bridge, chromeMeta, CDP_PORT, VNC_SOCK, PROFILE };
+module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, clipboardGet, clipboardPaste, openUrl, slackWebUrl, _bridge, chromeMeta, CDP_PORT, VNC_SOCK, PROFILE };

@@ -89,3 +89,14 @@ test('the screen follows the tab, within limits', async () => {
   assert.deepStrictEqual(await b.resize(100, 50), { changed: true, w: 640, h: 400 });
   assert.deepStrictEqual(await b.resize(99999, 99999), { changed: true, w: 3840, h: 2160 });
 });
+
+test('a Slack permalink opens in the web app (no "Launching…" page) once the team id is known', () => {
+  const T = 'T0123ABCD', p = 'https://acme.slack.com/archives/C0456EFGH/p1795610923135229';
+  assert.strictEqual(b.slackWebUrl(p, T), 'https://app.slack.com/client/T0123ABCD/C0456EFGH/thread/C0456EFGH-1795610923.135229');
+  // a reply's link opens its thread (the parent's ts)
+  assert.strictEqual(b.slackWebUrl('https://acme.slack.com/archives/C0456EFGH/p1795610999000100?thread_ts=1795610923.135229&cid=C0456EFGH', T),
+    'https://app.slack.com/client/T0123ABCD/C0456EFGH/thread/C0456EFGH-1795610923.135229');
+  assert.strictEqual(b.slackWebUrl('https://acme.slack.com/archives/C0456EFGH', T), 'https://app.slack.com/client/T0123ABCD/C0456EFGH');
+  assert.strictEqual(b.slackWebUrl(p, ''), null, 'no team id yet: the permalink itself');
+  assert.strictEqual(b.slackWebUrl('https://app.slack.com/client/T1/C1', T), null);
+});
