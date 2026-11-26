@@ -849,6 +849,16 @@
   .skilldoc>summary:before{content:"▸ ";font-size:10px}
   .skilldoc[open]>summary:before{content:"▾ "}
   .skilldoc>summary:hover{color:var(--ink);opacity:1}
+  .agentmsg{margin:6px 0;font-size:12px;color:var(--mute)}
+  .agentmsg>summary{cursor:pointer;list-style:none;display:flex;gap:6px;align-items:baseline;padding:5px 10px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .agentmsg>summary::-webkit-details-marker{display:none}
+  .agentmsg>summary:before{content:"\25B8";font-size:10px}
+  .agentmsg[open]>summary:before{content:"\25BE"}
+  .agentmsg>summary:hover{color:var(--ink)}
+  .agentmsg .who{color:var(--ink);white-space:nowrap}
+  .agentmsg .kd{white-space:nowrap}
+  .agentmsg .pv{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;opacity:.8}
+  .agentmsg>.body{color:var(--ink);font-size:13px;border-left:2px solid var(--line);padding-left:10px;margin:6px 0 0 3px;max-height:60vh;overflow:auto}
   .skilldoc>.body{color:var(--ink);font-size:13px;border-left:2px solid var(--line);padding-left:10px;margin:6px 0 0 3px;max-height:60vh;overflow:auto}
   .attbtn{border:0;background:transparent;color:var(--mute);cursor:pointer;padding:4px;display:flex;border-radius:8px}
   .attbtn:hover{color:var(--ink);background:var(--hover)} .attbtn svg{width:17px;height:17px}
@@ -3155,8 +3165,27 @@ function addToolResult(p, b){
   body.insertAdjacentHTML('beforeend','<div class="lbl">'+(b.is_error?'error':'result')+'</div><pre class="res">'+
     esc(t.length>20000?t.slice(0,20000)+'\n… ('+t.length+' chars)':t)+'</pre>');
 }
+// "Another Claude session sent a message: <agent-message from=...>..." (a subagent's hand-back or a
+// peer session's message) is delivered as a user turn: one collapsed line, the text on click
+var AGENT_MSG=/^Another Claude session sent a message:\s*/;
+function agentMsg(p, t, name){
+  var parts=t.replace(AGENT_MSG,'').split(/<agent-message from="([^"]*)">\n?/);
+  if(parts.length<3) parts=['', '', parts[0]];
+  for(var i=1;i<parts.length;i+=2){
+    var from=parts[i], body=parts[i+1].replace(/<\/agent-message>\s*$/,''), kind='message';
+    var hb=/^\[Subagent hand-back\][\s\S]*?The report follows:\n/.exec(body);
+    if(hb){ kind='subagent report'; body=body.slice(hb[0].length).replace(/^  /gm,''); }
+    var pv=(body.split('\n').filter(function(l){ return l.trim(); })[0]||'').replace(/[*`#]/g,'').trim().slice(0,160);
+    var d=el('details','agentmsg');
+    d.innerHTML='<summary><span class="who">\u2709 '+esc(name||'Another Claude session')+'</span><span class="kd">\u00b7 '+kind+
+      (from?' \u00b7 <span title="'+esc(from)+'">'+esc(from.slice(0,7))+'</span>':'')+'</span><span class="pv">\u2014 '+esc(pv)+'</span></summary>'+
+      '<div class="body">'+md(body)+'</div>';
+    p.inner.appendChild(d);
+  }
+}
 // user-side text: hide harness wrappers, show slash commands and local command output
-function userTextHtml(p, t, imgs){
+function userTextHtml(p, t, imgs, from){
+  if(AGENT_MSG.test(t)){ agentMsg(p, t, from); return; }
   var voice=false;
   Object.keys(VOICE_NOTES).forEach(function(k){ var n=VOICE_NOTES[k]; if(!voice && t.indexOf(n)===0){ voice=true; t=t.slice(n.length).replace(/^\r?\n/,''); } });
   // "[Attached files]" block appended by web-chat.js -> chips; inline images come in as imgs
@@ -3406,6 +3435,8 @@ function renderItem(p, m){
   MSG_TS=m.ts||0;
   var msg=m.message||{}, c=msg.content;
   if(m.type==='user'){
+    var peer=typeof c==='string'?c:(((c||[]).filter(function(b){ return b.type==='text'; })[0])||{}).text||'';
+    if(AGENT_MSG.test(peer)){ agentMsg(p, peer, m.from); return; }
     if(m.meta){ note(p, '⏰ scheduled run'); return; }   // cron/scheduled turns collapse to one dim line
     if(typeof c==='string'){ userTextHtml(p,c); return; }
     var imgs=[];
