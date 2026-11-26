@@ -187,14 +187,34 @@ function rememberCommands(cwd, list) {
   return clean;
 }
 function cachedCommands(cwd) { return (cwd && CMD.byCwd[cwd]) || CMD.last || []; }
-// Ask a claude process for the list without sending it anything: it starts, answers
-// supportedCommands() (~1 s, no API call, no transcript) and is closed again.
+// ---------- model list for the composer's model picker ----------
+// supportedModels() of a claude process; the same for every folder, so one list, saved to disk.
+const MODELS_FILE = process.env.WEB_CHAT_MODELS || path.join(require('os').homedir(), '.claude', 'web-models.json');
+let MODELS = []; try { MODELS = JSON.parse(fs.readFileSync(MODELS_FILE, 'utf8')) || []; } catch (_) {}
+let modelsFresh = false;           // asked a claude process since this server started
+let defaultEffort = null;          // the effort a fresh session gets (settings, model default), from the probe
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+function rememberModels(list) {
+  const clean = (Array.isArray(list) ? list : []).filter((m) => m && m.value).slice(0, 50).map((m) => ({
+    value: String(m.value).slice(0, 120), resolvedModel: m.resolvedModel ? String(m.resolvedModel).slice(0, 120) : '',
+    displayName: String(m.displayName || m.value).slice(0, 80), description: String(m.description || '').slice(0, 200),
+    efforts: m.supportsEffort && Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels.filter((e) => EFFORTS.includes(e)) : [] }));
+  if (!clean.length) return MODELS;
+  modelsFresh = true;
+  if (JSON.stringify(clean) === JSON.stringify(MODELS)) return MODELS;
+  MODELS = clean;
+  try { const tmp = MODELS_FILE + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(MODELS)); fs.renameSync(tmp, MODELS_FILE); } catch (_) {}
+  for (const c of CHATS) { c.info.models = MODELS; c.emit({ ev: 'info', info: c.info }); }
+  return MODELS;
+}
+// Ask a claude process for the lists without sending it anything: it starts, answers
+// supportedCommands() / supportedModels() (~1 s, no API call, no transcript) and is closed again.
 const WARMING = new Set();
 // Warmups run ONE at a time: each spawns a full `claude` process (all MCP servers start with it),
 // and a burst of those on parallel session opens stole CPU from the whole server (UI-wide stalls).
 const WARM_QUEUE = [];
 async function warmCommands(cwd) {
-  if (!cwd || WARMING.has(cwd) || CMD.byCwd[cwd] || WARM_QUEUE.includes(cwd)) return;
+  if (!cwd || WARMING.has(cwd) || (CMD.byCwd[cwd] && modelsFresh) || WARM_QUEUE.includes(cwd)) return;
   if (WARMING.size > 0) { WARM_QUEUE.push(cwd); return; }   // wait for the current warmup + 3 s spacing
   WARMING.add(cwd);
   let stop = null, q = null;
@@ -204,7 +224,15 @@ async function warmCommands(cwd) {
     await sdkReady; if (!sdk) return;
     q = sdk.query({ prompt: never, options: { cwd, systemPrompt: { type: 'preset', preset: 'claude_code' },
       env: sessionEnv() } });
-    if (!q.supportedCommands) return;
+    if (q.supportedModels && !modelsFresh) rememberModels(await q.supportedModels());
+    if (q.getSettings && defaultEffort == null) {
+      const a = (await q.getSettings() || {}).applied;
+      if (a && a.effort) {
+        defaultEffort = a.effort;
+        for (const c of CHATS) if (!c.q && !c.desiredEffort && !c.info.effort) { c.info.effort = defaultEffort; c.emit({ ev: 'info', info: c.info }); }
+      }
+    }
+    if (!q.supportedCommands || CMD.byCwd[cwd]) return;
     const list = rememberCommands(cwd, await q.supportedCommands());
     for (const c of CHATS) if (c.cwd === cwd && !c.q) { c.info.commandList = list; c.emit({ ev: 'info', info: c.info }); }
   } catch (e) { log('warm commands', cwd, e.message); }
@@ -215,6 +243,24 @@ async function warmCommands(cwd) {
   }
 }
 
+// ---------- sub-agents ----------
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+// Totals Claude Code appends to an agent's result or task-notification, in either spelling:
+//   <usage>subagent_tokens: 26451\ntool_uses: 1\nduration_ms: 14821</usage>
+//   <usage><subagent_tokens>97313</subagent_tokens><tool_uses>18</tool_uses><duration_ms>138165</duration_ms></usage>
+// (older versions say total_tokens). Text taken from a raw transcript line has "\n" escaped; both work.
+function agentUsage(text) {
+  const u = /<usage>([\s\S]{0,400}?)<\/usage>/.exec(String(text || ''));
+  if (!u) return {};
+  const body = u[1].replace(/\\n/g, '\n');
+  const num = (k) => { const r = new RegExp('(?:^|[^a-z_])' + k + '(?:>|:\\s*)(\\d+)').exec(body); return r ? +r[1] : undefined; };
+  const out = {}, tok = num('subagent_tokens') != null ? num('subagent_tokens') : num('total_tokens');
+  if (tok != null) out.tokens = tok;
+  if (num('tool_uses') != null) out.tools = num('tool_uses');
+  if (num('duration_ms') != null) out.ms = num('duration_ms');
+  return out;
+}
+
 class Chat {
   constructor({ cid, cwd, name, token, model }) {
     this.cid = cid || null; this.cwd = cwd; this.name = name; this.token = token || null;
@@ -223,9 +269,10 @@ class Chat {
     this.state = 'stopped'; this.q = null; this.input = null;
     this.perms = new Map();           // id -> {resolve, tool, input, reason, suggestions}
     this.turn = [];                   // SDK messages of the current turn (for late subscribers)
-    this.info = { cwd, model: '', modelRef: '', permissionMode: '', commands: [], cost: null, commandList: cachedCommands(cwd) };
+    this.info = { cwd, model: '', modelRef: '', effort: defaultEffort, permissionMode: '', commands: [], cost: null, commandList: cachedCommands(cwd), models: MODELS };
     this.info.modelRef = this.pickModel() ? this.pickModel().ref : '';
-    if (!CMD.byCwd[cwd]) warmCommands(cwd);
+    this.agents = new Map();          // Agent tool_use_id -> {state, model, tokens, tools, ms, at}: what this process saw
+    if (!CMD.byCwd[cwd] || !modelsFresh) warmCommands(cwd);
     this.titled = !!token; this.idleTimer = null; this.closing = null;
     CHATS.add(this); if (this.cid) BY_CID.set(this.cid, this);
   }
@@ -280,6 +327,8 @@ class Chat {
     if (this.cid) options.resume = this.cid;
     if (this.desiredMode) options.permissionMode = this.desiredMode;   // picked before the first message
     if (sel) options.model = sel.model;
+    if (this.desiredEffort) options.effort = this.desiredEffort;
+    this.agents.clear();              // sub-agents die with the claude process
     this.setState('starting');
     this.q = sdk.query({ prompt: this.input, options });
     this.loop();
@@ -310,10 +359,14 @@ class Chat {
       }
       this.info = Object.assign(this.info, { model: m.model, permissionMode: m.permissionMode,
         cwd: m.cwd || this.cwd, commands: m.slash_commands || [] });
+      if (m.effort !== undefined) this.info.effort = m.effort;
+      else if (this.desiredEffort) this.info.effort = this.desiredEffort;
       this.emit({ ev: 'info', info: this.info });
+      this.refreshApplied();
       // names come with init; descriptions and argument hints need one more call
       const q = this.q;
       if (q && q.supportedCommands) q.supportedCommands().then((list) => this.setCommands(list), (e) => log('commands', e.message));
+      if (q && q.supportedModels) q.supportedModels().then(rememberModels, (e) => log('models', e.message));
       return;
     }
     if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
@@ -323,12 +376,13 @@ class Chat {
     if (m.type === 'system' && m.subtype === 'status' && m.permissionMode) {
       this.info.permissionMode = m.permissionMode; this.emit({ ev: 'info', info: this.info });
     }
+    this.trackAgent(m);
     if (m.type === 'result') {
       // a name picked when the session was opened (New session dialog): written like /rename once
       // the transcript exists, so Claude's own generated title does not replace it
       if (this.customTitle && this.cid) { const t = this.customTitle; this.customTitle = null; setTitle(this.cid, this.cwd, t).catch((e) => log(this.name, 'title', e.message)); }
       this.info.cost = m.total_cost_usd; this.emit({ ev: 'info', info: this.info });
-      measureCtx(this);
+      measureCtx(this); this.refreshApplied();
       this.turn = [];
       this.emit({ ev: 'msg', m });
       if (this.state !== 'requires_action') this.setState('idle');
@@ -343,6 +397,65 @@ class Chat {
       if (m.type !== 'stream_event') { if (!m.ts) m.ts = Date.now(); this.turn.push(m); }   // when it arrived, for the chat's time stamps
       this.emit({ ev: 'msg', m });
     }
+  }
+  // What the launcher shows on a sub-agent's row, kept here too so a page that (re)opens the session
+  // learns which agents are still running — the transcript only says how they ended.
+  trackAgent(m) {
+    let id = null, a = null;
+    const get = (k) => { if (!k) return null; let x = this.agents.get(k); if (!x) { x = { state: 'run' }; this.agents.set(k, x); } return x; };
+    if (m.type === 'system' && /^task_(started|progress|notification)$/.test(m.subtype || '') && m.tool_use_id) {
+      if (!this.agents.has(m.tool_use_id)) return;          // a skill's task, not an Agent call
+      id = m.tool_use_id; a = get(id);
+      if (m.subtype === 'task_started') a.state = 'run';
+      if (m.usage) Object.assign(a, { tokens: m.usage.total_tokens, tools: m.usage.tool_uses, ms: m.usage.duration_ms });
+      if (m.subtype === 'task_notification') a.state = m.status === 'completed' ? 'done' : m.status === 'stopped' ? 'stopped' : 'err';
+    } else if (m.type === 'assistant') {
+      const c = m.message && m.message.content;
+      if (Array.isArray(c)) for (const b of c) if (b && b.type === 'tool_use' && AGENT_TOOLS.has(b.name)) get(b.id).at = Date.now();
+      if (!m.parent_tool_use_id || !this.agents.has(m.parent_tool_use_id)) return;
+      a = this.agents.get(m.parent_tool_use_id); if (m.message && m.message.model) a.model = m.message.model;
+    } else if (m.type === 'user' && Array.isArray(m.message && m.message.content)) {
+      for (const b of m.message.content) {
+        const x = b && b.type === 'tool_result' && this.agents.get(b.tool_use_id);
+        if (!x) continue;
+        const t = typeof b.content === 'string' ? b.content : (Array.isArray(b.content) ? b.content.map((c) => (c && c.text) || '').join('\n') : '');
+        if (b.is_error) x.state = 'err';
+        else if (!/async_launched|launched in the background|running in the background/i.test(t)) x.state = 'done';
+        Object.assign(x, agentUsage(t)); x.at = Date.now();
+      }
+      return;
+    }
+    if (a) a.at = Date.now();
+  }
+  agentsView() {
+    const out = {};
+    for (const [k, a] of this.agents) out[k] = Object.assign({}, a, a.state === 'run' && !this.q ? { state: 'stopped' } : null);
+    return out;
+  }
+  // Reasoning effort, live (applyFlagSettings) or from the next start; null = the model's default
+  async setEffort(effort) {
+    {
+      const e = EFFORTS.includes(effort) ? effort : null;
+      this.desiredEffort = e;
+      if (this.q && this.q.applyFlagSettings) await this.q.applyFlagSettings({ effortLevel: e });
+      this.info.effort = e;
+    }
+    this.emit({ ev: 'info', info: this.info });
+    if (this.q) await this.refreshApplied();
+  }
+  // The model and effort the session really runs with (settings, env overrides, org caps and
+  // model-support downgrades applied): init does not carry the effort for an SDK host.
+  async refreshApplied() {
+    const q = this.q;
+    if (!q || typeof q.getSettings !== 'function') return;
+    try {
+      const a = (await q.getSettings() || {}).applied;
+      if (!a || q !== this.q) return;
+      const effort = a.effort === undefined ? this.info.effort : a.effort, model = a.model || this.info.model;
+      if (effort === this.info.effort && model === this.info.model) return;
+      this.info.effort = effort; this.info.model = model;
+      this.emit({ ev: 'info', info: this.info });
+    } catch (e) { log(this.name, 'settings', e.message); }
   }
   askPermission(tool, input, o) {
     return new Promise((resolve) => {
@@ -503,10 +616,37 @@ function pageStart(items, end) {
 // {type:'system', subtype:'local_command', parentUuid, content:'<local-command-stdout>…'}.
 // Times: uuid -> written-at ms; transcript lines carry their own "uuid","timestamp" pair.
 const UUID_TS = /"uuid":"([^"]+)","timestamp":"([^"]+)"/;
+// Sub-agent facts the transcript keeps outside the messages getSessionMessages returns: the model
+// (toolUseResult.resolvedModel), whether it was launched in the background, and how it ended with
+// its totals (the result's <usage>, or the <task-notification> of a background agent).
+function scanAgentLine(l, agents) {
+  const put = (id, o) => { if (id) agents.set(id, Object.assign(agents.get(id) || {}, o)); };
+  if (l.includes('"toolUseResult"') && l.includes('"agentId"')) {
+    let e; try { e = JSON.parse(l); } catch (_) { e = null; }
+    const r = e && e.toolUseResult, c = e && e.message && e.message.content;
+    const b = Array.isArray(c) && c.find((x) => x && x.type === 'tool_result');
+    if (r && typeof r === 'object' && b) {
+      const bg = r.isAsync || r.status === 'async_launched';
+      const t = typeof b.content === 'string' ? b.content : (Array.isArray(b.content) ? b.content.map((x) => (x && x.text) || '').join('\n') : '');
+      const o = Object.assign({ model: r.resolvedModel || undefined }, agentUsage(t));
+      if (!bg) o.state = b.is_error || r.status === 'failed' ? 'err' : 'done';
+      else if (!(agents.get(b.tool_use_id) || {}).state) o.state = 'run';
+      put(b.tool_use_id, o);
+    }
+  }
+  if (l.includes('<task-notification>') && l.includes('<tool-use-id>')) {
+    for (const n of l.split('<task-notification>').slice(1)) {
+      const id = /<tool-use-id>([^<]+)<\/tool-use-id>/.exec(n), st = /<status>(\w+)<\/status>/.exec(n);
+      if (!id) continue;
+      put(id[1], Object.assign({ state: !st || st[1] === 'completed' ? 'done' : st[1] === 'stopped' ? 'stopped' : 'err' },
+        agentUsage(n.split('</task-notification>')[0])));
+    }
+  }
+}
 const READERS = new Map();         // cid -> backward reader state (LRU, see cacheTouch)
 function readerFor(chat) {
   return cacheTouch(READERS, chat.cid, () =>
-    ({ file: null, front: 0, items: [], extras: new Map(), times: new Map(), atStart: false }));
+    ({ file: null, front: 0, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false }));
 }
 // Consume one more window moving toward the file start, until the collected tail holds at least
 // minPrompts user prompts (or the file start is reached).
@@ -519,7 +659,7 @@ function extendBack(entry, chat, minPrompts) {
   const f = transcriptPath(chat.cid, chat.cwd);
   if (!f) { entry.atStart = true; return; }
   let size; try { size = fs.statSync(f).size; } catch (_) { entry.atStart = true; return; }
-  if (entry.file !== f) { Object.assign(entry, { file: f, size, front: size, items: [], extras: new Map(), times: new Map(), atStart: false, read: 0 }); }
+  if (entry.file !== f) { Object.assign(entry, { file: f, size, front: size, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false, read: 0 }); }
   const prompts = () => entry.items.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
   const enough = () => prompts() >= minPrompts || entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES;
   while (!entry.atStart && !enough()) {
@@ -534,6 +674,7 @@ function extendBack(entry, chat, minPrompts) {
     for (const l of lines) {
       const t = UUID_TS.exec(l);
       if (t) { const ms = Date.parse(t[2]); if (ms) entry.times.set(t[1], ms); }
+      if (!l.includes('"isSidechain":true')) scanAgentLine(l, entry.agents);
       if (!l.startsWith('{')) continue;
       let e; try { e = JSON.parse(l); } catch (_) { continue; }
       if (e.type === 'system' && e.subtype === 'local_command' && !e.isSidechain) {
@@ -668,7 +809,7 @@ function onConnection(ws) {
         if (!chat.info.context) chat.info.context = (chat.cid && CTX[chat.cid]) || estimateCtx(items);
         const pend = [...chat.perms].map(([id, p]) => ({ id, tool: p.tool, input: p.input, reason: p.reason, suggestions: p.suggestions.length > 0 }));
         reply({ ev: 'history', key, items, state: chat.state, console: !chat.q && await tmuxAlive(chat.name),
-                info: chat.info, perms: pend, token: chat.token, more: pg.more,
+                info: chat.info, perms: pend, token: chat.token, more: pg.more, agents: agentFacts(chat),
                 draft: (chat.token && DRAFTS[chat.token]) || null });
         return;
       }
@@ -727,7 +868,10 @@ function onConnection(ws) {
         case 'interrupt': await chat.interrupt(); break;
         case 'perm': chat.answer(msg.id, msg); break;
         case 'mode': await chat.setMode(String(msg.mode)); break;
-        case 'model': await chat.setModel(String(msg.model || '')); break;
+        case 'model':
+          if (msg.model) await chat.setModel(String(msg.model));
+          if (msg.effort !== undefined) await chat.setEffort(msg.effort);
+          break;
         case 'release': await chat.stop(); reply({ ev: 'released', key }); break;
         case 'takeover':
           if (await tmuxAlive(chat.name)) {
@@ -1025,6 +1169,26 @@ async function sendTo(token, text) {
   return { via: 'chat' };
 }
 
+// Every sub-agent of a session the page may show: what the transcript tail says (collected by the
+// reader while it reads the page, so no extra pass over a large file), overlaid with what the
+// running process saw. An agent left "running" whose process is gone is "stopped": background
+// agents die with the claude process.
+function agentFacts(chat) {
+  const out = {};
+  if (chat.cid) {
+    const entry = readerFor(chat);
+    if (!entry.file) extendBack(entry, chat, PAGE_PROMPTS);
+    for (const [k, a] of entry.agents || []) out[k] = Object.assign({}, a);
+  }
+  const live = chat.agentsView ? chat.agentsView() : {};
+  for (const k of Object.keys(live)) out[k] = Object.assign(out[k] || {}, live[k]);
+  for (const k of Object.keys(out)) {
+    if (out[k].state === 'run' && !live[k]) out[k].state = 'stopped';     // launched by an earlier process
+    for (const f of Object.keys(out[k])) if (out[k][f] === undefined) delete out[k][f];
+  }
+  return out;
+}
+
 // ---------- fork: a new session continuing from a chosen message ----------
 // Claude Code transcripts are line-per-message files keyed by filename; a fork is a copy of the
 // prefix (everything up to and including the chosen message) under a NEW session id, with the
@@ -1053,5 +1217,5 @@ function forkFrom(chat, uuid) {
   return { cid: newId, name };
 }
 
-module.exports = { launchDir, sessionTitles, tailPage, forkFrom, runInShell, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+module.exports = { launchDir, sessionTitles, tailPage, forkFrom, runInShell, agentUsage, agentFacts, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };

@@ -474,7 +474,8 @@
   .agit{display:flex;gap:9px;align-items:flex-start;padding:7px 12px;cursor:pointer}
   .agit:hover{background:var(--hover)}
   .agdot{margin-top:6px;flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--live)}
-  .agdot.run{background:var(--work);animation:pulse 1s infinite} .agdot.err{background:var(--err)}
+  .agdot.run{background:var(--work);animation:pulse 1s infinite} .agdot.err{background:var(--err)} .agdot.stop{background:var(--stop)}
+  .agdot.run.quiet{background:var(--wait);animation-duration:2.4s}
   .agit .b{min-width:0;flex:1} .agit .nm{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .agit .d{color:var(--mute);font:11.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .setbtn{border:0;background:none;color:var(--mute);font-size:15px;line-height:1;cursor:pointer;padding:2px 4px}
@@ -1790,7 +1791,7 @@ function olderIn(p, o){ if(p.olderEl) p.olderEl.classList.remove('loading');
   if(ref) p.log.scrollTop+=ref.getBoundingClientRect().top-y0;
   if(o.lost){ p.more=0; }
   setOlder(p, o.more, o.items);
-  if(!/running|starting|requires_action/.test(p.state)) agentsSettle(p);
+  agentsSettle(p);
   renderAgBar(p);
   requestAnimationFrame(function(){ checkOlder(p); });
 }
@@ -2639,7 +2640,7 @@ function addToolResult(p, b){
     t=t.replace(/^\[image\]$/mg,'').trim();
   }
   // a background agent answers "launched" at once and keeps working: it ends with task_notification
-  if(ag) agentState(p, ag, b.is_error ? 'err' : (ag.bg && /launch|background|async|running/i.test(t||'') ? 'run' : 'done'));
+  if(ag){ agentSet(ag, agentUsage(t)); agentState(p, ag, b.is_error ? 'err' : (ag.bg && /launch|background|async|running/i.test(t||'') ? 'run' : 'done')); }
   if(!t) return;
   var body=d.querySelector('.body');
   body.insertAdjacentHTML('beforeend','<div class="lbl">'+(b.is_error?'error':'result')+'</div><pre class="res">'+
@@ -2699,8 +2700,11 @@ function renderSystem(p, m){
   var ag=agid && p.r.agents[agid];
   if(ag){
     if(st==='task_started'){ (p.r.taskOf=p.r.taskOf||{})[m.task_id]=agid; }
-    if(st==='task_progress' && m.description){ ag.last=String(m.description).split('\n')[0].slice(0,120); agentUpd(p, ag); }
-    if(st==='task_notification') agentState(p, ag, m.status && m.status!=='completed' ? 'err' : 'done');
+    ag.at=Date.now();
+    if(m.usage) agentSet(ag, {tokens:m.usage.total_tokens, tools:m.usage.tool_uses, ms:m.usage.duration_ms});
+    if(st==='task_progress'){ var lt=m.last_tool_name ? String(m.last_tool_name).replace(/^mcp__(?:claude_ai_)?/,'') : '';
+      if(m.summary || lt || m.description) ag.last=String(m.summary || lt || m.description).split('\n')[0].slice(0,120); agentUpd(p, ag); }
+    if(st==='task_notification') agentState(p, ag, !m.status || m.status==='completed' ? 'done' : m.status==='stopped' ? 'stopped' : 'err');
     return;
   }
   var g=p.r.skills && p.r.skills[m.task_id]; if(!g) return;
@@ -2739,7 +2743,8 @@ function agentRow(p, b, into){
     '<div class="body"><details class="aprompt"><summary class="lbl">prompt</summary><pre>'+esc(String(inp.prompt||'').slice(0,20000))+'</pre></details>'+
     '<div class="subfeed"></div></div>';
   var ag={id:b.id, p:p, row:d, feed:d.querySelector('.subfeed'), name:nm, desc:desc, prompt:String(inp.prompt||''),
-          bg:!!inp.run_in_background, state:'run', steps:0, last:'', t0:Date.now()};
+          bg:!!inp.run_in_background, state:'run', steps:0, last:'', t0:MSG_TS||Date.now(), at:MSG_TS||Date.now(),
+          model:'', tokens:null, tools:null, ms:null, msAt:0};
   d.querySelector('.agopen').addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); openAgent(p, ag.id); });
   (p.r.agents=p.r.agents||{})[b.id]=ag; p.r.tools[b.id]=d;
   if(into===p.inner) before(p);
@@ -2747,24 +2752,71 @@ function agentRow(p, b, into){
   if(into===p.inner) scrollEnd(p);
   return ag;
 }
+var AG_STATE={run:'running', err:'failed', stopped:'stopped', done:'done'};
+function fmtTok(n){ return n>=1e6 ? (n/1e6).toFixed(n>=1e7?0:1)+'M' : n>=1e3 ? (n/1e3).toFixed(n>=1e4?0:1)+'k' : String(n); }
+function fmtDur(ms){ var s=Math.max(0,Math.round(ms/1000)); return s<60 ? s+'s' : s<3600 ? Math.floor(s/60)+'m '+('0'+s%60).slice(-2)+'s' : Math.floor(s/3600)+'h '+('0'+Math.floor(s%3600/60)).slice(-2)+'m'; }
+// running · 2m 14s · 18 tools · 48.2k tok · opus-5-5 · Read   (· quiet 1m 05s when nothing came for a while)
+function agentDesc(a){
+  var now=Date.now(), n=Math.max(a.steps, a.tools||0), bits=[AG_STATE[a.state]||a.state];
+  var ms=a.state==='run' ? (a.ms!=null && a.msAt ? a.ms+(now-a.msAt) : now-a.t0) : a.ms;
+  if(ms!=null && ms>0) bits.push(fmtDur(ms));
+  bits.push(n+(n===1?' tool':' tools'));
+  if(a.tokens) bits.push(fmtTok(a.tokens)+' tok');
+  if(a.model) bits.push(a.model.replace(/^claude-/,''));
+  if(a.state==='run'){ if(a.last) bits.push(a.last); if(now-a.at>45000) bits.push('quiet '+fmtDur(now-a.at)); }
+  return bits.join(' · ');
+}
 function agentUpd(p, ag){
-  var s=ag.state==='run' ? 'running' : ag.state==='err' ? 'failed' : 'done';
-  var bits=[s, ag.steps+(ag.steps===1?' step':' steps')]; if(ag.state==='run' && ag.last) bits.push(ag.last);
-  ag.row.querySelector('.ag').textContent=bits.join(' · ');
+  ag.row.querySelector('.ag').textContent=agentDesc(ag);
   if(AGV.ag===ag) agvHead();
   renderAgBar(p);
 }
+// totals from the agent's result text (<usage>…</usage>, as Claude Code appends it)
+function agentUsage(t){
+  var u=/<usage>([\s\S]{0,400}?)<\/usage>/.exec(String(t||'')); if(!u) return {};
+  function num(k){ var r=new RegExp('(?:^|[^a-z_])'+k+'(?:>|:\\s*)(\\d+)').exec(u[1]); return r ? +r[1] : null; }
+  var o={}, tok=num('subagent_tokens'); if(tok==null) tok=num('total_tokens');
+  if(tok!=null) o.tokens=tok; if(num('tool_uses')!=null) o.tools=num('tool_uses'); if(num('duration_ms')!=null) o.ms=num('duration_ms');
+  return o;
+}
+function agentSet(ag, o){
+  ['model','tokens','tools','ms'].forEach(function(k){ if(o[k]!=null && o[k]!=='') ag[k]=o[k]; });
+  if(o.ms!=null) ag.msAt=Date.now();
+}
 function agentState(p, ag, st){
+  if(st!=='run' && ag.state==='run' && ag.msAt) ag.ms+=Date.now()-ag.msAt;   // freeze the clock where it stopped
+  if(st!=='run') ag.msAt=0;
   ag.state=st; ag.row.classList.toggle('pending', st==='run'); ag.row.classList.toggle('err', st==='err');
   agentUpd(p, ag);
 }
+// After history: the server's facts (transcript + the live process) say how each agent ended and
+// which are still running. One with no word either way is not running when the session is not.
 function agentsSettle(p){
-  var a=p.r.agents||{}; Object.keys(a).forEach(function(k){ if(a[k].state==='run') agentState(p, a[k], 'done'); });
+  var a=p.r.agents||{}, f=p.agFacts||{}, live=/running|starting|requires_action|idle/.test(p.state);
+  Object.keys(a).forEach(function(k){
+    var x=f[k], ag=a[k];
+    if(x){ agentSet(ag, {model:x.model, tokens:x.tokens, tools:x.tools});
+      if(x.ms!=null && (x.state!=='run' || ag.ms==null)){ ag.ms=x.ms; ag.msAt=x.state==='run' ? (x.at||Date.now()) : 0; }
+      if(x.at) ag.at=Math.max(ag.at, x.at); }
+    var st=x && x.state ? x.state : ag.state;
+    if(st==='run' && !(live && x)) st='stopped';
+    agentState(p, ag, st);
+  });
 }
+// running agents: the clock and "quiet" tick without new messages
+setInterval(function(){
+  Object.keys(PANES).forEach(function(k){ var p=PANES[k], a=p.r && p.r.agents; if(!a) return;
+    var any=false; Object.keys(a).forEach(function(id){ var ag=a[id]; if(ag.state!=='run') return; any=true;
+      ag.row.querySelector('.ag').textContent=agentDesc(ag); if(AGV.ag===ag) agvHead(); });
+    if(any && p.agbar) [].forEach.call(p.agbar.querySelectorAll('.agit'), function(it){ var ag=a[it.dataset.id]; if(ag) it.querySelector('.d').textContent=agentDesc(ag); });
+  });
+}, 1000);
 function agentFeed(p, ag, m){
   var c=(m.message||{}).content, f=ag.feed, near=f.scrollHeight-f.scrollTop-f.clientHeight<40;
   var host=AGV.ag===ag ? $('agvbody') : null, hnear=host && host.scrollHeight-host.scrollTop-host.clientHeight<60;
   if(typeof c==='string') c=[{type:'text', text:c}];
+  if(m.type==='assistant' && m.message && m.message.model) ag.model=m.message.model;
+  ag.at=Math.max(ag.at, m.ts||Date.now());
   (Array.isArray(c)?c:[]).forEach(function(b){
     if(m.type==='assistant' && b.type==='text' && b.text && b.text.trim()) f.appendChild(el('div','msg asst', md(b.text)));
     else if(m.type==='assistant' && b.type==='tool_use'){
@@ -2780,6 +2832,7 @@ function agentFeed(p, ag, m){
   if(near) f.scrollTop=f.scrollHeight;
   if(hnear) host.scrollTop=host.scrollHeight;
 }
+function agDot(a){ return a.state==='run' ? (Date.now()-a.at>45000 ? ' run quiet' : ' run') : a.state==='err' ? ' err' : a.state==='stopped' ? ' stop' : ''; }
 function agentList(p){
   var a=p.r.agents||{}; return Object.keys(a).map(function(k){ return a[k]; })
     .sort(function(x,y){ return (x.state==='run'?0:1)-(y.state==='run'?0:1) || y.t0-x.t0; });
@@ -2787,17 +2840,20 @@ function agentList(p){
 function renderAgBar(p){
   if(!p.agbar) return;
   var list=agentList(p), run=list.filter(function(a){ return a.state==='run'; }).length;
+  var tok=list.reduce(function(n,a){ return n+(a.tokens||0); }, 0);
   p.agbar.classList.toggle('hidden', !list.length);
   if(!list.length){ p.agbar.innerHTML=''; return; }
   var open=!!p.agbar.querySelector('.agpop:not(.hidden)');
   p.agbar.innerHTML='<button class="agpill'+(run?' run':'')+'" type="button" title="Sub-agents of this session"><i></i>🤖 '+
-    (run ? run+' running' : list.length+(list.length===1?' agent':' agents'))+(run && list.length>run ? ' · '+(list.length-run)+' done' : '')+'</button>'+
+    (run ? run+' running' : list.length+(list.length===1?' agent':' agents'))+(run && list.length>run ? ' · '+(list.length-run)+' done' : '')+
+    (tok ? ' · '+fmtTok(tok)+' tok' : '')+'</button>'+
     '<div class="agpop'+(open?'':' hidden')+'" role="listbox"></div>';
   var pop=p.agbar.lastChild;
   list.forEach(function(a){
-    var it=el('div','agit','<span class="agdot'+(a.state==='run'?' run':a.state==='err'?' err':'')+'"></span><div class="b"><div class="nm"></div><div class="d"></div></div>');
+    var it=el('div','agit','<span class="agdot'+agDot(a)+'"></span><div class="b"><div class="nm"></div><div class="d"></div></div>');
+    it.dataset.id=a.id;
     it.querySelector('.nm').textContent=a.name+(a.desc?' — '+a.desc:'');
-    it.querySelector('.d').textContent=(a.state==='run'?'running':a.state==='err'?'failed':'done')+' · '+a.steps+(a.steps===1?' step':' steps')+(a.state==='run'&&a.last?' · '+a.last:'');
+    it.querySelector('.d').textContent=agentDesc(a);
     it.addEventListener('click', function(){ pop.classList.add('hidden'); openAgent(p, a.id); });
     pop.appendChild(it);
   });
@@ -2811,8 +2867,8 @@ var AGV={ag:null, mark:null, panel:false};
 function agvHead(){
   var a=AGV.ag; if(!a) return;
   $('agvnm').textContent='🤖 '+a.name+(a.desc?' — '+a.desc:'');
-  $('agvd').textContent=(a.state==='run'?'running':a.state==='err'?'failed':'done')+' · '+a.steps+(a.steps===1?' step':' steps')+(a.state==='run'&&a.last?' · '+a.last:'');
-  $('agvdot').className='agdot'+(a.state==='run'?' run':a.state==='err'?' err':'');
+  $('agvd').textContent=agentDesc(a);
+  $('agvdot').className='agdot'+agDot(a);
 }
 function openAgent(p, id){
   var a=p.r.agents && p.r.agents[id]; if(!a) return;
@@ -2904,6 +2960,12 @@ function renderCtx(p){
 // the chat's model picker: every model of the connected providers; another provider restarts the
 // session's process with that provider's key and resumes the conversation (web-chat.js setModel)
 var MODELS_LOADING=false;
+// the effort levels of the model this session runs: its row in the claude process's own list
+function modelEfforts(p){
+  var rows=(p.info&&p.info.models)||[], m=(p.info&&p.info.model)||'', id=((p.info&&p.info.modelRef)||'').split('/')[1]||'';
+  var r=rows.filter(function(x){ return x.resolvedModel===m || x.value===m || x.value===id || x.resolvedModel===id; })[0];
+  return (r && r.efforts) || [];
+}
 function openModelMenu(p, anchor){
   loadModels().then(function(l){
     if(!l) return;
@@ -2916,6 +2978,14 @@ function openModelMenu(p, anchor){
           '<span>'+esc(modelLabel(r))+'</span>'+(r===cur?'<small>✓</small>':other&&cur?'<small>restarts</small>':'')+'</button>';
       }).join('');
     });
+    // reasoning effort: the levels the running Claude model supports (supportedModels, from the server)
+    var ef=curProv==='claude' ? modelEfforts(p) : [];
+    if(ef.length){
+      h+='<hr><div class="mh">Effort</div>'+[''].concat(ef).map(function(e){
+        var on=(p.info.effort||'')===e;
+        return '<button type="button" class="mm'+(on?' cur':'')+'" data-effort="'+(e||'default')+'"><span>'+(e||'Default')+'</span>'+(on?'<small>✓</small>':'')+'</button>';
+      }).join('');
+    }
     h+='<hr><button type="button" class="mm" data-model="__manage"><span>Manage models…</span></button>';
     menuEl.innerHTML=h; menuEl.dataset.mode='model'; menuEl.dataset.key=p.key; menuEl.classList.add('sessm'); menuEl.style.display='block';
     var r=anchor.getBoundingClientRect(), w=menuEl.offsetWidth, hh=menuEl.offsetHeight;
@@ -2932,7 +3002,7 @@ function renderStatus(p){
   if(p.modelb){
     var ref=p.info.modelRef||'';
     if(ref && !MODELS && !MODELS_LOADING){ MODELS_LOADING=true; loadModels().then(function(){ Object.keys(PANES).forEach(function(k){ if(PANES[k].stat) renderStatus(PANES[k]); }); }, function(){}); }
-    p.modelb.textContent=(ref?modelLabel(ref):(p.info.model||'').replace(/^claude-/,''))+' ▾';
+    p.modelb.textContent=(ref?modelLabel(ref):(p.info.model||'').replace(/^claude-/,''))+(p.info.effort?' · '+p.info.effort:'')+' ▾';
     p.modelb.classList.toggle('hidden', !ref && !p.info.model);
   } else if(p.info.model) bits.push(p.info.model.replace(/^claude-/,''));
   if(p.info.cost!=null) bits.push('$'+Number(p.info.cost).toFixed(2));
@@ -3000,11 +3070,11 @@ function onEvent(p, o){
       (o.items||[]).forEach(function(m){ renderItem(p,m); });
       setOlder(p, o.more, o.items);
       if(!o.items || !o.items.length) p.inner.appendChild(el('div','note hint', p.token?'(empty session)':'Start the conversation below.'));
-      p.info=o.info||{}; p.consoleActive=!!o.console; renderBanner(p); applyMode(p);
+      p.info=o.info||{}; p.agFacts=o.agents||{}; p.consoleActive=!!o.console; renderBanner(p); applyMode(p);
       (o.perms||[]).forEach(function(r){ renderPerm(p,r); });
       if(o.token && o.token!==p.token) rekey(p,o.token);
       setState(p, o.state||'stopped');
-      if(!/running|starting|requires_action/.test(p.state)) agentsSettle(p);
+      agentsSettle(p);
       renderAgBar(p);
       p.ready=true;
       (p.queue||[]).splice(0).forEach(function(q){ p.ta.value=q.t; p.files=q.files; p.voiced=q.voice||''; send(p); });
@@ -3339,7 +3409,8 @@ menuEl.addEventListener('click', function(e){
   if(menuEl.dataset.mode==='folder'){ var fa=b.getAttribute('data-fa'); closeMenu(); folderAction(fa, menuEl.dataset.name, menuEl.dataset.path); return; }
   if(menuEl.dataset.mode==='task'){ var ta=b.getAttribute('data-ta'); closeMenu(); taskAction(ta, menuEl.dataset.slug); return; }
   if(menuEl.dataset.mode==='model'){
-    var mr=b.getAttribute('data-model'), mp=PANES[menuEl.dataset.key]; closeMenu();
+    var mr=b.getAttribute('data-model'), me=b.getAttribute('data-effort'), mp=PANES[menuEl.dataset.key]; closeMenu();
+    if(me && mp){ wsSend({op:'model', key:mp.wire, token:mp.token||undefined, cwd:mp.token?undefined:mp.cwd, effort:me==='default'?null:me}); return; }
     if(mr==='__manage'){ openSettings('models'); return; }
     if(mp && mr && mr!==(mp.info&&mp.info.modelRef)) wsSend({op:'model', key:mp.wire, token:mp.token||undefined, cwd:mp.token?undefined:mp.cwd, model:mr});
     return;
