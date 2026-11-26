@@ -4,12 +4,13 @@ FROM node:22-slim
 # in the web terminal break Cyrillic (show "_") and box-drawing characters.
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-# Base utilities + git/PR + DB clients (psql, mysql, redis-cli) + GitHub CLI + Claude Code.
-# The node user (uid 1000) already exists in the image.
+# Base utilities + git/PR + DB clients (psql, mysql, redis-cli) + Python 3 (venv, pip)
+# + GitHub CLI + Claude Code. The node user (uid 1000) already exists in the image.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      git git-lfs openssh-client ca-certificates curl less jq ripgrep gnupg fzf vim \
+      git git-lfs openssh-client ca-certificates curl wget less jq ripgrep gnupg fzf vim \
       postgresql-client default-mysql-client redis-tools tmux iproute2 \
+      python3 python3-venv python3-pip procps unzip \
  && install -m 0755 -d /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
