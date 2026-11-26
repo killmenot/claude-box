@@ -164,7 +164,18 @@ WEB_BIND=ports
 ' "$HOME/workspace" > "$repo/.env"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" </dev/null >/dev/null 2>&1
-check "WEB_BIND=ports: overlay passed to compose"  2 "$(grep -c 'docker-compose.ports.yml' "$tmp/docker.log" | tr -d ' ')"
+check "WEB_BIND=ports: overlay passed to compose"  1 "$(grep -c 'docker-compose.ports.yml up -d web' "$tmp/docker.log" | tr -d ' ')"
+# compose renders a bake definition (build --print) -> bake builds it with network.host granted
+printf '#!/bin/sh
+echo "docker $*" >> "%s/docker.log"
+case "$*" in *"build --print"*) echo "{\\"target\\":{}}" ;; *"buildx bake"*) cat > "%s/bake.json" ;; esac
+exit 0
+' "$tmp" "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" </dev/null >/dev/null 2>&1
+check "build: bake gets --allow=network.host"      1 "$(grep -c 'buildx bake --allow=network.host -f - web' "$tmp/docker.log")"
+check "build: bake reads compose's definition"     '{"target":{}}' "$(cat "$tmp/bake.json" 2>/dev/null)"
+check "build: no plain compose build"              0 "$(grep ' compose .* build ' "$tmp/docker.log" | grep -vc -- '--print')"
 bash "$repo/claude-box" --bogus </dev/null >/dev/null 2>&1; rc=$?
 check "unknown option: exit 2"                     2 "$rc"
 
