@@ -21,7 +21,9 @@
     --paper:#f7f8fa; --panel:#fff; --ink:#0e1116; --body:#1f2430; --slate:#5b6573; --mute:#8a93a2;
     --iris:#5b5bd6; --iris-d:#4848c7; --line:#e6e9ef; --hover:#eceef3; --sel:#e3e5ec; --bubble:#eef0f4;
     --codebg:#f3f4f7; --screen:#0e1116; --screen-line:#262b36; --screen-meta:#8a93a2;
-    --live:#16a34a; --wait:#e0a100; --work:#d97757; --stop:#9aa7b8; --err:#c2410c; --mic:#2563eb;
+    /* session states: working (emerald, always animated), ready (Claude's terracotta), waiting for you (amber) */
+    --live:#d97757; --wait:#e0a100; --work:#10b981; --stop:#9aa7b8; --err:#c2410c; --mic:#2563eb;
+    --accent:#d97757;   /* Claude's color where it marks no session state */
     --add:#e7f6ec; --addt:#166534; --del:#fdecea; --delt:#9f1d1d;
     --needs:#9a6a00; --needs-line:#e9c46a; --problem-line:#f0c2ad; --warn-bg:#fffbea;
     --tint:#eef0fd; --tint-2:#f3f3fe; --tint-3:#e9e9fb; --focus:#c9cce0; --next-bg:#e7eefc;
@@ -138,7 +140,7 @@
   .row .when{flex:0 0 auto;color:var(--mute);font-size:11.5px}
   .row .del{display:none;flex:0 0 auto;background:transparent;border:0;border-radius:6px;color:var(--slate);
             font-size:12px;line-height:1;padding:4px 5px;cursor:pointer}
-  .row .del:hover{color:var(--work);background:var(--panel)}
+  .row .del:hover{color:var(--err);background:var(--panel)}
   .row:hover .del{display:inline-block}
   .row:hover .when{display:none}
   .empty{color:var(--slate);padding:14px 18px;font-size:13px}
@@ -224,11 +226,12 @@
   .side-foot .hot{color:var(--err);font-weight:600}
   .voicebtn{margin-left:auto;border:1px solid var(--line);background:none;color:var(--mute);font:inherit;font-size:11px;
             border-radius:6px;padding:0 7px;cursor:pointer;white-space:nowrap}
-  .voicebtn.on{color:var(--live);border-color:var(--live)}
+  .voicebtn.on{color:var(--ok);border-color:var(--ok)}
   .voicebtn.wait{color:var(--err);border-color:var(--err)}
   .voicebtn.quiet{color:var(--mic);border-color:var(--mic)}
   #snoozebtn{margin-left:4px}
-  .livedot{width:7px;height:7px;border-radius:50%;background:var(--live);box-shadow:0 0 0 3px rgba(22,163,74,.15)}
+  /* "ok" marks are never a filled dot (a filled, pulsing dot means working): a ring or a check */
+  .livedot{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--ok);box-sizing:border-box}
 
   /* ---------- main ---------- */
   #main{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel)}
@@ -336,7 +339,8 @@
   .rlist div{display:flex;gap:10px} .rlist b{font-weight:600} .rlist span{color:var(--mute);font:12px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .rrow{display:flex;gap:8px} .rrow select{flex:1;padding:8px;border:1px solid var(--line);border-radius:9px;font:13.5px var(--sans);background:var(--panel);color:var(--ink)}
   .trow .st{width:10px;height:10px;border-radius:50%;background:var(--mute);margin:auto}
-  .trow .st.clean{background:var(--live)} .trow .st.dirty{background:var(--work)} .trow .st.unpushed{background:var(--wait)}
+  .trow .st.clean{background:none;width:auto;height:auto;color:var(--ok);font:700 12px/1 var(--sans)} .trow .st.clean:before{content:"✓"}
+  .trow .st.dirty{background:var(--accent)} .trow .st.unpushed{background:var(--wait)}
   .trow .st.archived{background:transparent;border:1.5px solid var(--mute)}
   .trow.archived .nm b{color:var(--slate)}
   .trow .nm .k{font:600 11.5px var(--mono);color:var(--iris);margin-right:6px}
@@ -355,6 +359,17 @@
   /* ---------- chat ---------- */
   .chat .log{flex:1;min-height:0;overflow-y:auto}
   .chat .inner{max-width:820px;margin:0 auto;padding:24px 24px 32px}
+  /* the activity line under the last message while a turn runs; it sits in .inner's bottom padding */
+  .chat .act{display:none;max-width:820px;margin:-22px auto 0;padding:0 24px 26px;font:12.5px var(--mono);color:var(--slate)}
+  .chat .act.on{display:block}
+  .chat .act .ah{display:flex;align-items:center;gap:8px;min-width:0}
+  .chat .act i{flex:0 0 auto;width:11px;height:11px;border-radius:50%;box-sizing:border-box;border:2px solid var(--work);border-right-color:transparent;animation:spin .9s linear infinite}
+  .chat .act .al{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+  .chat .act .am{flex:0 0 auto;color:var(--mute)} .chat .act .am:empty{display:none}
+  .chat .act .at{margin:3px 0 0 19px;color:var(--mute);font:italic 12.5px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chat .act .at:empty{display:none}
+  .chat .act.stall i{border-color:var(--wait);border-right-color:transparent;animation-duration:2.4s}
+  .chat .act.stall .al{color:var(--needs)}
   .msg{margin:14px 0;color:var(--body);word-wrap:break-word}
   .msg.user{display:flex;flex-direction:column;align-items:flex-end}
   .msg.user .b{max-width:85%;background:var(--bubble);border-radius:16px;padding:10px 15px;white-space:pre-wrap}
@@ -508,7 +523,7 @@
   .ferr{color:var(--err);font-size:13px;min-height:0}
   .ferr:empty{display:none}
   .gitbox{display:flex;flex-direction:column;gap:8px;font-size:13.5px}
-  .gitbox .ok{color:var(--live)}
+  .gitbox .ok{color:var(--ok)}
   .gitbox .gcode{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .gitbox .gcode b{font:600 22px var(--mono,monospace);letter-spacing:.08em;color:var(--ink);padding:4px 10px;border:1px dashed var(--line);border-radius:8px}
   .gitbox .row2{display:flex;gap:8px;flex-wrap:wrap}
@@ -658,7 +673,7 @@
   .perm input[type=text]{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:14px var(--sans)}
   .btn{padding:7px 14px;background:var(--iris);border:0;border-radius:9px;color:#fff;font:600 13.5px var(--sans);cursor:pointer}
   .btn:hover{background:var(--iris-d)} .btn.ghost{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
-  .btn.ghost:hover{background:var(--hover)} .btn.warn{background:var(--work)} .btn:disabled{opacity:.5;cursor:default}
+  .btn.ghost:hover{background:var(--hover)} .btn.warn{background:var(--err)} .btn:disabled{opacity:.5;cursor:default}
   .box{position:relative}
   .cmdpop{position:absolute;left:0;right:0;bottom:calc(100% + 6px);max-height:min(320px,45vh);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px -12px rgba(20,22,40,.35);padding:4px;z-index:20}
   .cmdpop .ci{display:flex;align-items:baseline;gap:8px;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:13.5px;min-width:0}
@@ -695,6 +710,7 @@
   .box .stat{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11.5px}
   .box .stat i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--stop);margin-right:6px}
   .box .stat.run i{background:var(--work);animation:pulse 1.2s infinite} .box .stat.wait i{background:var(--wait)} .box .stat.idle i{background:var(--live)}
+  .box .stat.stall i{background:var(--wait);animation:pulse 2.4s infinite}
   /* context fill ring: grey up to 20%, then yellow, orange (over 30%), red (over 40%) */
   .box .barsp{flex:1}
   .ctxm{position:relative;display:inline-flex;align-items:center;gap:5px;font:11.5px var(--mono);color:var(--mute);cursor:pointer;border-radius:6px;padding:2px 3px;outline:none;flex:0 0 auto;--c:var(--mute)}
@@ -709,7 +725,7 @@
   .ctxm .tip .r{display:flex;justify-content:space-between;gap:10px;font-variant-numeric:tabular-nums}
   .ctxm .tip .f{margin-top:4px;opacity:.75;font-family:var(--sans)}
   .sendbtn{width:32px;height:32px;border-radius:50%;border:0;background:var(--ink);color:var(--panel);cursor:pointer;font-size:16px;display:inline-flex;align-items:center;justify-content:center}
-  .sendbtn:disabled{opacity:.3;cursor:default} .stopbtn{background:var(--work)}
+  .sendbtn:disabled{opacity:.3;cursor:default}
   /* voice input */
   .micbtn{width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--slate);
           cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0}
@@ -799,7 +815,7 @@
   .rpagent{display:flex;flex-wrap:wrap;align-items:center;gap:2px 7px;width:100%;border:0;background:none;padding:2px 0 4px;cursor:pointer;color:var(--slate);font:11.5px var(--mono);text-align:left;min-width:0}
   .rpagent:hover{color:var(--ink)}
   .rpagent .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
-  .rpagent .src{flex:1 0 100%;padding-left:15px;color:var(--mute)} .rpagent .src b{font-weight:400;color:var(--live)} .rpagent .src s{text-decoration:none;color:var(--err)}
+  .rpagent .src{flex:1 0 100%;padding-left:15px;color:var(--mute)} .rpagent .src b{font-weight:400;color:var(--ok)} .rpagent .src s{text-decoration:none;color:var(--err)}
   #agv.panel .abox{width:min(1100px,100%);height:86vh}
   #agv .prwrap{display:flex;min-height:0;flex:1;overflow:hidden}
   #agv .prl{flex:0 0 270px;overflow:auto;border-right:1px solid var(--line);padding:6px 0}
@@ -811,7 +827,7 @@
   #agv .prn.err{color:var(--err)}
   #agv .prchips{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 10px}
   #agv .prchips span{border:1px solid var(--line);border-radius:6px;padding:0 6px;font:11px var(--mono);color:var(--slate)}
-  #agv .prchips span.ok{color:var(--live);border-color:var(--live)} #agv .prchips span.bad{color:var(--err);border-color:var(--err)}
+  #agv .prchips span.ok{color:var(--ok);border-color:var(--ok)} #agv .prchips span.bad{color:var(--err);border-color:var(--err)}
   #agv .prf details.pblk{margin:8px 0;font-size:12.5px;color:var(--slate)} #agv .prf details.pblk summary{cursor:pointer}
   #agv .prf details.pblk pre{white-space:pre-wrap;max-height:40vh;overflow:auto}
   #agv .prf .tool{font-size:13px;margin:5px 0}
@@ -832,7 +848,7 @@
     #scrim{position:fixed;inset:0;z-index:15;background:rgba(0,0,0,.35)}
     .app.drawer #scrim{display:block}
     #ttl .cwd{display:none}
-    .chat .inner{padding:16px 14px 24px} .composer{padding:0 10px 10px}
+    .chat .inner{padding:16px 14px 24px} .chat .act{margin-top:-16px;padding:0 14px 20px} .composer{padding:0 10px 10px}
   }
 </style></head><body><div class="app" id="app">
 
@@ -1239,7 +1255,8 @@ function setPMode(v){
 function buildChat(p){
   if(p.el) return;
   var c=el('div','chat');
-  c.innerHTML='<div class="log"><div class="inner"></div></div>'+
+  c.innerHTML='<div class="log"><div class="inner"></div>'+
+    '<div class="act" role="status"><div class="ah"><i></i><span class="al"></span><span class="am"></span></div><div class="at"></div></div></div>'+
     '<div class="composer"><div class="wrap"><div class="agbar hidden"></div><div class="banners"></div><div class="perms"></div>'+
     '<div class="box"><div class="voice"><span class="bars"><i></i><i></i><i></i><i></i></span><span class="txt">Listening…</span></div>'+
     '<div class="cmdpop hidden" role="listbox"></div><div class="cmdhint hidden"></div><div class="mdlpop hidden" role="dialog" aria-label="Model"></div>'+
@@ -1257,7 +1274,7 @@ function buildChat(p){
   p.inner.appendChild(el('div','loading','Loading session…'));   // the history reply clears it
   p.log.addEventListener('scroll', function(){ checkOlder(p); }, {passive:true});
   p.ta=c.querySelector('textarea'); p.go=c.querySelector('.go'); p.stopb=c.querySelector('.stopbtn');
-  p.stat=c.querySelector('.stat'); p.ctxm=c.querySelector('.ctxm');
+  p.stat=c.querySelector('.stat'); p.ctxm=c.querySelector('.ctxm'); p.actEl=c.querySelector('.act');
   p.ctxm.addEventListener('click', function(){ statsOpen(p,'context','/context'); });
   p.ctxm.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); statsOpen(p,'context','/context'); } });
   p.mdlb=c.querySelector('.mdlbtn'); p.mdlEl=c.querySelector('.mdlpop');
@@ -2352,7 +2369,94 @@ function onStream(p, m){
 }
 function finishLive(p){ p.r.live.forEach(function(d){ d.classList.remove('live'); d.innerHTML=md(d._txt||''); stampMsg(d, d._txt||'', d._ts||Date.now()); }); p.r.live=[]; p.r.cur=null; }
 
-function setState(p, st){ p.state=st; renderStatus(p); if(PANES[ACTIVE]===p) renderTop(); }
+// ---------- the activity line ----------
+// While a turn runs, a line under the last message says what Claude is doing right now and for how
+// long: waiting for the model, thinking, preparing or running a tool. With no event for ACT_STALL
+// it turns amber, so a slow model and a stuck one look different. The state is a plain object fed
+// with every SDK message (actOn) and read by actView: both run without a page, for the tests.
+var ACT_STALL=90000;
+function actStart(now){ return {t0:now, last:now, since:now, phase:'wait', boot:false, run:{}, draft:'', chars:0, tail:''}; }
+function actPhase(a, ph, now){ if(a.phase!==ph){ a.phase=ph; a.since=now; } }
+function actPrompt(m){
+  if(m.type!=='user' || m.parent_tool_use_id) return false;
+  var c=m.message&&m.message.content; if(typeof c==='string') return true;
+  return Array.isArray(c) && !c.some(function(b){ return b && b.type==='tool_result'; });
+}
+function actOn(a, m, now){
+  a.last=Math.max(a.last, now); a.boot=false;
+  if(m.parent_tool_use_id) return a;      // a sub-agent's traffic: alive, but the phase stays the parent's tool
+  if(m.type==='stream_event'){
+    var ev=m.event||{}, cb=ev.content_block||{}, d=ev.delta||{};
+    if(ev.type==='message_start'){ a.run={}; actPhase(a,'wait',now); }   // a new model call: every tool before it is done
+    else if(ev.type==='content_block_start'){
+      a.chars=0; a.tail='';
+      if(cb.type==='thinking' || cb.type==='redacted_thinking') actPhase(a,'think',now);
+      else if(cb.type==='text') actPhase(a,'text',now);
+      else if(cb.type==='tool_use' || cb.type==='server_tool_use'){ a.draft=cb.name||'tool'; a.phase='draft'; a.since=now; }
+    } else if(ev.type==='content_block_delta'){
+      var t=d.thinking||d.text||d.partial_json||'';
+      a.chars+=t.length; if(d.type==='thinking_delta') a.tail=(a.tail+t).slice(-600);
+    } else if(ev.type==='content_block_stop' && a.phase==='draft') actPhase(a,'tool',now);
+  } else if(m.type==='assistant'){
+    ((m.message&&m.message.content)||[]).forEach(function(b){
+      if(b && b.type==='tool_use' && b.id){ a.run[b.id]=b.name||'tool'; a.draft=b.name||'tool'; actPhase(a,'tool',now); } });
+  } else if(m.type==='user'){
+    if(actPrompt(m)){ a.run={}; a.phase='wait'; a.since=now; }
+    else {
+      ((m.message&&m.message.content)||[]).forEach(function(b){ if(b && b.type==='tool_result') delete a.run[b.tool_use_id]; });
+      if(!Object.keys(a.run).length) actPhase(a,'wait',now);
+    }
+  } else if(m.type==='result') actPhase(a,'bg',now);   // the answer is in, but background agents keep the turn open
+  return a;
+}
+// tools run as long as they need, and background agents report only when done: no stall for them
+function actStalled(a, now){ return a.phase!=='tool' && a.phase!=='bg' && now-a.last>=ACT_STALL; }
+function actName(n){ return String(n||'tool').replace(/^mcp__(?:claude_ai_)?/,'').replace(/__/,': '); }
+function actClock(ms){ var s=Math.max(0,Math.floor(ms/1000)), h=Math.floor(s/3600), m=Math.floor(s%3600/60); s%=60;
+  return (h?h+':'+(m<10?'0':''):'')+m+':'+(s<10?'0':'')+s; }
+function actView(a, now){
+  if(!a) return null;
+  var stalled=actStalled(a, now);
+  if(a.phase==='text' && !stalled) return null;      // the reply is being typed: its cursor says enough
+  var names=Object.keys(a.run).map(function(k){ return a.run[k]; }), lbl, meta=[], tail='';
+  if(stalled) lbl='No response from the model for '+fmtDur(now-a.last);
+  else if(a.phase==='think') lbl='Thinking…';
+  else if(a.phase==='draft') lbl='Preparing '+actName(a.draft)+'…';
+  else if(a.phase==='tool') lbl='Running '+(names.length ? actName(names[0])+(names.length>1?' + '+(names.length-1)+' more':'') : actName(a.draft))+'…';
+  else if(a.phase==='bg') lbl='Background agents are working…';
+  else lbl=a.boot?'Starting…':'Waiting for the model…';
+  if(!stalled){
+    meta.push(fmtDur(now-a.since));
+    // a rough count (4 characters a token): the exact one comes only when the message ends
+    if((a.phase==='think'||a.phase==='draft') && a.chars>=4) meta.push('~'+ctxK(Math.round(a.chars/4))+' tokens');
+    if(a.phase==='think'){ tail=String(a.tail).trim().split('\n').pop().trim(); if(tail.length>160) tail='…'+tail.slice(-160); }
+  }
+  return {stalled:stalled, label:lbl, meta:meta.join(' · '), tail:tail};
+}
+// flow: the caller has already taken before() and scrolls after its own changes
+function actRender(p, flow){
+  var e=p.actEl; if(!e) return;
+  var v=(p.state==='running'||p.state==='starting') && actView(p.act, Date.now());
+  if(!v){ e.classList.remove('on'); return; }
+  var was=e.classList.contains('on'), tail=e.querySelector('.at').textContent, grows=!flow && (!was || tail!==v.tail);
+  if(grows) before(p);
+  e.className='act on'+(v.stalled?' stall':'');
+  // text only: rebuilding the nodes would restart the spinner every second
+  e.querySelector('.al').textContent=v.label;
+  e.querySelector('.am').textContent=v.meta?'· '+v.meta:'';
+  e.querySelector('.at').textContent=v.tail;
+  if(grows) scrollEnd(p);
+}
+setInterval(function(){
+  Object.keys(PANES).forEach(function(k){ var p=PANES[k]; if(p.act && p.stat){ actRender(p); statPaint(p); } });
+}, 1000);
+
+function setState(p, st){
+  var now=Date.now();
+  if(st==='running'||st==='starting'){ if(!p.act) p.act=actStart(now); else p.act.last=now; p.act.boot=st==='starting'; }
+  else if(st!=='requires_action') p.act=null;     // a permission card is up: the turn goes on after it
+  p.state=st; renderStatus(p); actRender(p); if(PANES[ACTIVE]===p) renderTop();
+}
 // the context fill ring next to the status line; the numbers come from web-chat.js (info.context)
 function ctxK(n){ return n>=1000000?(n/1000000).toFixed(2)+'M':n>=1000?(n/1000).toFixed(1)+'k':String(n||0); }
 function renderCtx(p){
@@ -2526,16 +2630,24 @@ $('statd').addEventListener('click', function(e){
 });
 document.addEventListener('keydown', function(e){ if(e.key==='Escape' && $('statd').classList.contains('on')){ e.stopPropagation(); e.preventDefault(); statsClose(); } }, true);
 
-function renderStatus(p){
-  if(!p.stat) return;
+// the status line's dot class and text; a running turn shows how long it has been going
+function statLine(p){
   var st=p.state, cls={running:'run',starting:'run',requires_action:'wait',idle:'idle'}[st]||'';
   var lbl={running:'working…',starting:'starting…',requires_action:'needs your answer',idle:'ready',stopped:'not running — send a message to resume'}[st]||st;
   if(!p.token && st==='stopped') lbl='new session in '+(p.cwd||'');
+  if(p.act && (st==='running'||st==='starting')){ var now=Date.now();
+    lbl=(st==='starting'?'starting':'working')+' · '+actClock(now-p.act.t0); if(actStalled(p.act, now)) cls='stall'; }
   var bits=[lbl];
   if(p.info.cost!=null) bits.push('$'+Number(p.info.cost).toFixed(2));
+  return {cls:cls, text:bits.join(' · ')};
+}
+function statPaint(p){ var l=statLine(p); p.stat.className='stat '+l.cls; p.stat.querySelector('span').textContent=l.text; }
+function renderStatus(p){
+  if(!p.stat) return;
+  var st=p.state;
   if(p.mdlb){ var cur=mdlCurrent(p); p.mdlb.textContent=mdlName(p, cur)+(p.info.effort ? ' · '+p.info.effort : '');
     if(p.mdlEl && !p.mdlEl.classList.contains('hidden')) mdlRender(p); }
-  p.stat.className='stat '+cls; p.stat.querySelector('span').textContent=bits.join(' · ');
+  statPaint(p);
   renderCtx(p);
   p.stopb.classList.toggle('hidden', !(st==='running'||st==='requires_action'||st==='starting'));
 }
@@ -2659,6 +2771,12 @@ function onEvent(p, o){
       p.info=o.info||{}; p.agFacts=o.agents||{}; p.consoleActive=!!o.console; renderBanner(p); applyMode(p);
       (o.perms||[]).forEach(function(r){ renderPerm(p,r); });
       if(o.token && o.token!==p.token) rekey(p,o.token);
+      p.act=null;
+      if(o.state==='running'||o.state==='starting'){   // a turn is under way: replay it to know where it is
+        var a=actStart(Date.now());
+        (o.items||[]).forEach(function(m){ if(actPrompt(m) && m.ts) a.t0=m.ts; actOn(a, m, m.ts||a.last); });
+        a.last=Date.now(); p.act=a;
+      }
       setState(p, o.state||'stopped');
       agentsSettle(p);
       renderAgBar(p);
@@ -2670,11 +2788,13 @@ function onEvent(p, o){
     case 'msg':
       before(p);
       var m=o.m;
+      if(p.act) actOn(p.act, m, Date.now());
       if(m.type==='stream_event') onStream(p,m);
       else if(m.type==='result'){
         finishLive(p);
         if(m.subtype && m.subtype!=='success') note(p, esc('Turn ended: '+m.subtype.replace(/_/g,' ')), true);
       } else renderItem(p,m);
+      actRender(p, true);
       scrollEnd(p);
       break;
     case 'older': olderIn(p,o); break;
@@ -4176,7 +4296,7 @@ function paRender(r){
   var f=$('prf'), near=f.scrollHeight-f.scrollTop-f.clientHeight<60, h='';
   var st=r.status==='running'?'running…':r.status==='failed'?'failed':'ok';
   h+='<div class="prn">'+esc(new Date(r.started).toLocaleString())+' · '+esc(r.reason||'')+' · '+esc(st)+(r.took!=null?' · '+r.took+'s':'')+(r.cost!=null?' · $'+Number(r.cost).toFixed(4):'')+' · '+esc(r.model||'')+'</div>';
-  if(r.connectors) h+='<div class="prchips">'+r.connectors.map(function(c){ return '<span class="'+(c.status==='connected'?'ok':c.status==='pending'?'':'bad')+'" title="'+esc(c.error||'')+'">'+esc(c.name.replace(/^claude\.ai /,''))+' '+esc(c.status)+'</span>'; }).join('')+'</div>';
+  if(r.connectors) h+='<div class="prchips">'+r.connectors.map(function(c){ return '<span class="'+(c.status==='connected'?'ok':c.status==='pending'?'':'bad')+'" title="'+esc(c.error||'')+'">'+(c.status==='connected'?'✓ ':'')+esc(c.name.replace(/^claude\.ai /,''))+' '+esc(c.status)+'</span>'; }).join('')+'</div>';
   if(r.status!=='running' && r.answered) h+='<div class="prn">answered: '+esc(r.answered.join(', ')||'none')+'</div>';
   if(r.error) h+='<div class="prn err">'+esc(r.error)+'</div>';
   if(r.wire) h+='<div class="prn"><a href="#" data-wire="'+esc(r.wire)+'">What went to the model and back</a></div>';
