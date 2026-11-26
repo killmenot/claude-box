@@ -1,11 +1,16 @@
 # Overlay for DOCKER_ACCESS=1 (.env, asked on the first run): let the box manage Docker on the
 # host — test stacks, helper containers (postgres, redis), `docker`/`docker compose` from the
 # chat and console. The docker socket is root-equivalent on the host: grant only on machines
-# where everyone using the box is trusted anyway. DOCKER_GID = the host's docker group id
-# (claude-box fills it from the socket); without it the socket is not accessible to the box user.
+# where everyone using the box is trusted anyway. The entrypoint (web-entry.sh) gives the box user
+# the socket's group, whatever its id (DOCKER_GID is kept for older setups).
+# Containers started from the box are siblings on the host, not children: reach their published
+# ports at host.docker.internal (e.g. redis at host.docker.internal:6379), and bind-mount only paths
+# that exist on the host (the box's /workspace is the host's workspace folder under another name).
 services:
   web:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "${DOCKER_GID:-999}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

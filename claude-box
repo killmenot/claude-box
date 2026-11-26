@@ -6,7 +6,9 @@
 #   claude-box --stop      — stop the web UI (running Claude sessions are restored on the next start)
 #   claude-box --status    — is it running, where, which sessions
 #   claude-box --login     — print a fresh one-time sign-in link for the web UI (changes nothing else)
-#   claude-box --setup     — re-run the first-run setup (the workspace folder)
+#   claude-box --setup     — re-run the first-run setup (the workspace folder, Docker access)
+#   claude-box --docker    — let the box run containers on this host (test stacks: redis, postgres…)
+#   claude-box --no-docker — take that away again (both restart the web UI)
 #   claude-box --install   — print how to add claude-box to PATH (changes nothing)
 # The first start creates .env and asks where projects live. The web login and password are set
 # in the browser: open the one-time link printed at the end, and the UI asks for them.
@@ -21,7 +23,7 @@ PLACEHOLDER='/path/to/your/project'
 usage() { sed -n '2,12p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ---------------------------------------------------------------- arguments
-action=start; want_tunnel=0; no_proxy=0; force_setup=0
+action=start; want_tunnel=0; no_proxy=0; force_setup=0; docker_set=''
 for a in "$@"; do
   case "$a" in
     --tunnel)                 want_tunnel=1 ;;
@@ -29,6 +31,8 @@ for a in "$@"; do
     --stop|--web-stop)        action=stop ;;
     --status|--web-status)    action=status ;;
     --setup)                  force_setup=1 ;;
+    --docker)                 docker_set=1 ;;
+    --no-docker)              docker_set=0 ;;
     --login)                  action=login ;;
     --install)                action=install ;;
     -h|--help)                action=help ;;
@@ -158,13 +162,18 @@ first_run() {
   # the container must run as this host user, or it cannot write the ./home bind mount
   if [ -z "$(env_get BOX_UID)" ]; then env_set BOX_UID "$(id -u)"; env_set BOX_GID "$(id -g)"; fi
   setup_workspace
-  setup_docker
+  if [ -n "$docker_set" ]; then env_set DOCKER_ACCESS "$docker_set"; echo "  Docker access: $([ "$docker_set" = 1 ] && echo on || echo off)."
+  else setup_docker; fi
 }
 
 setup_docker() {
   if [ "$force_setup" = 0 ] && [ -n "$(env_get DOCKER_ACCESS)" ]; then return 0; fi
   local sock="${DOCKER_SOCK_FILE:-/var/run/docker.sock}"
-  if [ ! -e "$sock" ]; then
+  # macOS (Colima, Docker Desktop): the daemon and its /var/run/docker.sock live inside a VM, which
+  # is where compose resolves the mount; the Mac itself has no such file. A working `docker info`
+  # is the test there. The entrypoint gives the box user the socket's group at start either way.
+  if [ ! -e "$sock" ] && [ "$(uname -s)" = Darwin ] && docker info >/dev/null 2>&1; then sock=''; fi
+  if [ -n "$sock" ] && [ ! -e "$sock" ]; then
     echo "  Docker: no socket on this machine — containers on the host are not available."
     env_set DOCKER_ACCESS 0
     return 0
@@ -172,7 +181,7 @@ setup_docker() {
   local a gid
   echo
   a="$(ask 'Allow the box to run Docker containers on this host (dev env, test stacks)? [Y/n]' Y)"
-  gid="$(stat -c %g "$sock" 2>/dev/null || echo 999)"
+  gid="$( [ -n "$sock" ] && stat -c %g "$sock" 2>/dev/null || echo 999)"
   case "$a" in
     n|N) env_set DOCKER_ACCESS 0; env_set DOCKER_GID "$gid" ;;
     *)   env_set DOCKER_ACCESS 1; env_set DOCKER_GID "$gid"
@@ -187,7 +196,9 @@ mkdir -p ./home
 
 compose_files=(-f docker-compose.yml)
 [ "$no_proxy" = 1 ] && compose_files+=(-f docker-compose.no-proxy.yml)
-[ "$(env_get DOCKER_ACCESS)" = 1 ] && compose_files+=(-f docker-compose.docker.yml)
+# --docker / --no-docker apply to this very start (first_run writes them to .env later)
+docker_on="${docker_set:-$(env_get DOCKER_ACCESS)}"
+[ "$docker_on" = 1 ] && compose_files+=(-f docker-compose.docker.yml)
 # Network mode: on Linux (incl. WSL2) the container shares the host network directly (Tailscale,
 # DBs). Docker Desktop on macOS does NOT map host-mode ports to the real machine, so there we
 # swap to bridge + explicit ports (docker-compose.ports.yml). WEB_BIND overrides the auto choice.

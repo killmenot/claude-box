@@ -18,5 +18,25 @@ if [ "$(id -u)" = "0" ] && ! grep -q "^[^:]*:[^:]*:$gid:" /etc/group; then
   echo "box:x:$gid:" >> /etc/group
 fi
 
+# Docker access (docker-compose.docker.yml): the box user joins the group that owns the socket, so
+# `docker` works without root whatever that group's id is on this host (991 in Colima, 999, ...).
+sock=/var/run/docker.sock
+if [ "$(id -u)" = "0" ] && [ -S "$sock" ]; then
+  sg="$(stat -c %g "$sock")"
+  user="$(getent passwd "$uid" | cut -d: -f1)"
+  line="$(getent group "$sg" || true)"
+  if [ -n "$user" ]; then
+    if [ -z "$line" ]; then
+      echo "docker-host:x:$sg:$user" >> /etc/group
+    else
+      members="${line##*:}"
+      case ",$members," in
+        *",$user,"*) ;;
+        *) sed -i "s/^\([^:]*:[^:]*:$sg:\).*/\1${members:+$members,}$user/" /etc/group ;;
+      esac
+    fi
+  fi
+fi
+
 exec setpriv --reuid "$uid" --regid "$gid" --init-groups --inh-caps=-all \
   env HOME=/home/node claude-web-serve "$@"
