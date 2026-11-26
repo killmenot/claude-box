@@ -27,7 +27,7 @@ function say(title, sub) { msg.classList.toggle('hidden', !title); msg.innerHTML
 function connect() {
   rfb = new RFB(screen, url, { wsProtocols: ['binary'] });
   rfb.scaleViewport = true; rfb.resizeSession = false; rfb.focusOnClick = true; rfb.background = '#0e1116';
-  rfb.addEventListener('connect', () => { retry = 0; say(''); });
+  rfb.addEventListener('connect', () => { retry = 0; say(''); lastSize = ''; sendSize(); });
   rfb.addEventListener('disconnect', () => {
     rfb = null;
     say('Reconnecting to the browser…', 'If it does not come back, the box may have been started without --browser');
@@ -39,6 +39,16 @@ function connect() {
 // this computer's clipboard -> the browser: on paste, and when the tab gets focus
 document.addEventListener('paste', (e) => { const t = e.clipboardData && e.clipboardData.getData('text'); if (t && rfb) rfb.clipboardPasteFrom(t); });
 window.addEventListener('focus', () => { try { navigator.clipboard.readText().then((t) => { if (t && rfb) rfb.clipboardPasteFrom(t); }, () => {}); } catch (_) {} });
+// The screen follows this tab's size (the server resizes the VNC picture and the Chromium windows),
+// so the browser fills the tab 1:1. Scaling stays on only for the moment until the new size arrives.
+let sizeT = null, lastSize = '';
+function sendSize() {
+  const w = screen.clientWidth, h = screen.clientHeight, k = w + 'x' + h;
+  if (!w || !h || k === lastSize) return;
+  lastSize = k;
+  fetch('size', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ w, h }) }).catch(() => { lastSize = ''; });
+}
+new ResizeObserver(() => { clearTimeout(sizeT); sizeT = setTimeout(sendSize, 250); }).observe(screen);
 // the launcher calls this when the tab is shown, so typing goes to the browser at once
 window.cbBrowser = { focus() { if (rfb) rfb.focus(); } };
 connect();

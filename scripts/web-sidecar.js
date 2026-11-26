@@ -213,6 +213,11 @@ const handler = (req, res) => {
     }
     const path = req.url.split('?')[0];
     if (path === '/browser/status') { browser.status().then((st) => json(res, 200, st)); return; }
+    if (path === '/browser/size' && req.method === 'POST') {          // the Browser tab's size: the screen follows it
+      if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
+      readJson(req, 1024, (o) => { browser.resize(o && o.w, o && o.h).then((v) => json(res, 200, v), (e) => json(res, 500, { error: e.message })); });
+      return;
+    }
     if (path === '/browser' || path.startsWith('/browser/')) {
       if (!browser.enabled()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('The browser is off: start claude-box with --browser'); return; }
       if (path === '/browser') { res.writeHead(302, { location: '/browser/' }); res.end(); return; }

@@ -72,3 +72,20 @@ test('the WebSocket bridge relays bytes to and from the VNC socket', { skip: !WS
     assert.deepStrictEqual(got, ['RFB 003.008\n']);
   } finally { srv.close(); vnc.close(); }
 });
+
+test('the brand list reads like Google Chrome: added next to Chromium, GREASE kept', () => {
+  const m = b.chromeMeta([{ brand: 'Not:A-Brand', version: '8' }, { brand: 'Chromium', version: '156' }],
+    [{ brand: 'Not:A-Brand', version: '8.0.0.0' }, { brand: 'Chromium', version: '156.0.8078.108' }], '156.0.8078.108');
+  assert.deepStrictEqual(m.brands.map((x) => x.brand + '/' + x.version), ['Not:A-Brand/8', 'Google Chrome/156', 'Chromium/156']);
+  assert.deepStrictEqual(m.fullVersionList.map((x) => x.version), ['8.0.0.0', '156.0.8078.108', '156.0.8078.108']);
+  assert.strictEqual(m.platform, 'Linux'); assert.strictEqual(m.architecture, 'x86'); assert.strictEqual(m.mobile, false);
+  // without Chromium's own list (the probe failed): still both names
+  assert.deepStrictEqual(b.chromeMeta(null, null, '156.0.1.2').brands.map((x) => x.brand), ['Google Chrome', 'Chromium']);
+});
+
+test('the screen follows the tab, within limits', async () => {
+  assert.deepStrictEqual(await b.resize(1281, 801), { changed: true, w: 1280, h: 800 });
+  assert.deepStrictEqual(await b.resize(1280, 800), { changed: false, w: 1280, h: 800 });
+  assert.deepStrictEqual(await b.resize(100, 50), { changed: true, w: 640, h: 400 });
+  assert.deepStrictEqual(await b.resize(99999, 99999), { changed: true, w: 3840, h: 2160 });
+});

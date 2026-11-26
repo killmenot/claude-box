@@ -23,7 +23,10 @@ const NOVNC = process.env.CB_NOVNC_DIR || '/opt/novnc';
 const VIEWER = process.env.CB_BROWSER_PAGE || '/usr/local/share/claude-web/browser.html';
 const DISPLAY = process.env.CB_BROWSER_DISPLAY || ':77';
 const CDP_PORT = parseInt(process.env.CB_BROWSER_CDP_PORT || '9333', 10);
-const SIZE = (process.env.CB_BROWSER_SIZE || '1440x900').split('x').map(Number);
+// The virtual screen is as big as a view may get; the VNC picture and the Chromium windows follow the
+// size of the Browser tab (resize()), so the tab shows the browser 1:1 with no black bars.
+const MAX = (process.env.CB_BROWSER_MAX || '3840x2160').split('x').map(Number);
+const view = (() => { const v = (process.env.CB_BROWSER_SIZE || '1440x900').split('x').map(Number); return { w: v[0], h: v[1] }; })();
 const PROFILE = path.join(HOME, '.config', 'claude-box-browser');
 const DIR = process.env.CB_BROWSER_DIR || path.join(os.tmpdir(), `claude-box-browser-${process.getuid ? process.getuid() : 'u'}`);
 const VNC_SOCK = path.join(DIR, 'vnc.sock');
@@ -65,7 +68,7 @@ function startChrome() {
   for (const f of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) { try { fs.unlinkSync(path.join(PROFILE, f)); } catch (_) {} }
   return run('chrome', BIN, ['--user-data-dir=' + PROFILE, '--no-first-run', '--no-default-browser-check',
     '--disable-dev-shm-usage', '--disable-gpu', '--password-store=basic', '--disable-features=Translate',
-    '--window-position=0,0', '--window-size=' + SIZE.join(','), '--start-maximized',
+    '--window-position=0,0', '--window-size=' + view.w + ',' + view.h,
     '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=' + CDP_PORT, 'about:blank'],
   { DISPLAY, HOME });
 }
@@ -80,22 +83,113 @@ function ensure() {
     const n = DISPLAY.replace(':', '');
     if (!procs.xvfb) {
       try { fs.unlinkSync(`/tmp/.X${n}-lock`); } catch (_) {}
-      run('xvfb', 'Xvfb', [DISPLAY, '-screen', '0', `${SIZE[0]}x${SIZE[1]}x24`, '-nolisten', 'tcp']);
+      run('xvfb', 'Xvfb', [DISPLAY, '-screen', '0', `${MAX[0]}x${MAX[1]}x24`, '-nolisten', 'tcp']);
       for (let i = 0; i < 50 && !fs.existsSync(`/tmp/.X11-unix/X${n}`); i++) await sleep(100);
     }
     if (!procs.chrome && !(await cdpAlive())) startChrome();
     if (!procs.vnc) {
       try { fs.unlinkSync(VNC_SOCK); } catch (_) {}
       run('vnc', 'x11vnc', ['-display', DISPLAY, '-unixsock', VNC_SOCK, '-rfbport', '0', '-forever', '-shared',
-        '-nopw', '-quiet', '-noxdamage', '-cursor', 'arrow']);
+        '-nopw', '-quiet', '-noxdamage', '-cursor', 'arrow', '-clip', `${view.w}x${view.h}+0+0`]);
     }
     for (let i = 0; i < 100; i++) {
-      if (await sockAlive(VNC_SOCK) && await cdpAlive()) return;
+      if (await sockAlive(VNC_SOCK) && await cdpAlive()) { brandAsChrome().catch((e) => log('brand:', e.message)); return; }
       await sleep(150);
     }
     throw new Error('the browser did not start');
   })().finally(() => { starting = null; });
   return starting;
+}
+
+// ---------- "Google Chrome" in the client hints ----------
+// The user-agent string is already Chrome's ("Chrome/156 ... Linux x86_64"); what tells Chromium
+// apart is the brand list in the client hints (Sec-CH-UA headers, navigator.userAgentData). One
+// browser-level DevTools connection catches every new page, frame and worker before it runs and
+// gives it Chromium's own list with "Google Chrome" added, like Google's build. Google Chrome itself
+// has no Linux build for ARM, so it cannot simply be installed here. CB_BROWSER_BRAND=0 turns it off.
+let brander = null, brandMeta = null, bsend = null;
+function chromeMeta(own, fullList, full) {
+  const add = (list, version) => {
+    const out = (list && list.length ? list : [{ brand: 'Chromium', version }]).filter((b) => b.brand !== 'Google Chrome');
+    const i = out.findIndex((b) => b.brand === 'Chromium');
+    out.splice(i < 0 ? 0 : i, 0, { brand: 'Google Chrome', version });
+    return out;
+  };
+  const major = String(full || '').split('.')[0];
+  return { brands: add(own, major), fullVersionList: add(fullList, full), fullVersion: full,
+    platform: 'Linux', platformVersion: '', architecture: 'x86', bitness: '64', model: '', mobile: false, wow64: false };
+}
+async function brandAsChrome() {
+  if (brander || process.env.CB_BROWSER_BRAND === '0' || typeof WebSocket !== 'function') return;
+  const v = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
+  const ua = v['User-Agent'];
+  const ws = new WebSocket(v.webSocketDebuggerUrl);
+  brander = ws;
+  let id = 0; const pend = new Map();
+  const send = (method, params, sessionId) => new Promise((res) => {
+    const i = ++id; pend.set(i, res);
+    try { ws.send(JSON.stringify(Object.assign({ id: i, method, params: params || {} }, sessionId ? { sessionId } : {}))); } catch (_) { res({}); }
+  });
+  bsend = send;
+  const attach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId);
+  ws.onmessage = async (m) => {
+    let o; try { o = JSON.parse(m.data); } catch (_) { return; }
+    if (o.id && pend.has(o.id)) { pend.get(o.id)(o.result || {}); pend.delete(o.id); return; }
+    if (o.method !== 'Target.attachedToTarget') return;
+    const { sessionId, targetInfo } = o.params;
+    if (brandMeta) await send('Network.setUserAgentOverride', { userAgent: ua, userAgentMetadata: brandMeta }, sessionId);
+    if (/^(page|iframe)$/.test(targetInfo.type)) await attach(sessionId);       // its frames and workers too
+    if (targetInfo.type === 'page') fitWindow(targetInfo.targetId);                // a new window takes the tab's size
+    send('Runtime.runIfWaitingForDebugger', {}, sessionId);
+  };
+  ws.onclose = () => {
+    if (brander === ws) { brander = null; bsend = null; }
+    if (!stopping) setTimeout(() => { if (procs.chrome) brandAsChrome().catch(() => {}); }, 2000);
+  };
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('DevTools connection failed')); });
+  // Chromium's own brand list (with its GREASE entry), read once from a scratch page
+  if (!brandMeta) {
+    const t = await send('Target.createTarget', { url: 'chrome://version/', background: true });   // a secure context: about:blank has no userAgentData
+    const s = await send('Target.attachToTarget', { targetId: t.targetId, flatten: true });
+    // the scratch page starts as an empty document: ask until chrome://version itself answers
+    let own = {};
+    for (let i = 0; i < 15 && !own.brands; i++) {
+      const r = await send('Runtime.evaluate', { expression: 'navigator.userAgentData ? navigator.userAgentData.getHighEntropyValues(["fullVersionList","uaFullVersion"]).then(h=>JSON.stringify({brands:navigator.userAgentData.brands,full:h.fullVersionList,v:h.uaFullVersion})) : "{}"', awaitPromise: true, returnByValue: true }, s.sessionId);
+      try { own = JSON.parse(r.result.value) || {}; } catch (_) { own = {}; }
+      if (!own.brands) await sleep(200);
+    }
+    await send('Target.closeTarget', { targetId: t.targetId });
+    if (!own.brands) log('brand: could not read Chromium\'s own brand list; using Google Chrome and Chromium only');
+    brandMeta = chromeMeta(own.brands, own.full, own.v || ((/Chrome\/([\d.]+)/.exec(v.Browser) || [])[1] || ''));
+  }
+  await attach();                                                                 // pages open now and every new one
+}
+
+// ---------- the Browser tab's size ----------
+async function fitWindow(targetId) {
+  if (!bsend) return;
+  const w = await bsend('Browser.getWindowForTarget', targetId ? { targetId } : {});
+  if (w && w.windowId) await bsend('Browser.setWindowBounds', { windowId: w.windowId, bounds: { left: 0, top: 0, width: view.w, height: view.h, windowState: 'normal' } });
+}
+let fitting = Promise.resolve();
+function resize(w, h) {
+  w = Math.max(640, Math.min(MAX[0], Math.round(Number(w) || 0))); h = Math.max(400, Math.min(MAX[1], Math.round(Number(h) || 0)));
+  w -= w % 2; h -= h % 2;
+  if (w === view.w && h === view.h) return Promise.resolve(Object.assign({ changed: false }, view));
+  view.w = w; view.h = h;
+  // one at a time: a drag of the window sends many sizes; the last one wins
+  fitting = fitting.then(async () => {
+    if (view.w !== w || view.h !== h) return;
+    if (procs.vnc) await new Promise((res) => {
+      const p = spawn('x11vnc', ['-display', DISPLAY, '-sync', '-remote', `clip:${w}x${h}+0+0`], { stdio: 'ignore' });
+      p.on('exit', res); p.on('error', res);
+    });
+    if (bsend) {
+      const t = await bsend('Target.getTargets', {});
+      for (const x of (t.targetInfos || []).filter((i) => i.type === 'page')) await fitWindow(x.targetId);
+    }
+  }).catch((e) => log('resize:', e.message));
+  return fitting.then(() => Object.assign({ changed: true }, view));
 }
 
 async function status() {
@@ -152,4 +246,4 @@ function stop() {
   for (const k of ['vnc', 'chrome', 'xvfb']) { const p = procs[k]; if (p) try { p.kill('SIGTERM'); } catch (_) {} }
 }
 
-module.exports = { enabled, ensure, status, serve, upgrade, stop, _bridge, CDP_PORT, VNC_SOCK, PROFILE };
+module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, _bridge, chromeMeta, CDP_PORT, VNC_SOCK, PROFILE };

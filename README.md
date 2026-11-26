@@ -78,7 +78,10 @@ session. Claude drives the same browser with its `playwright` tools (pointed at 
 `/browser/` behind the claude-box login (VNC on a private unix socket, no port). Chromium keeps its own
 sandbox: `docker-compose.browser.yml` runs the box with `seccomp-browser.json`, Docker's default profile
 plus one rule for the namespaces it needs. Hardware keys (YubiKey, passkeys) do not reach it; sign in
-with a password and a code. Its DevTools port is on 127.0.0.1 inside the container: in the Linux host
+with a password and a code. The screen follows the tab's size (no black bars, 1:1), and sites see
+Google Chrome on Linux: the user-agent string already says Chrome, and the client hints list "Google
+Chrome" next to "Chromium" (`CB_BROWSER_BRAND=0` turns that off; Google ships no Chrome for Linux on
+ARM, so the real one cannot be installed on an Apple Silicon Mac). Its DevTools port is on 127.0.0.1 inside the container: in the Linux host
 network mode that is the host's loopback, so other local users of that host could reach it. Like
 `--vscode`, the flag is not remembered.
 The login and password can be changed later in **Settings → Access**; they are kept as a scrypt hash
