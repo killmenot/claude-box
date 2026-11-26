@@ -54,7 +54,7 @@ On macOS with Colima, set `docker: {ip: 127.0.0.1}` in `~/.colima/default/colima
 (then `colima restart`) so `-p 6379:6379` publishes on the Mac's 127.0.0.1 only, not on every network.
 
 **VS Code** (`./claude-box --vscode`): that start builds the image with code-server (about 560 MB
-more) and every session gets a **Code** tab next to Chat / Console / Terminal / Files: VS Code opened
+more) and every session gets a **VS Code** tab next to Chat / Console / Terminal / Files: VS Code opened
 on the session's folder (for a task, all its repo worktrees). Switching sessions switches the editor;
 the last three stay loaded. code-server starts on the first click, listens on a private unix socket
 (no port) and is served at `/code/` behind the claude-box login. Claude Code and GitLens extensions
