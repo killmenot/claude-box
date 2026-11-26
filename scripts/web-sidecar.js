@@ -65,8 +65,8 @@ catch (e) { console.error('web chat disabled:', e.message); }
 // so every device (desktop, phone) sees the same layout. Shape: {cats:[{id,name}], map:{token:id}}.
 const CATS_FILE = process.env.WEB_CATEGORIES || require('path').join(process.env.HOME || '/home/node', '.claude', 'web-categories.json');
 function readCats() {
-  try { const o = JSON.parse(fs.readFileSync(CATS_FILE, 'utf8')); return { cats: o.cats || [], map: o.map || {} }; }
-  catch (_) { return { cats: [], map: {} }; }
+  try { const o = JSON.parse(fs.readFileSync(CATS_FILE, 'utf8')); return { cats: o.cats || [], map: o.map || {}, quiet: o.quiet || {} }; }
+  catch (_) { return { cats: [], map: {}, quiet: {} }; }
 }
 function cleanCats(o) {
   const str = (v, n) => String(v == null ? '' : v).slice(0, n);

@@ -200,6 +200,8 @@ test('sidecar: cross-site requests refused, ttyd gets its own login, frames and 
   assert.strictEqual(same.status, 200);
   assert.ok(fs.existsSync(cats));
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(cats, 'utf8')).quiet, { tok1: 1 }, '"Hide from Active" marks are kept');
+  const back = await call(port, 'GET', '/categories', { host, authorization: auth });
+  assert.deepStrictEqual(JSON.parse(back.body).quiet, { tok1: 1 }, '"Hide from Active" marks come back after a reload');
 
   const cli = await call(port, 'POST', '/chat/api/new', { host, authorization: auth, 'content-type': 'application/json' }, '{"prompt":"x"}');
   assert.notStrictEqual(cli.status, 403, 'non-browser clients are not blocked');

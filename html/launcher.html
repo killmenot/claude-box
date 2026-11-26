@@ -1989,7 +1989,7 @@ function ctxChip(it){
     var ST={open:'Open',draft:'Draft',merged:'Merged',closed:'Closed'}, CI={ok:'CI passed',fail:'CI failed',pend:'CI running'},
         RV={approved:'approved',changes:'changes requested',review:'review needed'};
     h+='<span class="k">#'+esc(String(it.number))+'</span>';
-    if(it.state) h+='<span class="t '+it.state+'">'+ST[it.state]+'</span>';
+    if(it.state) h+='<span class="t '+it.state+'" title="'+ST[it.state]+'">'+ST[it.state].charAt(0)+'</span>';
     if(it.ci) h+='<span class="t '+it.ci+'">'+{ok:'✓',fail:'✕',pend:'●'}[it.ci]+'</span>';
     if(it.review && it.state!=='merged' && it.state!=='closed') h+='<span class="t '+it.review+'">'+{approved:'👍',changes:'✎',review:'👀'}[it.review]+'</span>';
     if(it.comments) h+='<span class="m">💬'+it.comments+'</span>';

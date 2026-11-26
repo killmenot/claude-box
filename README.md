@@ -95,7 +95,7 @@ clipboard goes both ways.
 
 **Context strip**: under the session's header, the pull requests, Slack threads and Jira issues the
 session deals with: links anywhere in its transcript, plus a task folder's issue and the PRs of its
-branches. A PR shows `repo#number`, open / draft / merged, CI, review and comments; a Slack thread its
+branches. A PR shows `#number`, its state as one letter (O open, D draft, M merged, C closed), CI, review and comments (repo and title on hover); a Slack thread its
 channel and author; a Jira issue its status (Slack and Jira details come from the Today panel). One
 line while there is at most one of each, a line per kind once there are more. A click, or a click on
 such a link in the chat, opens it in the Browser tab (a PR or issue in its own tab, Slack in one tab),
