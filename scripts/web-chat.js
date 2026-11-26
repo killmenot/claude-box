@@ -317,6 +317,10 @@ class Chat {
       includePartialMessages: true,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       canUseTool: (tool, input, o) => this.askPermission(tool, input, o),
+      // the box's browser (playwright tools on the Browser tab's Chromium) holds the user's logins:
+      // the first use in a session asks, in any permission mode (auto included); see browserGate
+      // timeout: the hook waits for the user's answer; onFailure block: an error or a timeout means no
+      hooks: { PreToolUse: [{ matcher: 'mcp__playwright__.*', timeout: 86400, onFailure: 'block', hooks: [(input, id, o) => this.browserGate(input, o)] }] },
       // claude-notify (the tmux hook) must not touch the registry for chat-owned sessions —
       // this module keeps those records itself (see scripts/notify.sh).
       env: this.wire.env,
@@ -456,6 +460,21 @@ class Chat {
       this.info.effort = effort; this.info.model = model;
       this.emit({ ev: 'info', info: this.info });
     } catch (e) { log(this.name, 'settings', e.message); }
+  }
+  // One question per session before Claude uses the box's browser: what it does there, it does as the
+  // user, in every site the user signed in to. Allowed once, the rest of the session goes on its own.
+  async browserGate(input, o) {
+    const name = String((input && input.tool_name) || '');
+    if (!/^mcp__playwright__/.test(name) || this.browserAllowed) return {};
+    if (!this.browserAsking) {
+      this.browserAsking = this.askPermission('Browser', Object.assign({ action: name.replace(/^mcp__playwright__browser_|^mcp__playwright__/, '') }, (input && input.tool_input) || {}),
+        { decisionReason: 'Claude wants to use the box\'s browser, where you are signed in (GitHub, Slack, Jira…). Allowing lets it browse, click and type there for the rest of this session.', signal: o && o.signal })
+        .then((r) => { this.browserAsking = null; if (r && r.behavior === 'allow') this.browserAllowed = true; return r; });
+    }
+    const r = await this.browserAsking;
+    return r && r.behavior === 'allow'
+      ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'browser allowed for this session' } }
+      : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'The user did not allow the browser in this session. Ask them before trying again.' } };
   }
   askPermission(tool, input, o) {
     // the box's own artifact panel only shows a file Claude already wrote: no question for that

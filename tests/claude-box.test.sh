@@ -186,9 +186,13 @@ check "--restart: builds through bake"             1 "$(dlog | grep -c 'buildx b
 check "--restart: recreates the container"         1 "$(dlog | grep -c 'up -d --force-recreate web')"
 
 check "no --browser: no browser overlay"           0 "$(dlog | grep -c 'docker-compose.browser.yml')"
+check "no --browser: no weekly refresh"            0 "$(dlog | grep -c 'BROWSER_REFRESH')"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --browser </dev/null >/dev/null 2>&1
 check "--browser: overlay on build and up"         1 "$(dlog | grep -c 'docker-compose.browser.yml.* up -d web')"
+check "--browser: Chromium refreshed weekly"        1 "$(dlog | grep -c "BROWSER_REFRESH=$(date +%G-%V)")"
+out="$(bash "$repo/claude-box" --browser --tunnel </dev/null 2>&1)"
+check "--tunnel with --browser: warns"             1 "$(printf '%s' "$out" | grep -c 'tunnel with --browser')"
 
 # --- 6. --env: another env file is another box (own env file for compose, own home, own label) ---
 printf '#!/bin/sh

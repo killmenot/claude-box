@@ -77,7 +77,10 @@ x11vnc and noVNC; a few hundred MB more) and every session gets a **Browser** ta
 whole box, shown live, where you click, type and sign in like in any browser. The profile (logins,
 cookies) is kept in `home/.config/claude-box-browser`, so a login survives restarts and serves every
 session. Claude drives the same browser with its `playwright` tools (pointed at it with
-`--cdp-endpoint`); while it does, the tab shows a pill with **Stop Claude**. The screen goes through
+`--cdp-endpoint`); while it does, the tab shows a pill with **Stop Claude**. In a chat session the first browser action asks
+once (**Allow for this session**), in any permission mode: what Claude does there, it does as you,
+in every site you signed in to. Chromium is reinstalled once a week on start (security updates; the
+logins stay), and `--tunnel` with `--browser` warns that the public address leads to that browser. The screen goes through
 `/browser/` behind the claude-box login (VNC on a private unix socket, no port). Chromium keeps its own
 sandbox: `docker-compose.browser.yml` runs the box with `seccomp-browser.json`, Docker's default profile
 plus one rule for the namespaces it needs. Hardware keys (YubiKey, passkeys) do not reach it; sign in

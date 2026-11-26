@@ -380,6 +380,9 @@ build_args=(
   --build-arg http_proxy= --build-arg https_proxy=
   --build-arg NO_PROXY='*' --build-arg no_proxy='*'
 )
+# --browser: Chromium is reinstalled once a week (the week number busts that layer's build cache), so
+# security updates arrive without a rebuild by hand; the profile with the logins is in home/, not here.
+[ "$browser" = 1 ] && build_args+=(--build-arg "BROWSER_REFRESH=$(date +%G-%V)")
 # The build runs on the host network (build.network: host in docker-compose.yml). Newer compose
 # always builds through `buildx bake`, which refuses that without --allow=network.host, and
 # `compose build` has no way to pass it. So compose only renders the bake definition and bake
@@ -391,6 +394,10 @@ else
 fi
 
 tunnel=0
+if [ "$want_tunnel" = 1 ] && [ "$browser" = 1 ]; then
+  echo "⚠ --tunnel with --browser: the public address leads to a browser signed in to your sites, behind"
+  echo "  the claude-box login alone. Use a strong password, or start without one of the two flags."
+fi
 if [ "$want_tunnel" = 1 ]; then
   # fail closed: a public shell without a password is not allowed (the container checks it too)
   if ! has_login; then

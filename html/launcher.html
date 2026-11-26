@@ -3357,8 +3357,9 @@ function renderPerm(p, r){
     h+='<div class="acts"><button class="btn" data-a="answer">Submit</button><button class="btn ghost" data-a="deny">Skip</button></div>';
     box.innerHTML=h;
   } else {
-    box.innerHTML='<div class="h">Allow '+esc(r.tool)+'?</div>'+(r.reason?'<div>'+esc(r.reason)+'</div>':'')+
-      '<div>'+toolBody(r.tool, r.input)+'</div><div class="acts"><button class="btn" data-a="allow">Allow</button>'+
+    var br=r.tool==='Browser';    // web-chat.js browserGate: once per session
+    box.innerHTML='<div class="h">'+(br?'Allow Claude to use the browser in this session?':'Allow '+esc(r.tool)+'?')+'</div>'+(r.reason?'<div>'+esc(r.reason)+'</div>':'')+
+      '<div>'+toolBody(r.tool, r.input)+'</div><div class="acts"><button class="btn" data-a="allow">'+(br?'Allow for this session':'Allow')+'</button>'+
       (r.suggestions?'<button class="btn ghost" data-a="always">Always allow</button>':'')+
       '<button class="btn ghost" data-a="deny">Deny</button></div>';
   }

@@ -87,7 +87,9 @@ RUN mkdir -p /opt/claude-web-chat && cd /opt/claude-web-chat \
 # Placed before the html and script copies, so editing those does not download it again.
 ARG BROWSER=0
 ARG NOVNC_VERSION=1.5.0
-RUN if [ "$BROWSER" = 1 ]; then \
+# the ISO week from ./claude-box: a new week reinstalls Chromium (security updates), see claude-box
+ARG BROWSER_REFRESH=
+RUN echo "browser layer: ${BROWSER_REFRESH:-no refresh}" >/dev/null; if [ "$BROWSER" = 1 ]; then \
       apt-get update && apt-get install -y --no-install-recommends \
         chromium xvfb x11vnc fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
       && rm -rf /var/lib/apt/lists/* \
