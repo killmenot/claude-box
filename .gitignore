@@ -1,5 +1,7 @@
 # Secrets and state — do NOT commit
-.env
+# every env file (.env, .env.workspace1, ...) except the public template
+.env*
+!.env.example
 home/
 certs/*.crt
 certs/*.key
