@@ -252,6 +252,30 @@ case "$bind" in
 esac
 bind_name=$([ "$bind_ports" = 1 ] && echo "ports (bridge+mapping)" || echo "host")
 [ "$bind_ports" = 1 ] && compose_files+=(-f docker-compose.ports.yml)
+# EXTRA_HOSTS: extra /etc/hosts lines for the container (the box itself cannot edit /etc/hosts).
+# Space- or comma-separated; a bare NAME points at the host (host-gateway: the Mac under Docker
+# Desktop, the docker bridge address on Linux), NAME=ADDR or NAME:ADDR at a given address.
+# Rendered into a throwaway compose overlay; a changed list recreates the container on `up -d`.
+hosts_yaml=""; hosts_names=""
+set -f   # split the list on blanks only, no glob expansion
+for h in $(env_get EXTRA_HOSTS | tr ',' ' '); do
+  case "$h" in
+    *=*) hn="${h%%=*}"; ha="${h#*=}" ;;
+    *:*) hn="${h%%:*}"; ha="${h#*:}" ;;
+    *)   hn="$h"; ha="host-gateway" ;;
+  esac
+  case "$hn" in ""|*[!A-Za-z0-9.-]*) echo "claude-box: EXTRA_HOSTS: bad host name in '$h'" >&2; exit 1 ;; esac
+  case "$ha" in ""|*[!A-Za-z0-9.:-]*) echo "claude-box: EXTRA_HOSTS: bad address in '$h'" >&2; exit 1 ;; esac
+  hosts_yaml="${hosts_yaml}      ${hn}: \"${ha}\""$'\n'
+  hosts_names="${hosts_names:+$hosts_names, }$hn"
+done
+set +f
+if [ -n "$hosts_yaml" ]; then
+  hosts_file="$(mktemp "${TMPDIR:-/tmp}/claude-box-hosts.XXXXXX")"
+  trap 'rm -f "$hosts_file"' EXIT
+  printf 'services:\n  web:\n    extra_hosts:\n%s' "$hosts_yaml" > "$hosts_file"
+  compose_files+=(-f "$hosts_file")
+fi
 # A named instance is its own compose project too (the default project is the folder's name,
 # so two checkouts both called claude-box would otherwise be one project).
 name_set="$(env_get CLAUDE_BOX_NAME)"; name="$name_set"
@@ -339,7 +363,10 @@ esac
 # --- start ---
 first_run
 # the setup may have just named this instance
-if [ -z "$name_set" ] && [ -n "$(env_get CLAUDE_BOX_NAME)" ]; then cd "$CALLER_PWD" && exec "$SELF" "$@"; fi
+if [ -z "$name_set" ] && [ -n "$(env_get CLAUDE_BOX_NAME)" ]; then
+  rm -f "${hosts_file:-}"   # exec skips the EXIT trap; the new run renders its own
+  cd "$CALLER_PWD" && exec "$SELF" "$@"
+fi
 guard_owner
 
 # Build bypassing the proxy: compose reads .env at build time too and would pick up HTTPS_PROXY
@@ -381,6 +408,7 @@ echo "claude-box is up:"
 echo "  ${url}${url_note}"
 [ -z "$alt_url" ] || echo "  ${alt_url}${alt_note}"
 echo "  network: ${bind_name}"
+[ -z "$hosts_names" ] || echo "  extra hosts: ${hosts_names}"
 echo
 if has_login; then echo "Sign in with your login and password, or on this computer with a one-time link (15 min, either address):"
 else echo "Open a one-time link to sign in (15 min, either address); the page then asks you to pick a login and password:"; fi

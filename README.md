@@ -103,6 +103,20 @@ Caveat of the mapped mode: the container cannot reach services bound to the Mac'
 tailnet IP. Force a mode explicitly with `WEB_BIND=ports` or `WEB_BIND=host` in `.env`
 (host networking on macOS requires an engine with real host support, e.g. OrbStack).
 
+### Local domains (`EXTRA_HOSTS`)
+
+The box runs without root, so it cannot edit its own `/etc/hosts`. To reach a site the host serves
+under a local name (say `swiftdrive.local` from nginx on the Mac), list the names in the env file:
+
+```env
+EXTRA_HOSTS=swiftdrive.local api.swiftdrive.local db.local=10.0.0.5
+```
+
+Space- or comma-separated. A bare name points at the host (Docker's `host-gateway`: the Mac under
+Docker Desktop, the docker bridge address on Linux); `NAME=ADDR` (or `NAME:ADDR`) pins an address,
+e.g. `NAME=127.0.0.1` under host networking when the service listens on loopback only. Run
+`./claude-box` again: a changed list recreates the container.
+
 ---
 
 ## Using GLM (z.ai) instead of Anthropic

@@ -171,6 +171,32 @@ bash "$repo/claude-box" --restart </dev/null >/dev/null 2>&1
 check "--restart: builds through bake"             1 "$(dlog | grep -c 'buildx bake')"
 check "--restart: recreates the container"         1 "$(dlog | grep -c 'up -d --force-recreate web')"
 
+# --- EXTRA_HOSTS: a throwaway compose overlay with extra_hosts; the stub copies it while it exists ---
+printf '#!/bin/sh
+echo "docker $*" >> "%s/docker.log"
+case "$*" in *"up -d web"*)
+  for a in "$@"; do case "$a" in *claude-box-hosts.*) cp "$a" "%s/hosts.yml"; echo "$a" > "%s/hosts.path" ;; esac; done ;;
+esac
+exit 0
+' "$tmp" "$tmp" "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
+printf 'PROJECT_DIR=%s\nWEB_TERMINAL_PASSWORD=abcdefgh\nEXTRA_HOSTS="swiftdrive.local, api.local=10.0.0.5 v6.local:::1"\n' "$HOME/workspace" > "$repo/.env"
+: > "$tmp/docker.log"; rm -f "$tmp/hosts.yml" "$tmp/hosts.path"
+out="$(bash "$repo/claude-box" </dev/null 2>&1)"
+check "EXTRA_HOSTS: overlay passed on up"          1 "$(dlog | grep 'up -d web' | grep -c 'claude-box-hosts\.')"
+check "EXTRA_HOSTS: rendered overlay" "$(printf 'services:\n  web:\n    extra_hosts:\n      swiftdrive.local: "host-gateway"\n      api.local: "10.0.0.5"\n      v6.local: "::1"')" "$(cat "$tmp/hosts.yml" 2>/dev/null)"
+check "EXTRA_HOSTS: overlay removed after the run" no "$([ -e "$(cat "$tmp/hosts.path" 2>/dev/null)" ] && echo yes || echo no)"
+check "EXTRA_HOSTS: listed in the summary"         1 "$(printf '%s' "$out" | grep -c 'extra hosts: swiftdrive.local, api.local, v6.local')"
+printf 'PROJECT_DIR=%s\nWEB_TERMINAL_PASSWORD=abcdefgh\nEXTRA_HOSTS=bad"name\n' "$HOME/workspace" > "$repo/.env"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" </dev/null >"$tmp/out" 2>&1; rc=$?
+check "EXTRA_HOSTS: a bad name refuses to start"  1 "$rc"
+check "EXTRA_HOSTS: says which entry"              1 "$(grep -c "bad host name in 'bad\"name'" "$tmp/out")"
+check "EXTRA_HOSTS: nothing started"               0 "$(dlog | grep -c 'up -d web')"
+printf 'PROJECT_DIR=%s\nWEB_TERMINAL_PASSWORD=abcdefgh\nEXTRA_HOSTS=\n' "$HOME/workspace" > "$repo/.env"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" </dev/null >/dev/null 2>&1
+check "EXTRA_HOSTS empty: no overlay"              0 "$(dlog | grep -c 'claude-box-hosts\.')"
+
 # --- 6. --env: another env file is another box (own env file for compose, own home, own label) ---
 printf '#!/bin/sh
 echo "docker $* | env=$CLAUDE_BOX_ENV_FILE home=$BOX_HOME" >> "%s/docker.log"
