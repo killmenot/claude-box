@@ -5,8 +5,9 @@ home/
 .env
 *.sh
 scripts/*.sh
-# the two shell pieces that run inside the image (host-only scripts like certs-fix.sh stay excluded)
+# the shell pieces that run inside the image (host-only scripts like certs-fix.sh stay excluded)
 !scripts/web-menu.sh
 !scripts/notify.sh
 !scripts/web-entry.sh
+!scripts/claude-default.sh
 docker-compose*.yml

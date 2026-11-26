@@ -18,6 +18,8 @@
 //     {op:'interrupt', key}            stop the current turn
 //     {op:'perm', key, id, allow, always?, answers?}   answer a permission / question request
 //     {op:'mode', key, mode}           permission mode (default|acceptEdits|plan|auto)
+//     {op:'model', key, model}         "provider/model id" (web-models.js): same provider switches
+//                                      live; another provider restarts the process and resumes
 //     {op:'release', key}              stop the chat process (before switching to console)
 //     {op:'takeover', key}             kill the console tmux session (before switching to chat)
 //     {op:'draft', key, text, voice}   the unsent composer text (kept per session, sent to other viewers);
@@ -32,7 +34,7 @@
 //     {ev:'token', key, token}         the session now has a registry token (new or after /clear)
 //     {ev:'perm', key, id, tool, input, reason, suggestions}
 //     {ev:'perm_done', key, id}
-//     {ev:'info', key, info}           model, permissionMode, cwd, slash commands, last cost
+//     {ev:'info', key, info}           model, modelRef, permissionMode, cwd, slash commands, last cost
 //     {ev:'released', key} / {ev:'console', key, active}
 //     {ev:'error', key, text}
 
@@ -82,11 +84,16 @@ function sh(cmd, args) {
   return new Promise((res) => execFile(cmd, args, { maxBuffer: 4 << 20 }, (e, out) => res(e ? null : String(out))));
 }
 const reg = require('./web-registry.js');
+let tasksMod = null; // task folders: their repos join the session as extra directories (web-tasks.js)
+try { tasksMod = require(process.env.WEB_TASKS_MODULE || './web-tasks.js'); } catch (e) { console.error('task repos disabled:', e.message); }
+function taskDirs(cwd) { try { return tasksMod ? tasksMod.taskRepoDirs(cwd) : []; } catch (_) { return []; } }
+let models = null;   // providers and per-session models (web-models.js)
+try { models = require(process.env.WEB_MODELS_MODULE || './web-models.js'); } catch (e) { console.error('models disabled:', e.message); }
 const registry = {
   async get(token) { try { return reg.get(token); } catch (_) { return null; } },
   async upsert(f) {
     try {
-      return reg.upsert({ cid: f.cid, cwd: f.cwd, name: f.name, tmux: f.name, state: f.state, title: f.title, mode: 'chat' });
+      return reg.upsert({ cid: f.cid, cwd: f.cwd, name: f.name, tmux: f.name, state: f.state, title: f.title, mode: 'chat', model: f.model });
     } catch (e) { log('registry upsert failed:', e.message); return ''; }
   },
 };
@@ -208,13 +215,15 @@ async function warmCommands(cwd) {
 }
 
 class Chat {
-  constructor({ cid, cwd, name, token }) {
+  constructor({ cid, cwd, name, token, model }) {
     this.cid = cid || null; this.cwd = cwd; this.name = name; this.token = token || null;
+    this.modelRef = model || '';      // the picked "provider/model"; '' = the default (web-models.js)
     this.subs = new Set();            // {ws, key}
     this.state = 'stopped'; this.q = null; this.input = null;
     this.perms = new Map();           // id -> {resolve, tool, input, reason, suggestions}
     this.turn = [];                   // SDK messages of the current turn (for late subscribers)
-    this.info = { cwd, model: '', permissionMode: '', commands: [], cost: null, commandList: cachedCommands(cwd) };
+    this.info = { cwd, model: '', modelRef: '', permissionMode: '', commands: [], cost: null, commandList: cachedCommands(cwd) };
+    this.info.modelRef = this.pickModel() ? this.pickModel().ref : '';
     if (!CMD.byCwd[cwd]) warmCommands(cwd);
     this.titled = !!token; this.idleTimer = null; this.closing = null;
     CHATS.add(this); if (this.cid) BY_CID.set(this.cid, this);
@@ -237,17 +246,24 @@ class Chat {
     if (reg && this.cid) this.syncRegistry(reg);
   }
   async syncRegistry(state, title) {
-    const tok = await registry.upsert({ cid: this.cid, cwd: this.cwd, name: this.name, state, title });
+    const tok = await registry.upsert({ cid: this.cid, cwd: this.cwd, name: this.name, state, title, model: this.modelRef });
     if (tok && tok !== this.token) { this.token = tok; this.emit({ ev: 'token', token: tok }); }
     if (this.wire) this.wire.update({ token: this.token, cid: this.cid });
   }
+  pickModel() { return models ? models.resolve(this.modelRef) : null; }
   async start() {
     await sdkReady;
     if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
     if (this.cid && await tmuxAlive(this.name)) throw new Error('This session is open in the console. Switch to chat first (it closes the console).');
     this.input = new InputQueue();
-    this.wire = wire ? await wire.begin('chat', this.name, sessionEnv(), { token: this.token, cid: this.cid, cwd: this.cwd })
-      : { id: null, env: sessionEnv(), update() {}, finish() {} };
+    // the provider's env (key, base URL) for the model this session runs; see web-models.js
+    const sel = this.pickModel(), env = models ? models.envFor(sel, sessionEnv()) : sessionEnv();
+    this.running = sel; this.info.modelRef = sel ? sel.ref : '';
+    // a task folder: each of its repos is an extra directory, so their CLAUDE.md and skills load
+    const repoDirs = taskDirs(this.cwd); this.repoDirs = repoDirs.join('\n');
+    if (repoDirs.length) env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1';
+    this.wire = wire ? await wire.begin('chat', this.name, env, { token: this.token, cid: this.cid, cwd: this.cwd })
+      : { id: null, env, update() {}, finish() {} };
     const options = {
       cwd: this.cwd,
       includePartialMessages: true,
@@ -256,12 +272,13 @@ class Chat {
       // claude-notify (the tmux hook) must not touch the registry for chat-owned sessions —
       // this module keeps those records itself (see scripts/notify.sh).
       env: this.wire.env,
-      additionalDirectories: [UPLOADS],
+      additionalDirectories: [UPLOADS].concat(repoDirs),
       stderr: (d) => log(this.name, String(d).trim()),
     };
     try { fs.mkdirSync(UPLOADS, { recursive: true }); } catch (_) {}
     if (this.cid) options.resume = this.cid;
     if (this.desiredMode) options.permissionMode = this.desiredMode;   // picked before the first message
+    if (sel) options.model = sel.model;
     this.setState('starting');
     this.q = sdk.query({ prompt: this.input, options });
     this.loop();
@@ -367,6 +384,8 @@ class Chat {
       const list = '[Attached files]\n' + saved.map((f) => `- ${f.path} (${f.name}, ${fmtSize(f.size)})`).join('\n');
       content.push({ type: 'text', text: (text.trim() ? text.replace(/\s+$/, '') + '\n\n' : '') + list });
     }
+    // a repo was added to the task since the process started: restart it so the new folder joins
+    if (this.q && this.repoDirs !== undefined && taskDirs(this.cwd).join('\n') !== this.repoDirs && this.state !== 'running' && this.state !== 'requires_action') await this.stop();
     if (!this.q) await this.start();
     clearTimeout(this.idleTimer);
     this.input.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
@@ -377,6 +396,22 @@ class Chat {
     this.desiredMode = mode;
     if (this.q) await this.q.setPermissionMode(mode);
     this.info.permissionMode = mode; this.emit({ ev: 'info', info: this.info });
+  }
+  // Pick the model. Within the running provider the SDK switches it live; another provider needs
+  // other credentials, so the process is closed and the next message resumes the session with them.
+  async setModel(ref) {
+    if (!models) throw new Error('Models are not available.');
+    const sel = models.resolve(ref);
+    if (!sel || sel.ref !== ref) throw new Error('That model is not connected. Add it in Settings > Models.');
+    if (this.q && this.running && this.running.provider !== sel.provider && (this.state === 'running' || this.state === 'requires_action'))
+      throw new Error('Wait until the answer finishes, then switch the provider.');
+    this.modelRef = ref; this.info.modelRef = ref;
+    if (this.q && this.running && this.running.provider === sel.provider) {
+      try { await this.q.setModel(sel.model); this.running = sel; this.info.model = sel.model; }
+      catch (e) { log(this.name, 'setModel', e.message); await this.stop(); }
+    } else if (this.q) await this.stop();
+    if (this.cid) this.syncRegistry(this.state === 'stopped' ? 'stopped' : 'done');
+    this.emit({ ev: 'info', info: this.info });
   }
   stop() {
     if (!this.q) return Promise.resolve();
@@ -592,7 +627,7 @@ async function chatFor(msg) {
     if (ex) return ex;
     for (const c of CHATS) if (c.token === msg.token) return c;
     return new Chat({ cid: rec.claudeSessionId, cwd: launchDir(rec.claudeSessionId, rec.cwd) || rec.cwd,
-      name: rec.tmuxSession || rec.name || ('chat-' + msg.token), token: msg.token });
+      name: rec.tmuxSession || rec.name || ('chat-' + msg.token), token: msg.token, model: rec.model || '' });
   }
   const cwd = msg.cwd && path.resolve(msg.cwd);
   if (!cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('folder not found: ' + msg.cwd);
@@ -676,6 +711,7 @@ function onConnection(ws) {
         case 'interrupt': await chat.interrupt(); break;
         case 'perm': chat.answer(msg.id, msg); break;
         case 'mode': await chat.setMode(String(msg.mode)); break;
+        case 'model': await chat.setModel(String(msg.model || '')); break;
         case 'release': await chat.stop(); reply({ ev: 'released', key }); break;
         case 'takeover':
           if (await tmuxAlive(chat.name)) {

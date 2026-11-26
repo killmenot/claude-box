@@ -95,8 +95,9 @@ RUN ln -sf /usr/local/lib/claude-web/web-serve.js /usr/local/bin/claude-web-serv
 # registry), plus the tmux config (set-titles -> tab title)
 COPY scripts/web-menu.sh /usr/local/bin/claude-web-menu
 COPY scripts/notify.sh /usr/local/bin/claude-notify
+COPY scripts/claude-default.sh /usr/local/bin/claude-default
 COPY scripts/tmux.conf /etc/tmux.conf
-RUN chmod +x /usr/local/bin/claude-web-menu /usr/local/bin/claude-notify
+RUN chmod +x /usr/local/bin/claude-web-menu /usr/local/bin/claude-notify /usr/local/bin/claude-default
 
 # Entry wrapper: names the run uid in /etc/passwd (see web-entry.sh), then drops to it
 COPY scripts/web-entry.sh /usr/local/bin/claude-web-entry

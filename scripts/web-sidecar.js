@@ -14,6 +14,8 @@
 //   /tasks       -> task workspaces: GET list, POST /tasks/{open,archive,reopen,refresh,forget,add-repos,repo-add}
 //   /auth        -> web login: GET /auth/state, POST /auth/password {user, password, current} (web-auth.js)
 //   /git         -> GitHub via gh: GET /git/status, GET /git/repos, POST /git/{login,login/cancel,logout} (web-git.js)
+//   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
+//   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
 const http = require('http');
@@ -147,6 +149,8 @@ let auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cooki
 // ttyd always runs with its own random login (web-serve.js), so a page that reaches its loopback
 // port directly gets nowhere; the sidecar, which has already checked the user, swaps that login in.
 let TTYD_AUTH = '';
+let models = null;              // model providers (web-models.js)
+try { models = require(process.env.WEB_MODELS_MODULE || './web-models.js'); } catch (e) { console.error('models disabled:', e.message); }
 let claudeLogin = null;         // the in-flight 'claude auth login' process (onboarding model step)
 let jiraLogin = null;           // the in-flight 'claude mcp login atlassian' process (onboarding Jira step)
 function ttydHeaders(h) {
@@ -198,50 +202,46 @@ const handler = (req, res) => {
     // model provider + integrations: written into ~/.claude/settings.json / ~/.claude.json, which
     // every fresh claude process reads — so changes apply to new messages without a restart.
     const homeDir = process.env.HOME || '/home/node';
-    const settingsFile = require('path').join(homeDir, '.claude', 'settings.json');
     const claudeJsonFile = require('path').join(homeDir, '.claude.json');
     const defMcpFile = require('path').join(process.env.CLAUDE_DEFAULTS || '/opt/claude-defaults', 'mcp.json');
     const readJ = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return d; } };
     const writeJ = (f, o) => { const t = f + '.' + process.pid + '.tmp'; fs.writeFileSync(t, JSON.stringify(o, null, 2)); fs.renameSync(t, f); };
+    // model providers (web-models.js): several can be connected; each chat picks its own model
+    const claudeAuth = () => !!process.env.CLAUDE_CODE_OAUTH_TOKEN || fs.existsSync(require('path').join(homeDir, '.claude', '.credentials.json'));
+    if (path === '/models') {
+      if (!models) { json(res, 503, { error: 'models module not loaded' }); return; }
+      if (req.method !== 'POST') { json(res, 200, models.list(claudeAuth())); return; }
+      readJson(req, 8192, (o) => {
+        try {
+          o = o || {};
+          if (o.act === 'key') models.setKey(String(o.provider || ''), o.key, { base: o.base, model: o.model });
+          else if (o.act === 'remove') models.removeKey(String(o.provider || ''));
+          else if (o.act === 'default') models.setDefault(String(o.ref || ''));
+          else throw new Error('bad act');
+          json(res, 200, Object.assign({ ok: true }, models.list(claudeAuth())));
+        } catch (e) { json(res, 400, { error: String(e.message || e) }); }
+      });
+      return;
+    }
+    // the setup wizard's model step: which provider is the default, and set one (key + default)
     if (path === '/model' && req.method === 'GET') {
-      const env = (readJ(settingsFile, {}).env) || {};
-      const b = env.ANTHROPIC_BASE_URL || '';
-      let provider = 'claude';
-      if (/z\.ai/.test(b)) provider = 'glm';
-      else if (/abliteration/.test(b)) provider = 'abliteration';
-      else if (b) provider = 'custom';
-      // a Claude subscription token from .env, or a `claude login` done inside the box
-      const claudeAuth = !!process.env.CLAUDE_CODE_OAUTH_TOKEN || fs.existsSync(require('path').join(homeDir, '.claude', '.credentials.json'));
-      json(res, 200, { provider, baseUrl: b, model: env.ANTHROPIC_DEFAULT_SONNET_MODEL || '', hasKey: !!env.ANTHROPIC_AUTH_TOKEN, claudeAuth });
+      if (!models) { json(res, 503, { error: 'models module not loaded' }); return; }
+      const l = models.list(claudeAuth()), prov = l.default.split('/')[0];
+      const p = l.providers.find((x) => x.id === prov) || {};
+      json(res, 200, { provider: prov, hasKey: !!p.keyHint, claudeAuth: claudeAuth(), default: l.default });
       return;
     }
     if (path === '/model' && req.method === 'POST') {
       readJson(req, 8192, (o) => {
         try {
-          if (!o || !o.provider) throw new Error('provider required');
-          const prov = String(o.provider);
-          const s = readJ(settingsFile, {}); s.env = s.env || {};
-          if (prov === 'claude') {
-            // the OAuth token itself lives in .env on the host — the UI shows the Console command
-            ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
-             'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'].forEach((k) => delete s.env[k]);
-          } else {
-            const defaults = { glm: { base: 'https://api.z.ai/api/anthropic', model: 'GLM-5.3-Flash' },
-              abliteration: { base: 'https://api.abliteration.ai', model: 'abliterated-model' } };
-            const d = defaults[prov] || {};
-            const base = prov === 'custom' ? String(o.baseUrl || '').trim() : d.base;
-            const model = String(o.model || d.model || '').trim();
-            const key = String(o.key || '').trim();
-            if (!base) throw new Error('baseUrl required');
-            if (!key) throw new Error('API key required');
-            s.env.ANTHROPIC_BASE_URL = base;
-            s.env.ANTHROPIC_AUTH_TOKEN = key;
-            s.env.ANTHROPIC_DEFAULT_OPUS_MODEL = model;
-            s.env.ANTHROPIC_DEFAULT_SONNET_MODEL = model;
-            s.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model;
-          }
-          writeJ(settingsFile, s);
-          json(res, 200, { ok: true, note: 'applies to new messages' });
+          if (!models) throw new Error('models module not loaded');
+          const prov = String((o && o.provider) || '');
+          if (!models.PROVIDERS[prov]) throw new Error('provider required');
+          if (prov !== 'claude' && o.key) models.setKey(prov, o.key, { base: o.baseUrl, model: o.model });
+          const first = models.list(claudeAuth()).providers.find((x) => x.id === prov);
+          if (!first || !first.models.length) throw new Error('API key required');
+          models.setDefault(prov + '/' + first.models[0].id);
+          json(res, 200, { ok: true, note: 'applies to new sessions' });
         } catch (e) { json(res, 400, { error: String(e.message || e) }); }
       });
       return;
@@ -714,6 +714,7 @@ function start(opts) {
   TTYD_AUTH = opts.ttydAuth || '';
   if (opts.apiToken) auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cookie: COOKIE, apiToken: opts.apiToken });
   const tls = loadTls();
+  if (tasks && tasks.startSync && !opts.noRepoSync) tasks.startSync();     // keep /workspace/repos fresh
   const servers = [];
   // requestTimeout 0: large uploads to the Workspace file manager may take longer than Node's 5 min default
   const httpServer = http.createServer({ requestTimeout: 0 }, handler);

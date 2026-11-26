@@ -23,7 +23,9 @@ Guidance for Claude Code (and other agents) working in this repository.
   `scripts/web-wire.js` — records what the background agents (Inbox, Today) send to the model and get back: a per-run local HTTPS proxy, served at `/wire`.
   `scripts/web-auth.js` — the web login: one-time sign-in key from `./claude-box`, session cookies, login/password set in the UI (`/auth`).
   `scripts/web-git.js` — GitHub sign-in from the UI via `gh auth login --web` device codes (`/git`).
-  `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with per-task repo clones from `/workspace/repos`), served at `/tasks`.
+  `scripts/web-models.js` — model providers (Claude, GLM, Abliteration, custom) and each chat's model; keys in `~/.claude/web-providers.json` (`/models`).
+  `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with a git worktree per repo of `/workspace/repos`, kept fresh by a fetch timer), served at `/tasks`.
+  `scripts/claude-default.sh` — starts console `claude` with the default model and, in a task folder, its repos as `--add-dir`.
 - `site/` — the static marketing landing for **claude-box.dev** (Tailwind, self-hosted
   fonts, no CDN; deploy with `./site/deploy.sh`).
 - `html/` — the in-product web terminal / session launcher pages.

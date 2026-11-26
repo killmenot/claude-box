@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // On-disk registry of web sessions (survives a container restart, unlike tmux).
-// One JSON object keyed by token: {token, claudeSessionId, cwd, name, state, tmuxSession, title, mode, lastActivity}.
+// One JSON object keyed by token: {token, claudeSessionId, cwd, name, state, tmuxSession, title, mode, model, lastActivity}. model: a chat's pick, "provider/model id" (web-models.js).
 //
 // Used as a library by the sidecar / web chat, and as a CLI (`claude-web-registry`) by the two
 // remaining shell pieces — the claude-notify hook and the ttyd picker (web-menu.sh):
@@ -101,6 +101,7 @@ function upsert(f) {
       tmuxSession: f.tmux || '',
       title: f.title || prev.title || '',
       mode: f.mode || prev.mode || '',
+      model: f.model || prev.model || '',
       lastActivity: Math.floor(Date.now() / 1000),
     };
     write(reg);
@@ -171,7 +172,7 @@ function restore(log = (s) => console.error(s)) {
     if (!r.claudeSessionId || !r.cwd || !fs.existsSync(r.cwd)) { log(`restore: skip ${sess} (folder ${r.cwd} is gone)`); continue; }
     if (!hasTranscript(r.claudeSessionId)) { log(`restore: skip ${sess} (no transcript for ${r.claudeSessionId})`); continue; }
     if (tmux(['has-session', '-t', '=' + sess]) !== null) continue;   // already running
-    const ok = spawnSync('tmux', ['-u', 'new-session', '-d', '-s', sess, '-c', r.cwd, 'claude', '--resume', r.claudeSessionId],
+    const ok = spawnSync('tmux', ['-u', 'new-session', '-d', '-s', sess, '-c', r.cwd, 'claude-default', '--resume', r.claudeSessionId],
       { stdio: 'ignore' }).status === 0;
     if (ok) {
       tmux(['set-option', '-t', '=' + sess + ':', '@cbtoken', tok]);   // '=name:' — set-option rejects a bare '=name'
