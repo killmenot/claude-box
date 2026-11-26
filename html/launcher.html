@@ -216,16 +216,28 @@
   #srch .hit .m{color:var(--mute);font-size:11px;margin-bottom:3px}
   #srch .hit .x{font-size:12.5px;white-space:pre-wrap;word-break:break-word;color:var(--body)}
   @media (max-width:720px){ #srch .slist{flex:1;border-right:0} #srch .sprev{display:none} #srch{padding-top:4vh} }
-  .side-foot{padding:9px 18px 10px;border-top:1px solid var(--line);color:var(--slate);font-family:var(--mono);font-size:11.5px;line-height:1.6}
-  .side-foot .ln{display:flex;align-items:center;gap:8px;min-width:0}
-  .side-foot #hostm{display:block;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .side-foot .hot{color:var(--err);font-weight:600}
-  .voicebtn{margin-left:auto;border:1px solid var(--line);background:none;color:var(--mute);font:inherit;font-size:11px;
-            border-radius:6px;padding:0 7px;cursor:pointer;white-space:nowrap}
-  .voicebtn.on{color:var(--live);border-color:var(--live)}
-  .voicebtn.wait{color:var(--err);border-color:var(--err)}
-  .voicebtn.quiet{color:var(--mic);border-color:var(--mic)}
-  #snoozebtn{margin-left:4px}
+  /* sidebar footer: sessions, host load bars, Settings + voice icons */
+  .side-foot{padding:10px 12px 10px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
+  .side-foot .fst{display:flex;align-items:center;gap:8px;padding:0 4px;font-size:12.5px;color:var(--slate);min-width:0;white-space:nowrap}
+  .side-foot .fst b{color:var(--ink);font-weight:600}
+  .side-foot .meters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:0 4px}
+  .side-foot .meters:empty{display:none}
+  .side-foot .mt{font-size:11px;color:var(--mute);min-width:0}
+  .side-foot .mt div{display:flex;justify-content:space-between;gap:4px;white-space:nowrap}
+  .side-foot .mt b{font-weight:600;color:var(--body);overflow:hidden;text-overflow:ellipsis}
+  .side-foot .mt .bar{height:4px;border-radius:2px;background:#e3e6ec;margin-top:4px;overflow:hidden}
+  .side-foot .mt .bar i{display:block;height:100%;border-radius:2px;background:var(--iris)}
+  .side-foot .mt.hot b{color:var(--err)} .side-foot .mt.hot .bar i{background:var(--err)}
+  .side-foot .frow{display:flex;align-items:center;gap:2px}
+  .side-foot .frow .sp{flex:1}
+  .setbtn{display:inline-flex;align-items:center;gap:8px;border:0;background:none;color:var(--body);font:14px var(--sans);padding:6px 8px;border-radius:8px;cursor:pointer}
+  .setbtn:hover{background:var(--hover);color:var(--ink)}
+  .setbtn svg,.fib svg{width:16px;height:16px;flex:none}
+  .fib{display:inline-flex;align-items:center;gap:5px;height:32px;min-width:32px;justify-content:center;padding:0 8px;border:0;border-radius:8px;background:none;color:var(--slate);font:600 11.5px var(--sans);cursor:pointer}
+  .fib:hover{background:var(--hover);color:var(--ink)}
+  .fib.on{color:var(--iris);background:#ececfb}
+  .fib.quiet{color:var(--mic);background:#e8effd}
+  .fib.wait{color:#fff;background:var(--err)}
   .livedot{width:7px;height:7px;border-radius:50%;background:var(--live);box-shadow:0 0 0 3px rgba(22,163,74,.15)}
 
   /* ---------- main ---------- */
@@ -989,11 +1001,12 @@
     <div class="emsg hidden" id="fedmsg"></div>
     <textarea id="fedta" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
   </div></div>
-  <div class="side-foot"><div class="ln"><span class="livedot"></span><span id="scount">…</span>
-    <button id="voicebtn" class="voicebtn" type="button" title="Voice alerts: this tab reads out what sessions send (Monitoring/notify.sh)">🔇 voice</button>
-    <button id="snoozebtn" class="voicebtn hidden" type="button" title="Quiet for an hour (for a call that is not in the calendar); click again to speak">🔕 1h</button>
-    <button id="setbtn" class="setbtn" type="button" title="Settings" aria-label="Settings">⚙</button></div>
-    <span id="hostm" title="Host: load average · CPU · RAM used/total · free space in /workspace"></span></div>
+  <div class="side-foot"><div class="fst"><span class="livedot"></span><span id="scount">…</span></div>
+    <div class="meters" id="hostm"></div>
+    <div class="frow"><button id="setbtn" class="setbtn" type="button" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Settings</button><span class="sp"></span>
+    <button id="voicebtn" class="fib" type="button" aria-label="Voice alerts"></button>
+    <button id="snoozebtn" class="fib hidden" type="button" aria-label="Quiet for an hour"></button>
+    </div></div>
 </aside>
 <div id="scrim"></div>
 <div id="menu"></div>
@@ -3165,7 +3178,7 @@ function renderList(force){
   var inCat={}, rest=[];
   rows.forEach(function(s){ var c=CATS.map[s.token];
     if(c && catIds[c]) (inCat[c]=inCat[c]||[]).push(s); else rest.push(s); });
-  $('scount').textContent = rows.filter(function(s){return s.live;}).length+' running · '+rows.length+' total';
+  $('scount').innerHTML = '<b>'+rows.filter(function(s){return s.live;}).length+' running</b> · '+rows.length+' session'+(rows.length===1?'':'s');
   var h='';
   pend.forEach(function(k){ var p=PANES[k];
     h+='<div class="row pend'+(k===ACTIVE?' active':'')+'" data-key="'+esc(k)+'"><span class="dot"></span>'+
@@ -4381,13 +4394,19 @@ function fmtBytes(n){
 function pollHost(){
   if(document.hidden) return;
   fetch('metrics').then(function(r){ return r.ok?r.json():null; }).then(function(m){
-    if(!m) return; var parts=[];
-    if(m.load!=null) parts.push('load '+Number(m.load).toFixed(2));
-    if(m.cpu!=null) parts.push(m.cpu>85?'<span class="hot">cpu '+m.cpu+'%</span>':'cpu '+m.cpu+'%');
-    if(m.mem&&m.mem.total){ var r='ram '+fmtBytes(m.mem.used)+'/'+fmtBytes(m.mem.total);
-      parts.push(m.mem.used/m.mem.total>0.9?'<span class="hot">'+r+'</span>':r); }
-    if(m.disk&&m.disk.total) parts.push(esc(m.disk.path||'disk')+' '+fmtBytes(m.disk.free));
-    $('hostm').innerHTML=parts.join(' · ');
+    if(!m) return;
+    // three small bars: CPU, RAM used of total, disk used of total (red when nearly full)
+    function meter(label, val, frac, hot, tip){
+      var pct=Math.max(0, Math.min(100, Math.round((frac||0)*100)));
+      return '<div class="mt'+(hot?' hot':'')+'" title="'+esc(tip)+'"><div>'+label+'<b>'+esc(val)+'</b></div><div class="bar"><i style="width:'+pct+'%"></i></div></div>';
+    }
+    var h='';
+    if(m.cpu!=null) h+=meter('CPU', m.cpu+'%', m.cpu/100, m.cpu>85, 'CPU '+m.cpu+'%'+(m.load!=null?' · load '+Number(m.load).toFixed(2):''));
+    if(m.mem&&m.mem.total) h+=meter('RAM', fmtBytes(m.mem.used)+'/'+fmtBytes(m.mem.total), m.mem.used/m.mem.total, m.mem.used/m.mem.total>0.9,
+      'RAM '+fmtBytes(m.mem.used)+' used of '+fmtBytes(m.mem.total));
+    if(m.disk&&m.disk.total){ var du=(m.disk.total-(m.disk.free||0))/m.disk.total;
+      h+=meter('Disk', Math.round(du*100)+'%', du, du>0.9, (m.disk.path||'disk')+': '+fmtBytes(m.disk.free)+' free of '+fmtBytes(m.disk.total)); }
+    $('hostm').innerHTML=h;
   }).catch(function(){});
 }
 pollHost(); setInterval(pollHost, 5000);
@@ -4400,6 +4419,11 @@ pollHost(); setInterval(pollHost, 5000);
 // "🔕 1h" mutes this tab for an hour for calls that are not in the calendar. Phrases that
 // arrive while quiet are dropped, not saved for later.
 var SAY={on:false, q:[], busy:false, snooze:0, meeting:null};
+var IC_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+var IC_SPEAK=IC_SVG+'<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+var IC_MUTE=IC_SVG+'<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9l6 6M22 9l-6 6"/></svg>';
+var IC_BELL=IC_SVG+'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>';
+var IC_BELLOFF=IC_SVG+'<path d="M13.7 21a2 2 0 0 1-3.4 0M18.6 13A17 17 0 0 1 18 8M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h14M18 8a6 6 0 0 0-9.3-5M2 2l20 20"/></svg>';
 try{ SAY.on=localStorage.getItem('cb-voice')==='1'; SAY.snooze=+localStorage.getItem('cb-voice-snooze')||0; }catch(_){}
 function voiceSnoozed(){ return SAY.snooze>Date.now(); }
 function voiceHush(){ SAY.q=[]; if(window.speechSynthesis) speechSynthesis.cancel(); SAY.busy=false; }
@@ -4412,15 +4436,17 @@ function voiceReady(){ return !navigator.userActivation || navigator.userActivat
 function voiceBtn(){
   var b=$('voicebtn'); if(!b) return;
   var wait=SAY.on && SAY.q.length && !voiceReady(), quiet=SAY.on && (voiceSnoozed() || SAY.meeting);
-  b.textContent=!SAY.on?'🔇 voice':quiet?(SAY.meeting?'🔕 meeting':'🔕 quiet'):(wait?'🔊 click to hear':'🔊 voice');
-  b.className='voicebtn'+(!SAY.on?'':quiet?' quiet':(wait?' wait':' on'));
-  b.title=SAY.meeting&&SAY.on?'Voice alerts: quiet during the calendar meeting (until '+new Date(SAY.meeting).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+')'
-    :'Voice alerts: this tab reads out what sessions send (Monitoring/notify.sh)';
+  b.innerHTML=(SAY.on?IC_SPEAK:IC_MUTE)+(wait?'<span>Click to hear</span>':SAY.meeting&&SAY.on?'<span>Meeting</span>':'');
+  b.className='fib'+(!SAY.on?'':quiet?' quiet':(wait?' wait':' on'));
+  b.title=!SAY.on?'Voice alerts are off. Click to have this tab read out what sessions send (Monitoring/notify.sh)'
+    :SAY.meeting?'Voice alerts: quiet during the calendar meeting (until '+new Date(SAY.meeting).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+')'
+    :wait?'Voice alerts: a phrase is waiting; click anywhere in the page to hear it'
+    :'Voice alerts are on. Click to turn them off';
   var z=$('snoozebtn'); if(!z) return;
-  z.classList.toggle('hidden', !SAY.on);
   var left=Math.ceil((SAY.snooze-Date.now())/60000);
-  z.textContent=voiceSnoozed()?'🔕 '+left+'m':'🔕 1h';
-  z.className='voicebtn'+(voiceSnoozed()?' quiet':'')+(SAY.on?'':' hidden');
+  z.innerHTML=voiceSnoozed()?IC_BELLOFF+'<span>'+left+'m</span>':IC_BELL;
+  z.className='fib'+(voiceSnoozed()?' quiet':'')+(SAY.on?'':' hidden');
+  z.title=voiceSnoozed()?'Quiet for '+left+' more min. Click to speak again':'Quiet for an hour (for a call that is not in the calendar)';
 }
 function voicePlay(){
   if(voiceSnoozed() || SAY.meeting){ voiceHush(); voiceBtn(); return; }
