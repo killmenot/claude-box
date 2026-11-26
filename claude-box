@@ -166,8 +166,22 @@ first_run() {
   # the container must run as this host user, or it cannot write the ./home bind mount
   if [ -z "$(env_get BOX_UID)" ]; then env_set BOX_UID "$(id -u)"; env_set BOX_GID "$(id -g)"; fi
   setup_workspace
+  seed_git_identity
   if [ -n "$docker_set" ]; then env_set DOCKER_ACCESS "$docker_set"; echo "  Docker access: $([ "$docker_set" = 1 ] && echo on || echo off)."
   else setup_docker; fi
+}
+
+# Who the box commits as: the host's git identity, once, for a box that has none in .env yet.
+# The box applies it only where its own ~/.gitconfig has none (the UI's Settings > GitHub wins).
+seed_git_identity() {
+  local k g v
+  for k in GIT_USER_NAME GIT_USER_EMAIL; do
+    [ -n "$(env_get "$k")" ] && continue
+    g=user.name; [ "$k" = GIT_USER_EMAIL ] && g=user.email
+    v="$(git config --global --get "$g" 2>/dev/null || true)"
+    [ -n "$v" ] && env_set "$k" "$v"
+  done
+  return 0
 }
 
 setup_docker() {

@@ -727,6 +727,8 @@
   .gitbox .gcode b{font:600 22px var(--mono,monospace);letter-spacing:.08em;color:var(--ink);padding:4px 10px;border:1px dashed var(--line);border-radius:8px}
   .gitbox .row2{display:flex;gap:8px;flex-wrap:wrap}
   .gitbox .sub{color:var(--mute);font-size:12.5px}
+  .gitbox .gid{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
+  .gitbox .gid input{flex:1 1 160px;min-width:0}
   #agv{position:fixed;inset:0;z-index:60;background:var(--backdrop);display:none;align-items:flex-start;justify-content:center;padding:6vh 16px 16px}
   #agv.on{display:flex}
   #agv .abox{width:min(900px,100%);max-height:86vh;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 64px rgba(14,17,22,.28);display:flex;flex-direction:column;overflow:hidden}
@@ -2281,6 +2283,13 @@ function pwForm(first, done){
   return f;
 }
 // GitHub status + the device-code sign-in, shared by the wizard and Settings
+// who the box commits as: filled in automatically (host's identity, GitHub account), editable here
+function gitIdHtml(s){
+  return '<div class="gid"><div class="sub">Commits are made as</div>'+
+    '<div class="row2"><input id="gidname" type="text" autocomplete="name" placeholder="Name" value="'+esc(s.name||'')+'">'+
+    '<input id="gidemail" type="email" autocomplete="email" placeholder="you@example.com" value="'+esc(s.email||'')+'">'+
+    '<button class="btn ghost" type="button" data-g="saveid">Save</button></div><div class="sub gidmsg"></div></div>';
+}
 function gitBox(box, onChange){
   var poll=null;
   box.innerHTML='<div class="sub">Checking…</div>';
@@ -2297,14 +2306,13 @@ function gitBox(box, onChange){
       box.dataset.code=l.code; box.dataset.url=l.url; again(); return;
     }
     if(s.account){
-      box.innerHTML='<div class="ok">✓ Connected as <b>'+esc(s.account)+'</b></div>'+
-        '<div class="sub">Commits are signed '+esc(s.name||'(no name)')+' &lt;'+esc(s.email||'no email')+'&gt;.</div>'+
+      box.innerHTML='<div class="ok">✓ Connected as <b>'+esc(s.account)+'</b></div>'+gitIdHtml(s)+
         '<div class="row2"><button class="btn ghost" type="button" data-g="logout">Disconnect</button></div>';
       onChange&&onChange(s); return;
     }
     box.innerHTML=(l.state==='error'?'<div class="ferr">'+esc(l.error)+'</div>':'')+
       '<div class="sub">Not connected. GitHub shows a code, you confirm it in the browser — no SSH keys or tokens to copy.</div>'+
-      '<div class="row2"><button class="btn" type="button" data-g="login">Connect GitHub</button></div>';
+      '<div class="row2"><button class="btn" type="button" data-g="login">Connect GitHub</button></div>'+gitIdHtml(s);
   }
   function refresh(){
     if(!box.isConnected) return;
@@ -2314,6 +2322,15 @@ function gitBox(box, onChange){
     var b=e.target.closest('[data-g]'); if(!b) return; var g=b.dataset.g;
     if(g==='copy'){ copyText(box.dataset.code||'').then(function(){ b.textContent='Copied'; }, function(){}); return; }
     if(g==='open'){ openExt(box.dataset.url); return; }
+    if(g==='saveid'){
+      var msg=box.querySelector('.gidmsg'), nm=box.querySelector('#gidname').value, em=box.querySelector('#gidemail').value;
+      b.disabled=true;
+      fetch('git/identity',{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({name:nm, email:em})})
+        .then(function(r){ return r.json(); }).then(function(o){ b.disabled=false;
+          if(o.error){ msg.className='ferr gidmsg'; msg.textContent=o.error; } else { msg.className='sub gidmsg'; msg.textContent='✓ Saved: '+o.name+' <'+o.email+'>'; } },
+          function(){ b.disabled=false; msg.className='ferr gidmsg'; msg.textContent='Could not reach the box.'; });
+      return;
+    }
     if(g==='logout' && !confirm('Disconnect GitHub? Clone and push stop working until you connect again.')) return;
     b.disabled=true;
     var op=g==='login'?'git/login':g==='cancel'?'git/login/cancel':'git/logout';

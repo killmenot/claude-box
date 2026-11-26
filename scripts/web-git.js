@@ -8,6 +8,7 @@
 //   POST /git/login            start the device flow (state: starting -> code -> done | error)
 //   POST /git/login/cancel     stop a sign-in in progress
 //   POST /git/logout           sign gh out of github.com
+//   POST /git/identity         {name, email}: who the box commits as (git config --global)
 //   GET  /git/repos            repos this account can clone (own, collaborator, its orgs'), newest push first
 const { spawn, execFile } = require('child_process');
 
@@ -44,6 +45,29 @@ async function fillIdentity() {
   if (!user) return;
   if (!(await gitGet('user.name'))) await run('git', ['config', '--global', 'user.name', name || user]);
   if (!(await gitGet('user.email'))) await run('git', ['config', '--global', 'user.email', `${id}+${user}@users.noreply.github.com`]);
+}
+
+// Who the box commits as, set from the UI (wizard / Settings > GitHub). A missing one is filled in
+// at start from the env file (GIT_USER_NAME / GIT_USER_EMAIL: the host's identity, see ./claude-box)
+// and after a GitHub sign-in from the account; Claude never invents one (claude-defaults/managed-CLAUDE.md).
+async function setIdentity(o) {
+  const name = String((o && o.name) || '').replace(/\s+/g, ' ').trim(), email = String((o && o.email) || '').trim();
+  if (!name || name.length > 100) throw new Error('Name: 1-100 characters.');
+  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email) || email.length > 200) throw new Error('Email: an address like you@example.com.');
+  for (const [k, v] of [['user.name', name], ['user.email', email]]) {
+    const r = await run('git', ['config', '--global', k, v]);
+    if (r.code !== 0) throw new Error('git config failed: ' + (r.err || r.out).trim().slice(0, 200));
+  }
+  return { name, email };
+}
+// the env file's identity (the host's), only where the box has none yet: what is set in the UI wins
+async function seedIdentity(env) {
+  const set = [];
+  for (const [k, key] of [['GIT_USER_NAME', 'user.name'], ['GIT_USER_EMAIL', 'user.email']]) {
+    const v = String((env || process.env)[k] || '').trim();
+    if (v && !(await gitGet(key))) { await run('git', ['config', '--global', key, v]); set.push(key); }
+  }
+  return set;
 }
 
 function stop() {
@@ -124,4 +148,4 @@ async function repos(force) {
   return { repos: await reposCache.busy, at: Date.now() };
 }
 
-module.exports = { status, start, cancel, logout, repos };
+module.exports = { status, start, cancel, logout, repos, fillIdentity, setIdentity, seedIdentity };

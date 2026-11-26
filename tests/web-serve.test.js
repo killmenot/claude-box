@@ -162,3 +162,24 @@ test('skills: no copyFile (breaks on virtiofs), exec bit kept, a broken half-cop
   assert.strictEqual(fs.readFileSync(path.join(dst, 'w', 'SKILL.md'), 'utf8'), 'skill');
   assert.deepStrictEqual(fs.readdirSync(dst).filter((n) => n.includes('.tmp-')), []);
 });
+
+test('MCP urls: ${VAR} / ${VAR:-default} filled from the env (Claude Code takes them literally), keys stay out', () => {
+  const { expandUrl } = require('../scripts/web-serve.js');
+  delete process.env.CB_T_URL;
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://app.example.com/mcp');
+  process.env.CB_T_URL = '';
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://app.example.com/mcp');   // empty = unset
+  process.env.CB_T_URL = 'https://team.example.com/';
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://team.example.com/mcp');  // no double slash
+  assert.strictEqual(expandUrl('https://mcp.example.com/mcp'), 'https://mcp.example.com/mcp');
+
+  const helper = 'node -e "print the key"';
+  fs.writeFileSync(path.join(def, 'mcp.json'), JSON.stringify({ mcpServers: {
+    wiki: { type: 'http', url: '${CB_T_URL}/mcp', headersHelper: helper } } }));
+  seedDefaults();
+  const w = read('.claude.json').mcpServers.wiki;
+  assert.strictEqual(w.url, 'https://team.example.com/mcp');
+  assert.strictEqual(w.headersHelper, helper);
+  delete process.env.CB_T_URL;
+});
+

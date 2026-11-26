@@ -13,7 +13,7 @@
 //   /inbox       -> the coordinator's cards: GET list, POST /inbox/act {token, op: send|seen|later|allow|deny} (web-inbox.js)
 //   /tasks       -> task workspaces: GET list, POST /tasks/{open,archive,reopen,refresh,forget,add-repos,repo-add}
 //   /auth        -> web login: GET /auth/state, POST /auth/password {user, password, current} (web-auth.js)
-//   /git         -> GitHub via gh: GET /git/status, GET /git/repos, POST /git/{login,login/cancel,logout} (web-git.js)
+//   /git         -> GitHub via gh: GET /git/status, GET /git/repos, POST /git/{login,login/cancel,logout,identity} (web-git.js)
 //   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
 //   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
@@ -32,7 +32,11 @@ const webGuard = require('./web-guard.js');
 const code = require('./web-code.js');
 const guard = webGuard.makeGuard();
 
-const IFACE = process.env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
+// The address the listeners bind to inside the container. WEB_LISTEN_ADDR is set only by the
+// bridge overlay (docker-compose.ports.yml): there Docker forwards published ports to the
+// container's own interface, never to its loopback, so it must be 0.0.0.0. WEB_TERMINAL_INTERFACE
+// stays the address exposed on the host.
+const IFACE = process.env.WEB_LISTEN_ADDR || process.env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
 const PORT  = parseInt(process.env.WEB_TERMINAL_PORT || '7681', 10);
 const TLS_PORT = parseInt(process.env.WEB_TLS_PORT || '8443', 10);   // https listener (if a cert is present)
 const TTYD  = parseInt(process.env.TTYD_PORT || '7682', 10);
@@ -421,6 +425,10 @@ const handler = (req, res) => {
       if (path === '/git/login') { json(res, 200, webGit.start()); return; }
       if (path === '/git/login/cancel') { json(res, 200, webGit.cancel()); return; }
       if (path === '/git/logout') { webGit.logout().then((r) => json(res, r.ok ? 200 : 400, r)); return; }
+      if (path === '/git/identity') {
+        readJson(req, 4096, (o) => { webGit.setIdentity(o).then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message })); });
+        return;
+      }
     }
     if (path === '/sessions') {
       const t0 = Date.now();

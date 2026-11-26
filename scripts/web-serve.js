@@ -70,6 +70,15 @@ function writeApiToken() {
   return tok;
 }
 
+// Claude Code takes a user-scope MCP server's url literally (no ${VAR} expansion there), so a url
+// built from the env file is filled in here: ${VAR} / ${VAR:-default}, an empty VAR counts as
+// unset; a trailing slash on the base does not double up. Only urls: secrets stay out of
+// ~/.claude.json (a server's key comes from a headersHelper that reads the env at connect time).
+function expandUrl(u) {
+  return String(u)
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, k, def) => env[k] || def || '')
+    .replace(/([^:\/])\/{2,}/g, '$1/');
+}
 // ---------- 1. defaults ----------
 // settings.json is copied once (the user may change it later); MCP servers are re-synced from the
 // image on every start; the claude-notify hooks are (re)installed unless CLAUDE_NOTIFY_DISABLE is set.
@@ -83,7 +92,11 @@ function seedDefaults() {
   }
   const config = readJson(configFile) || {};
   const mcp = readJson(path.join(DEF, 'mcp.json'));
-  if (mcp && mcp.mcpServers) config.mcpServers = Object.assign({}, config.mcpServers, mcp.mcpServers);
+  if (mcp && mcp.mcpServers) {
+    const servers = {};
+    for (const [k, v] of Object.entries(mcp.mcpServers)) servers[k] = v && v.url ? Object.assign({}, v, { url: expandUrl(v.url) }) : v;
+    config.mcpServers = Object.assign({}, config.mcpServers, servers);
+  }
   // MCP_ATLASSIAN=0 in .env (the wizard asks) keeps the Atlassian server out of this box
   if (env.MCP_ATLASSIAN === '0') delete config.mcpServers.atlassian;
   // an OAuth token in .env: skip the first-run login wizard (Claude Code ignores it during onboarding)
@@ -227,6 +240,14 @@ async function run() {
     warn(`WARNING: listening on ${IFACE} WITHOUT a password — an open writable shell exposed to the outside!`);
     warn('         Set WEB_TERMINAL_PASSWORD in .env.');
   }
+  // who the box commits as: the env file's (the host's) identity where none is set yet, then the
+  // GitHub account's once gh is signed in; changed later in Settings > GitHub
+  try {
+    const git = require('./web-git.js');
+    const set = await git.seedIdentity(env);
+    if (set.length) log('git identity from the env file:', set.join(', '));
+    git.fillIdentity().catch(() => {});
+  } catch (e) { warn('git identity:', e.message); }
   // pick the ttyd port BEFORE the sidecar loads: the sidecar reads TTYD_PORT from the env at
   // require time (it proxies /term there)
   env.TTYD_PORT = await pickTtydPort();
@@ -285,5 +306,5 @@ async function run() {
   }
 }
 
-module.exports = { seedDefaults, syncSkills, pickTtydPort, dropSecrets, SECRET_ENV };
+module.exports = { seedDefaults, syncSkills, expandUrl, pickTtydPort, dropSecrets, SECRET_ENV };
 if (require.main === module) main();

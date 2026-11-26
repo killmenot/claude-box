@@ -126,6 +126,8 @@ RUN chmod +x /usr/local/bin/claude-web-entry
 
 # Shared defaults (settings + MCP) — seeded into ~/.claude at startup (see web-serve.js)
 COPY claude-defaults/ /opt/claude-defaults/
+# Rules for every Claude session in the box (git identity, ...): the managed CLAUDE.md location
+RUN mkdir -p /etc/claude-code && cp /opt/claude-defaults/managed-CLAUDE.md /etc/claude-code/CLAUDE.md
 
 # A claude installed or updated by the native installer lives in ~/.local/bin (the home dir is
 # a bind mount, so it survives image rebuilds) — prefer it over the image's npm copy.
