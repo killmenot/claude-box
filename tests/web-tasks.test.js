@@ -8,6 +8,10 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
+// the test repos are throwaway: never sign their commits (a global commit.gpgsign with a hardware
+// key would ask for a PIN and fail here)
+Object.assign(process.env, { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'false',
+  GIT_CONFIG_KEY_1: 'tag.gpgsign', GIT_CONFIG_VALUE_1: 'false' });
 const W = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-tasks-'));
 process.env.WORKSPACE_DIR = path.join(W, 'ws');
 fs.mkdirSync(process.env.WORKSPACE_DIR);

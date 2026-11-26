@@ -112,3 +112,28 @@ test('pickTtydPort: finds the first free loopback port, explicit TTYD_PORT wins'
   delete process.env.TTYD_PORT;
   for (const srv of holders) if (srv.listening) srv.close();
 });
+
+test('skills from the image: installed with a marker, updated on restart, own and unmarked ones kept', () => {
+  const { syncSkills } = require('../scripts/web-serve.js');
+  const src = path.join(tmp, 'img-skills'), dst = path.join(tmp, '.claude', 'skills');
+  fs.mkdirSync(path.join(src, 'pr-review'), { recursive: true });
+  fs.mkdirSync(path.join(src, 'other'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'pr-review', 'SKILL.md'), 'v1');
+  fs.writeFileSync(path.join(src, 'other', 'SKILL.md'), 'image');
+  fs.mkdirSync(path.join(dst, 'other'), { recursive: true });
+  fs.writeFileSync(path.join(dst, 'other', 'SKILL.md'), 'mine');           // the user's own skill, same name
+  assert.deepStrictEqual(syncSkills(src, dst), ['pr-review']);
+  assert.ok(fs.existsSync(path.join(dst, 'pr-review', '.claude-box-managed')));
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'other', 'SKILL.md'), 'utf8'), 'mine');
+  fs.writeFileSync(path.join(src, 'pr-review', 'SKILL.md'), 'v2');
+  fs.writeFileSync(path.join(dst, 'pr-review', 'stale.md'), 'old file');
+  syncSkills(src, dst);
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'pr-review', 'SKILL.md'), 'utf8'), 'v2');
+  assert.ok(!fs.existsSync(path.join(dst, 'pr-review', 'stale.md')), 'files removed from the image go away');
+  fs.unlinkSync(path.join(dst, 'pr-review', '.claude-box-managed'));        // the user takes it over
+  fs.writeFileSync(path.join(dst, 'pr-review', 'SKILL.md'), 'edited');
+  fs.writeFileSync(path.join(src, 'pr-review', 'SKILL.md'), 'v3');
+  syncSkills(src, dst);
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'pr-review', 'SKILL.md'), 'utf8'), 'edited');
+  assert.deepStrictEqual(syncSkills(path.join(tmp, 'missing'), dst), []);
+});

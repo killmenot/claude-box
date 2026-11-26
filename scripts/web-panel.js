@@ -93,12 +93,20 @@ function ghRun() {
   });
   return gh.busy;
 }
-// status of our own PR reviewer (reviews/state.json), if it runs for that repo
+// status of our own PR reviewer, if it covers that repo: the pr-watch skill run in the reviews folder
+// (reviews/.pr-watch/state.json, keyed "owner/repo#n"), or the older single-repo reviewer
+// (reviews/config.json + reviews/state.json, keyed by number)
 function reviewerState() {
-  let cfg = null, st = null;
+  let cfg = null, st = null, watch = null;
   try { cfg = JSON.parse(fs.readFileSync(path.join(REVIEWS_DIR, 'config.json'), 'utf8')); } catch (_) {}
   try { st = JSON.parse(fs.readFileSync(path.join(REVIEWS_DIR, 'state.json'), 'utf8')); } catch (_) {}
+  try { watch = JSON.parse(fs.readFileSync(path.join(REVIEWS_DIR, '.pr-watch', 'state.json'), 'utf8')); } catch (_) {}
   return (repo, n) => {
+    const w = watch && (watch.prs || {})[repo + '#' + n];
+    if (w && w.status !== 'baseline') {
+      return { status: w.approved ? 'approved' : w.status, findings: Array.isArray(w.findings) ? w.findings.length : 0,
+        action: w.last_post && w.last_post.action, url: w.last_post && w.last_post.url };
+    }
     if (!cfg || !st || cfg.repo !== repo) return null;
     const s = (st.prs || {})[String(n)]; if (!s) return null;
     return { status: s.status, findings: Array.isArray(s.findings) ? s.findings.length : 0,

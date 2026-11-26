@@ -83,12 +83,36 @@ function seedDefaults() {
   // an OAuth token in .env: skip the first-run login wizard (Claude Code ignores it during onboarding)
   if (env.CLAUDE_CODE_OAUTH_TOKEN) config.hasCompletedOnboarding = true;
   writeJson(configFile, config);
+  syncSkills(path.join(DEF, 'skills'), path.join(CLAUDE_DIR, 'skills'));
   if (!env.CLAUDE_NOTIFY_DISABLE) {
     const s = readJson(settingsFile) || {};
     const hook = (state) => [{ hooks: [{ type: 'command', command: `claude-notify ${state}` }] }];
     s.hooks = Object.assign({}, s.hooks, { Stop: hook('done'), Notification: hook('waiting'), UserPromptSubmit: hook('working') });
     writeJson(settingsFile, s);
   }
+}
+
+// Skills shipped with the box (claude-defaults/skills/<name>) are copied to ~/.claude/skills/<name>
+// on every start, so an image update brings the new version. A copy holds a marker file; delete the
+// marker to keep your own edits (the box then leaves that folder alone). A folder of the same name
+// without the marker is the user's own skill and is never touched.
+const SKILL_MARK = '.claude-box-managed';
+function syncSkills(from, to) {
+  let names;
+  try { names = fs.readdirSync(from, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch (_) { return []; }
+  const done = [];
+  for (const name of names) {
+    const dst = path.join(to, name);
+    if (fs.existsSync(dst) && !fs.existsSync(path.join(dst, SKILL_MARK))) continue;
+    try {
+      fs.rmSync(dst, { recursive: true, force: true });
+      fs.mkdirSync(to, { recursive: true });
+      fs.cpSync(path.join(from, name), dst, { recursive: true });
+      fs.writeFileSync(path.join(dst, SKILL_MARK), 'Installed by claude-box and replaced on every start. Delete this file to keep your own changes.\n');
+      done.push(name);
+    } catch (e) { warn(`skill ${name}: ${e.message}`); }
+  }
+  return done;
 }
 
 // ---------- 2. TLS ----------
@@ -234,5 +258,5 @@ async function run() {
   }
 }
 
-module.exports = { seedDefaults, pickTtydPort, dropSecrets, SECRET_ENV };
+module.exports = { seedDefaults, syncSkills, pickTtydPort, dropSecrets, SECRET_ENV };
 if (require.main === module) main();
