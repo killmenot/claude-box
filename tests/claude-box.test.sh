@@ -9,7 +9,7 @@ fail=0
 check(){ if [ "$2" = "$3" ]; then echo "ok   - $1"; else echo "FAIL - $1: expected [$2] got [$3]"; fail=1; fi; }
 command -v script >/dev/null 2>&1 || { echo "SKIP: script(1) not found"; exit 0; }
 
-tmp="$(mktemp -d)"
+tmp="$(cd "$(mktemp -d)" && pwd -P)"   # the real path: on macOS /var is a symlink to /private/var
 trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp/home"; mkdir -p "$HOME"
 repo="$tmp/repo"; mkdir -p "$repo"
@@ -19,16 +19,29 @@ printf '%s\n' 'PROJECT_DIR=/path/to/your/project' 'WEB_TERMINAL_PORT=7681' '# WE
 bin="$tmp/bin"; mkdir -p "$bin"
 printf '#!/bin/sh\necho "docker $*" >> "%s/docker.log"\n' "$tmp" > "$bin/docker"; chmod +x "$bin/docker"
 export PATH="$bin:$PATH"
+# `uname -s` picks the network mode (auto): pinned to Linux (host network, no overlay) so the
+# expected docker calls are the same on every machine; the auto-mode checks below switch it
+fake_uname(){ printf '#!/bin/sh\necho %s\n' "$1" > "$bin/uname"; chmod +x "$bin/uname"; }
+fake_uname Linux
 
-# run claude-box on a pty, feeding <input>; prints the transcript
-tty_run(){ printf '%b' "$1" | script -qec "bash '$repo/claude-box' ${2:-}" /dev/null 2>&1; }
+# run claude-box on a pty, feeding <input>; prints the transcript. util-linux script (Linux) takes
+# the command as -c; BSD script (macOS) takes it as arguments and drops input that arrives before
+# the pty is up, so there the input is sent a moment later.
+if script -qec true /dev/null >/dev/null 2>&1; then
+  tty_run(){ printf '%b' "$1" | script -qec "bash '$repo/claude-box' ${2:-}" /dev/null 2>&1; }
+else
+  # shellcheck disable=SC2086  # $2: optional flags, split on purpose
+  tty_run(){ { sleep 0.5; printf '%b' "$1"; sleep 0.5; } | script -q /dev/null bash "$repo/claude-box" ${2:-} 2>&1; }
+fi
+# file mode as octal: GNU stat (-c) or BSD stat (-f)
+mode(){ stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 val(){ grep -E "^$1=" "$repo/.env" | tail -n1 | cut -d= -f2-; }
 
 # --- 1. first run: projects folder, model (default Claude), integrations; login comes via the browser ---
 out="$(tty_run '\n\n\n')"
 key_file="$repo/home/.claude/web-login-key"
 check "first run: .env created"                    yes "$([ -f "$repo/.env" ] && echo yes)"
-check "first run: .env is private"                 600 "$(stat -c %a "$repo/.env")"
+check "first run: .env is private"                 600 "$(mode "$repo/.env")"
 check "first run: projects default to ./workspace" "$repo/workspace" "$(val PROJECT_DIR)"
 check "first run: projects folder created"         yes "$([ -d "$repo/workspace" ] && echo yes)"
 check "first run: layout dirs created"             yes "$([ -d "$repo/workspace/tasks" ] && [ -d "$repo/workspace/tmp" ] && [ -d "$repo/workspace/repos" ] && [ -d "$repo/workspace/sessions" ] && echo yes)"
@@ -37,11 +50,11 @@ check "first run: jira asked in wizard"            0 "$(printf '%s' "$out" | gre
 check "first run: other settings kept"             7681 "$(val WEB_TERMINAL_PORT)"
 check "first run: container uid saved (BOX_UID)"    "$(id -u)" "$(val BOX_UID)"
 check "first run: container gid saved (BOX_GID)"    "$(id -g)" "$(val BOX_GID)"
-check "first run: image built"                     1 "$(grep -c 'compose -f docker-compose.yml build' "$tmp/docker.log")"
+check "first run: image built"                     1 "$(grep 'compose -f docker-compose.yml build' "$tmp/docker.log" | grep -vc -- '--print')"
 check "first run: web started"                     1 "$(grep -c 'compose -f docker-compose.yml up -d web' "$tmp/docker.log")"
 key="$(cat "$key_file" 2>/dev/null)"
 check "first run: one-time key written"            32 "${#key}"
-check "first run: key file is private"             600 "$(stat -c %a "$key_file")"
+check "first run: key file is private"             600 "$(mode "$key_file")"
 check "first run: prints the sign-in link"         1 "$(printf '%s' "$out" | grep -c "https://localhost:8443/?key=$key")"
 check "first run: says the login is picked in the UI" 1 "$(printf '%s' "$out" | grep -c 'pick a login and password')"
 
@@ -58,7 +71,7 @@ printf 'WEB_TLS=0\n' >> "$repo/.env"
 out="$(tty_run '')"
 check "TLS off: prints the http address instead"   1 "$(printf '%s' "$out" | grep -c 'http://localhost:7681/?key=')"
 check "TLS off: no https address"                  0 "$(printf '%s' "$out" | grep -c 'https://localhost')"
-sed -i '/^WEB_TLS=0$/d' "$repo/.env"
+sed -i.bak '/^WEB_TLS=0$/d' "$repo/.env" && rm -f "$repo/.env.bak"   # -i.bak: GNU and BSD sed alike
 
 # --login: a fresh link, docker untouched
 : > "$tmp/docker.log"
@@ -111,7 +124,7 @@ printf 'PROJECT_DIR=%s\nWEB_TERMINAL_PASSWORD=abcdefgh\n' "$repo/workspace" > "$
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --no-proxy </dev/null >/dev/null 2>&1
 check "--no-proxy: proxy overlay used"             1 "$(grep -c 'up -d web' "$tmp/docker.log" | tr -d ' ')"
-check "--no-proxy: overlay file passed"            2 "$(grep -c 'docker-compose.no-proxy.yml' "$tmp/docker.log")"
+check "--no-proxy: overlay file passed"            1 "$(grep -c 'docker-compose.no-proxy.yml up -d web' "$tmp/docker.log")"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --stop </dev/null >/dev/null 2>&1
 check "--stop: removes the web container"          1 "$(grep -c 'rm -sf web' "$tmp/docker.log")"
@@ -136,9 +149,15 @@ exit 0
 printf 'PROJECT_DIR=%s
 WEB_TERMINAL_PASSWORD=abcdefgh
 ' "$HOME/workspace" > "$repo/.env"
+fake_uname Linux
 : > "$tmp/docker.log"
 bash "$repo/claude-box" </dev/null >/dev/null 2>&1
 check "linux auto: no ports overlay"               0 "$(grep -c 'docker-compose.ports.yml' "$tmp/docker.log")"
+fake_uname Darwin
+: > "$tmp/docker.log"
+bash "$repo/claude-box" </dev/null >/dev/null 2>&1
+check "macOS auto: ports overlay on up"            1 "$(grep -c 'docker-compose.ports.yml up -d web' "$tmp/docker.log")"
+fake_uname Linux
 printf 'PROJECT_DIR=%s
 WEB_TERMINAL_PASSWORD=abcdefgh
 WEB_BIND=ports

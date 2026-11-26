@@ -88,6 +88,17 @@ To call `claude-box` from anywhere, add it to PATH (`./claude-box --install` sho
 
 ## Tests
 
+macOS and Linux are separate runs, and both must pass:
+
+```bash
+bash tests/run.sh               # every suite on this machine (macOS or Linux)
+bash tests/run.sh --linux       # every suite on Linux, inside the claude-box image (run ./claude-box first)
+```
+
+The Linux run is where the web server really lives (tmux, `/proc`); the host run checks `./claude-box`
+against the host's own tools (BSD userland on macOS). Suites that need a tool the host lacks (tmux) skip.
+The suites on their own:
+
 ```bash
 node --test tests/*.test.js     # web server modules: registry, search, preview, metrics, startup
 bash tests/web-menu.test.sh     # console deep links / resume (needs tmux, jq)

@@ -48,7 +48,8 @@ test('later starts keep the user\'s own settings and MCP servers', () => {
   assert.strictEqual(c.numStartups, 5);
 });
 
-test('metrics: host numbers without a token, nulls for the session part', async () => {
+// metrics read /proc: Linux only, as in the image
+test('metrics: host numbers without a token, nulls for the session part', { skip: process.platform !== 'linux' && 'reads /proc (Linux only)' }, async () => {
   const { metrics } = require('../scripts/web-metrics.js');
   const m = await metrics('');
   assert.ok(m.mem.total > 0);
