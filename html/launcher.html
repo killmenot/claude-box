@@ -857,10 +857,16 @@
   /* ---------- right-hand "Today" panel ---------- */
   .app.rp{grid-template-columns:var(--side) minmax(0,1fr) var(--rp)}
   /* the artifact panel (show_artifact): takes Today's place while open */
-  .app.art{grid-template-columns:var(--side) minmax(0,1fr) minmax(360px,44%)}
+  /* --artw: the width dragged with the panel's left edge (kept per browser), else 44% */
+  .app.art{grid-template-columns:var(--side) minmax(0,1fr) var(--artw,minmax(360px,44%))}
   .app.art.artwide{grid-template-columns:var(--side) minmax(0,.7fr) minmax(0,1.3fr)}
   #app.art #rpanel{display:none}
-  #artp{display:none;flex-direction:column;min-height:0;min-width:0;background:var(--panel);border-left:1px solid var(--line)}
+  #artp{display:none;flex-direction:column;min-height:0;min-width:0;background:var(--panel);border-left:1px solid var(--line);position:relative}
+  #artp .grip{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:3;touch-action:none}
+  #artp .grip::after{content:"";position:absolute;left:3px;top:0;bottom:0;width:2px;background:transparent;transition:background .12s}
+  #artp .grip:hover::after,.app.artdrag #artp .grip::after{background:var(--iris)}
+  .app.artdrag{cursor:col-resize;user-select:none}
+  .app.artdrag iframe{pointer-events:none}
   .app.art #artp{display:flex}
   #artp .ah{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--line);min-height:47px}
   #artp .ah .nm{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -973,6 +979,7 @@
     #rpanel{position:fixed;z-index:18;right:0;top:0;bottom:0;width:min(92vw,var(--rp));box-shadow:0 0 40px rgba(0,0,0,.25)}
     .app.art,.app.art.artwide{grid-template-columns:var(--side) minmax(0,1fr)}
     #artp{position:fixed;z-index:19;inset:0 0 0 auto;width:min(100vw,720px);box-shadow:0 0 40px rgba(0,0,0,.25)}
+    #artp .grip{display:none}
   }
   @media (max-width:760px){
     .app.rp{grid-template-columns:1fr}
@@ -1149,6 +1156,7 @@
   </div>
 </main>
 <aside id="artp" aria-label="Artifact">
+  <div class="grip" id="artgrip" title="Drag to resize · double-click: default width"></div>
   <div class="ah"><span class="nm" id="artname"></span><span class="fn" id="artfile"></span>
     <div class="ver" id="artver"></div>
     <button class="iconbtn" type="button" id="artreload" title="Reload">↻</button>
@@ -2800,6 +2808,29 @@ function artRender(){
 $('artver').addEventListener('click', function(e){ var b=e.target.closest('button'); var p=PANES[ACTIVE]; if(!b||!p) return; p.artCur=+b.dataset.k; artRender(); });
 $('artreload').addEventListener('click', function(){ var f=$('artframe'); if(f.dataset.file) f.src=artUrl(f.dataset.file)+'?t='+Date.now(); });
 $('artwide').addEventListener('click', function(){ $('app').classList.toggle('artwide'); });
+// Resize: drag the panel's left edge. The width is kept in this browser; double-click resets it.
+// While dragging, frames ignore the pointer (an iframe would swallow the moves).
+(function(){
+  var app=$('app'), grip=$('artgrip'), MIN=300;
+  function maxW(){ return Math.max(MIN, innerWidth-($('side')?$('side').offsetWidth:0)-360); }
+  function setW(w){ if(w==null){ app.style.removeProperty('--artw'); return; } app.style.setProperty('--artw', Math.round(Math.min(maxW(), Math.max(MIN, w)))+'px'); }
+  var saved=+ls('cb.artw'); if(saved) setW(saved);
+  grip.addEventListener('pointerdown', function(e){
+    if(e.button!==0) return; e.preventDefault();
+    try{ grip.setPointerCapture(e.pointerId); }catch(_){}
+    app.classList.add('artdrag'); app.classList.remove('artwide');
+    var right=$('artp').getBoundingClientRect().right;
+    function move(ev){ setW(right-ev.clientX); }
+    function up(ev){
+      grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', up);
+      app.classList.remove('artdrag');
+      var w=parseInt(app.style.getPropertyValue('--artw'),10); if(w) ls('cb.artw', String(w));
+    }
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', function(){ setW(null); ls('cb.artw', ''); app.classList.remove('artwide'); });
+  window.addEventListener('resize', function(){ var w=parseInt(app.style.getPropertyValue('--artw'),10); if(w) setW(w); });
+})();
 $('artclose').addEventListener('click', function(){ var p=PANES[ACTIVE]; if(p) p.artOpen=false; artRender(); });
 
 function addToolResult(p, b){
