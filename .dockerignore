@@ -1,5 +1,6 @@
 # don't send to the build context (and don't expose secrets to the daemon)
 home/
+home-*/
 .claude/
 .claude.json
 .env*

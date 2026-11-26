@@ -13,6 +13,9 @@ services:
     labels:
       - claude-box.role=web
       - claude-box.instance=${CLAUDE_BOX_NAME:-claude-box}
+      # the env file this box was started with (claude-box --env NAME); guards against one env
+      # file's box replacing another's container of the same name
+      - claude-box.env=${CLAUDE_BOX_ENV_FILE:-}
     # Starts as root only so the entrypoint can name BOX_UID (the host user, auto-filled in .env
     # by claude-box) in /etc/passwd, then immediately drops to it (web-entry.sh). Everything runs
     # as the host user, so the ./home bind mount stays writable even when the host user is not
@@ -23,7 +26,9 @@ services:
     stop_grace_period: 15s    # give Claude in tmux time to save before the container is torn down
     network_mode: host        # reuse the host network (Tailscale, DB access); the web UI port is on the host
     env_file:
-      - ./.env                # secrets + settings (token, proxy, PROJECT_DIR, web login/password)
+      # secrets + settings (token, proxy, PROJECT_DIR, web login/password): .env, or the file
+      # picked with `claude-box --env NAME` (.env.NAME)
+      - ${CLAUDE_BOX_ENV_FILE:-./.env}
     environment:
       - WEB_TUNNEL            # the host passes =1 when running `claude-box --tunnel`
       - HOME=/home/node       # the bind mount's path; a numeric uid gets no HOME from passwd
@@ -31,7 +36,8 @@ services:
       # working folder (shown as /workspace); the path is set in .env via PROJECT_DIR
       - ${PROJECT_DIR}:/workspace
       # the whole container home to the host: both ~/.claude (history) and ~/.claude.json (config/onboarding/resume)
-      - ./home:/home/node
+      # (home/ for .env, home-NAME/ for .env.NAME; claude-box passes BOX_HOME)
+      - ${BOX_HOME:-./home}:/home/node
       # the HOST's own ~/.claude, read-only, for browsing/grepping host sessions from inside the box.
       # Kept out of /home/node so it never shadows the container's own state. Override with
       # HOST_CLAUDE_DIR in .env (e.g. point it at just <host home>/.claude/projects).
