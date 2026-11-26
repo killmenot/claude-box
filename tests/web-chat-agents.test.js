@@ -52,3 +52,23 @@ test('agentFacts: model, totals and end state from the transcript', () => {
   assert.strictEqual(live['t-lost'].state, 'run');
   assert.strictEqual(live['t-lost'].tokens, 500);
 });
+
+test('trackAgent: an agent run async without run_in_background keeps running after "launched"', () => {
+  const chat = { agents: new Map(), q: {} };
+  const track = (m) => wc.Chat.prototype.trackAgent.call(chat, m);
+  const use = (id) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Agent', input: { description: 'READMEs' } }] } });
+  const res = (id, text, extra) => Object.assign({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text }] }] } }, extra);
+  // the text alone (no tool_use_result on the message)
+  track(use('t1')); track(res('t1', 'Async agent launched successfully. (This tool result is internal metadata …)'));
+  assert.strictEqual(chat.agents.get('t1').state, 'run');
+  // the structured result alone
+  track(use('t2')); track(res('t2', 'ok', { tool_use_result: { isAsync: true, status: 'async_launched' } }));
+  assert.strictEqual(chat.agents.get('t2').state, 'run');
+  // a foreground agent's real answer ends it
+  track(use('t3')); track(res('t3', 'Here is the summary.\n<usage>subagent_tokens: 900</usage>'));
+  assert.strictEqual(chat.agents.get('t3').state, 'done');
+  assert.strictEqual(chat.agents.get('t3').tokens, 900);
+  // and the notification ends the async one
+  track({ type: 'system', subtype: 'task_notification', tool_use_id: 't1', status: 'completed' });
+  assert.strictEqual(chat.agents.get('t1').state, 'done');
+});

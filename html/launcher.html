@@ -2119,8 +2119,12 @@ function addToolResult(p, b){
       bd.insertAdjacentHTML('beforeend','<a class="mdimg" href="'+esc(u)+'" target="_blank" rel="noopener"><img src="'+esc(u)+'" alt=""></a>'); });
     t=t.replace(/^\[image\]$/mg,'').trim();
   }
-  // a background agent answers "launched" at once and keeps working: it ends with task_notification
-  if(ag){ agentSet(ag, agentUsage(t)); agentState(p, ag, b.is_error ? 'err' : (ag.bg && /launch|background|async|running/i.test(t||'') ? 'run' : 'done')); }
+  // an async agent answers "launched" at once and keeps working: it ends with task_notification.
+  // Claude Code may run an agent async without run_in_background, so the answer itself decides.
+  if(ag){ agentSet(ag, agentUsage(t));
+    var launched=/async_launched|async agent launched|launched in the background|running in the background/i.test(t||'') ||
+      (ag.bg && /launch|background|async|running/i.test(t||''));
+    agentState(p, ag, b.is_error ? 'err' : launched ? 'run' : 'done'); }
   if(!t) return;
   var body=d.querySelector('.body');
   body.insertAdjacentHTML('beforeend','<div class="lbl">'+(b.is_error?'error':'result')+'</div><pre class="res">'+

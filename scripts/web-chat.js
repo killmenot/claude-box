@@ -406,8 +406,12 @@ class Chat {
         const x = b && b.type === 'tool_result' && this.agents.get(b.tool_use_id);
         if (!x) continue;
         const t = typeof b.content === 'string' ? b.content : (Array.isArray(b.content) ? b.content.map((c) => (c && c.text) || '').join('\n') : '');
+        // an async agent's answer is "launched" and it keeps working; Claude Code may run an agent
+        // async without run_in_background, so the result itself decides
+        const r = m.tool_use_result, launched = (r && typeof r === 'object' && (r.isAsync || r.status === 'async_launched')) ||
+          /async_launched|async agent launched|launched in the background|running in the background/i.test(t);
         if (b.is_error) x.state = 'err';
-        else if (!/async_launched|launched in the background|running in the background/i.test(t)) x.state = 'done';
+        else if (!launched) x.state = 'done';
         Object.assign(x, agentUsage(t)); x.at = Date.now();
       }
       return;
