@@ -35,9 +35,13 @@ The old `--web` / `--build` flags are still accepted and do the same as a plain 
 2. asks for the **projects folder** — the host folder with your projects, mounted as `/workspace`
    (default `workspace/` next to the script, git-ignored, created if missing) and saves it as `PROJECT_DIR`;
 3. prints a **one-time sign-in link** (`https://localhost:8443/?key=…`, valid 15 minutes, works once).
-   Open it: the browser is signed in, and the first visit asks for a **login and password** (for your
-   phone, other computers and the public tunnel), then offers to **connect GitHub** (the same device
-   code as `gh auth login --web`; optional, also in Settings).
+   Open it: the browser is signed in, and a setup wizard walks through four steps:
+   - **Login** (required): a login and password for your phone, other computers and the public tunnel;
+   - **Model**: **Sign in with Claude** runs `claude auth login` in the box: open claude.ai, sign in,
+     paste back the code it shows. Or pick GLM / Abliteration and paste an API key;
+   - **GitHub**: the same device code as `gh auth login --web`;
+   - **Jira**: the Atlassian sign-in for New task.
+   Everything but the login can be skipped and done later in Settings.
 
 Every start prints a fresh link; `./claude-box --login` prints one without restarting anything.
 The login and password can be changed later in **Settings → Access**; they are kept as a scrypt hash
@@ -51,7 +55,7 @@ To call `claude-box` from anywhere, add it to PATH (`./claude-box --install` sho
 
 ## What's already set up inside
 
-- **Claude authentication** — `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (obtained via `claude setup-token`), or a GLM / Anthropic-compatible provider (see [Using GLM](#using-glm-zai-instead-of-anthropic)).
+- **Claude authentication** — **Sign in with Claude** in the setup wizard or Settings (credentials stay in `./home/.claude`), or `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (obtained via `claude setup-token`; used first when set), or a GLM / Anthropic-compatible provider (see [Using GLM](#using-glm-zai-instead-of-anthropic)).
 - **Settings** — the host's `settings.json` is copied (auto mode, theme, etc.).
 - **superpowers plugin** — lives in `home/.claude/plugins/`, active right away.
 - **MCP servers** — user-scope, seeded from `claude-defaults/mcp.json` into `~/.claude.json` at startup: `atlassian`, `github`, `sentry`, `context7`, `kubernetes`, `figma`, `playwright`, `grafana`. Remote ones (`atlassian`/`sentry`/`figma`) are authorized once via `/mcp`; `github` takes `GH_TOKEN`, `context7` takes `CONTEXT7_API_KEY`, `grafana` takes `GRAFANA_URL`+`GRAFANA_SERVICE_ACCOUNT_TOKEN` from `.env`.

@@ -11,7 +11,8 @@ const { execFileSync } = require('child_process');
 const W = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-tasks-'));
 process.env.WORKSPACE_DIR = path.join(W, 'ws');
 fs.mkdirSync(process.env.WORKSPACE_DIR);
-const G = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8',
+// no commit signing in the throwaway repos (a host config may sign with a hardware key)
+const G = (args, cwd) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args], { cwd, encoding: 'utf8',
   env: Object.assign({}, process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }) }).trim();
 
 // remote with one commit on main

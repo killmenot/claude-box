@@ -470,20 +470,79 @@
   #wired .ilnk{border:0;background:none;color:var(--slate);font:600 12.5px var(--sans);cursor:pointer;padding:4px 0}
   @media (max-width:760px){ #wired{padding:0} #wired .wbox{border-radius:0} #wired .wrun{flex-wrap:wrap;row-gap:2px} #wired .wrun .mt{flex:1 1 100%;padding-left:62px;white-space:normal} }
   /* first visit: pick a login, then (optionally) connect GitHub */
-  #setupw{position:fixed;inset:0;z-index:80;background:var(--paper);display:none;align-items:flex-start;justify-content:center;padding:12vh 16px 16px;overflow:auto}
-  #setupw.on{display:flex}
-  #setupw .sbox{width:min(440px,100%)}
-  #setupw h2{margin:6px 0 6px;font-size:22px;color:var(--ink)}
-  #setupw p{color:var(--slate);margin:0 0 16px;font-size:14px}
-  #setupw .ssteps{display:flex;gap:14px;font-size:12px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em;font-weight:600}
-  #setupw .ssteps .on{color:var(--iris)}
-  #setupw .acts{display:flex;gap:8px;margin-top:18px}
-  #setupw label.opt{display:block;margin:8px 0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;cursor:pointer;font-size:14px}
-  #setupw label.opt:hover{background:var(--hover)}
-  #setupw label.opt input{margin-right:8px}
-  #setupw label.opt small{display:block;color:var(--slate);font-size:12.5px;margin-top:3px;font-weight:400}
-  #setupw input[type=password]{width:100%;margin:10px 0;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font:inherit}
-  #setupw .note{border:1px solid var(--line);border-left:3px solid var(--iris);border-radius:8px;padding:10px 12px;font-size:13.5px;color:var(--slate);margin:10px 0}
+  /* ---------- setup wizard (first visit) ---------- */
+  #setupw{position:fixed;inset:0;z-index:80;background:var(--paper);display:none;overflow:auto}
+  #setupw.on,html[data-setup] #setupw{display:flex}
+  #setupw .sw{display:grid;grid-template-columns:260px minmax(0,1fr);width:min(920px,100%);margin:auto;min-height:min(600px,100%);
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 40px rgba(14,17,22,.08);overflow:hidden}
+  #setupw .swrail{background:var(--paper);border-right:1px solid var(--line);padding:24px 18px;display:flex;flex-direction:column;gap:22px}
+  #setupw .swsteps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+  #setupw .swsteps li{display:flex;gap:12px;align-items:flex-start;padding:9px 10px;border-radius:10px;color:var(--slate);font-size:14px;line-height:1.35}
+  #setupw .swsteps li i{flex:0 0 26px;height:26px;border-radius:50%;border:1.5px solid var(--line);background:var(--panel);display:flex;
+    align-items:center;justify-content:center;font:600 12.5px var(--sans);font-style:normal;color:var(--mute)}
+  #setupw .swsteps li b{display:block;font-weight:600;color:var(--body)}
+  #setupw .swsteps li small{display:block;font-size:12.5px;color:var(--mute)}
+  #setupw .swsteps li.cur{background:var(--panel);box-shadow:0 1px 0 var(--line),0 0 0 1px var(--line)}
+  #setupw .swsteps li.cur i{border-color:var(--iris);background:var(--iris);color:#fff}
+  #setupw .swsteps li.cur b{color:var(--ink)}
+  #setupw .swsteps li.ok i{border-color:var(--live);background:var(--live);color:#fff}
+  #setupw .swsteps li.skip i{border-style:dashed}
+  #setupw .swfoot{margin-top:auto;font-size:12.5px;color:var(--mute);line-height:1.45}
+  #setupw .swmain{display:flex;flex-direction:column;padding:32px 36px 24px;min-width:0}
+  #setupw a{color:var(--iris)}
+  #setupw .swcount{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--iris)}
+  #setupw #setupbody{flex:1}
+  #setupw h2{margin:6px 0 8px;font:700 26px/1.2 var(--display);letter-spacing:-.02em;color:var(--ink)}
+  #setupw .lead{color:var(--slate);margin:0 0 22px;font-size:14.5px;max-width:52ch}
+  #setupw .swnav{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:18px;margin-top:24px}
+  #setupw .swnav .sp{flex:1}
+  #setupw .swnav .btn{padding:9px 18px;font-size:14px}
+  #setupw .pwform{max-width:360px}
+  #setupw .pwform>.btn{display:none}
+  #setupw .pwform input:not([type=checkbox]){padding:10px 12px;font-size:15px}
+  #setupw .pwhint{font-size:12.5px;color:var(--mute);margin-top:-2px}
+  #setupw .card{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--panel)}
+  .cauth{font-size:13.5px;margin:6px 0 4px}
+  #setupw .done,.cauth .done{display:flex;gap:10px;align-items:center;color:var(--body)}
+  #setupw .done::before,.cauth .done::before{content:"✓";flex:0 0 24px;height:24px;border-radius:50%;background:var(--live);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+  #setupw .provs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px}
+  #setupw .prov{position:relative;border:1.5px solid var(--line);border-radius:12px;padding:14px;cursor:pointer;display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--slate)}
+  #setupw .prov:hover{background:var(--hover)}
+  #setupw .prov input{position:absolute;opacity:0;pointer-events:none}
+  #setupw .prov b{font-size:14.5px;color:var(--ink)}
+  #setupw .prov:has(input:checked){border-color:var(--iris);background:#f3f3fe}
+  #setupw .prov:has(input:focus-visible){outline:2px solid var(--iris);outline-offset:2px}
+  #setupw .prov .tag{align-self:flex-start;font-size:11px;font-weight:600;color:var(--iris);background:#ececfb;border-radius:999px;padding:1px 8px;margin-bottom:2px}
+  #setupw .field{display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--slate);max-width:420px}
+  #setupw .field input{font:inherit;font-size:15px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--body)}
+  #setupw .field input:focus,#setupw .pwform input:focus{outline:2px solid var(--iris);outline-offset:-1px;border-color:transparent}
+  #setupw ol.how,.cauth ol.how{margin:8px 0 0;padding-left:20px;font-size:13.5px;color:var(--body);display:flex;flex-direction:column;gap:6px}
+  #setupw code,.cauth code{font:13px var(--mono);background:var(--codebg);border-radius:5px;padding:1px 6px}
+  #setupw .cmd{display:inline-flex;align-items:center;gap:6px}
+  #setupw .muted,.cauth .muted{color:var(--mute);font-size:13px}
+  #setupw .sumlist{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden;max-width:520px}
+  #setupw .sumlist div{display:flex;gap:12px;align-items:center;padding:12px 16px;border-top:1px solid var(--line);font-size:14px}
+  #setupw .sumlist div:first-child{border-top:0}
+  #setupw .sumlist span{flex:1;color:var(--slate)}
+  #setupw .sumlist b{font-weight:600;color:var(--ink)}
+  #setupw .sumlist em{font-style:normal;color:var(--mute)}
+  #setupw .gitbox{font-size:14px}
+  #setupw .jsteps input{width:100%;font:inherit;font-size:14px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;margin-top:6px}
+  #setupw .jsteps .row2{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  @media (max-width:760px){
+    #setupw .sw{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr;width:100%;border:0;border-radius:0;min-height:100%;box-shadow:none}
+    #setupw .swrail{border-right:0;border-bottom:1px solid var(--line);padding:14px 16px;gap:10px}
+    #setupw .swsteps{flex-direction:row;gap:6px}
+    #setupw .swsteps li{flex:1;padding:0;background:none!important;box-shadow:none!important;flex-direction:column;align-items:center;gap:4px;font-size:11.5px;text-align:center}
+    #setupw .swsteps li small,#setupw .swfoot{display:none}
+    #setupw .swsteps li b{font-weight:600;font-size:11.5px}
+    #setupw .swsteps li{min-width:0} #setupw .swsteps li i{flex:none;width:26px}
+    #setupw .swrail .brand{font-size:16px}
+    #setupw .swmain{padding:20px 16px 16px}
+    #setupw h2{font-size:22px}
+    #setupw .provs{grid-template-columns:1fr}
+    #setupw .swnav{position:sticky;bottom:0;background:var(--panel);padding-bottom:4px}
+  }
   .pwform{display:flex;flex-direction:column;gap:10px;margin-top:6px}
   .pwform label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--slate)}
   .pwform label.chk{flex-direction:row;align-items:center;gap:8px}
@@ -814,9 +873,22 @@
       <a class="btn ghost hidden" id="wiredl" download>Download JSON</a><button class="btn ghost" type="button" id="wireclose">Close</button></div>
     <div class="wbody" id="wirebody"></div>
   </div></div>
-  <div id="setupw" role="dialog" aria-modal="true" aria-label="Set up claude-box"><div class="sbox">
-    <div class="ssteps"><span data-st="1">1 · Login</span><span data-st="2">2 · Model</span><span data-st="3">3 · GitHub</span><span data-st="4">4 · Jira</span></div>
-    <div id="setupbody"></div>
+  <div id="setupw" role="dialog" aria-modal="true" aria-label="Set up claude-box"><div class="sw">
+    <aside class="swrail"><div class="brand" id="swbrand">claude-box</div>
+      <ol class="swsteps">
+        <li data-st="1"><i>1</i><span><b>Login</b><small>Who may open this box</small></span></li>
+        <li data-st="2"><i>2</i><span><b>Model</b><small>What answers in chats</small></span></li>
+        <li data-st="3"><i>3</i><span><b>GitHub</b><small>Clone, push, pull requests</small></span></li>
+        <li data-st="4"><i>4</i><span><b>Jira</b><small>Start work from issues</small></span></li>
+      </ol>
+      <div class="swfoot">Everything here can be changed later in Settings.</div>
+    </aside>
+    <main class="swmain">
+      <div class="swcount" id="swcount"></div>
+      <div id="setupbody"></div>
+      <div class="swnav"><button class="btn ghost" type="button" id="swback">← Back</button><span class="sp"></span>
+        <button class="btn ghost" type="button" id="swskip">Skip for now</button><button class="btn" type="button" id="swnext">Continue</button></div>
+    </main>
   </div></div>
   <div id="taskd" role="dialog" aria-label="New task"><div class="tbox">
     <div class="thead"><b>New task</b><button class="btn ghost" type="button" id="taskclose">Close</button></div>
@@ -1686,11 +1758,12 @@ function openSettings(){
   $('setbody').innerHTML=setGroup('pmode','Permissions','For every chat; open chats switch right away.', PMODES, PMODEHINT, PMODE)+
     setGroup('tools','Tool calls in chat','How tool calls show in the conversation.', tl, TOOLHINT, toolMode)+
     '<h4>Model</h4><div class="sub" id="mcur">…</div>'+
-    '<div class="opt"><input type="radio" name="mprov" value="claude"><span>Claude (claude.ai subscription)<small>login once in a Console: run claude setup-token, put the token into .env on the host</small></span></div>'+
+    '<div class="opt"><input type="radio" name="mprov" value="claude"><span>Claude (claude.ai subscription)<small>sign in under Claude account below</small></span></div>'+
     '<div class="opt"><input type="radio" name="mprov" value="glm"><span>GLM-5.3-Flash via z.ai<small>api.z.ai — paste your API key below</small></span></div>'+
     '<div class="opt"><input type="radio" name="mprov" value="abliteration"><span>Abliteration<small>api.abliteration.ai — paste your API key below</small></span></div>'+
     '<div class="opt"><input type="radio" name="mprov" value="custom"><span>Custom (Anthropic-compatible)<small>base URL, model name and API key below</small></span></div>'+
     '<div class="sub"><input id="mkey" type="password" placeholder="API key" autocomplete="off"><input id="mbase" placeholder="https://… base URL (custom only)" autocomplete="off"><input id="mmodel" placeholder="model name (optional)" autocomplete="off"><button class="btn" type="button" id="msave">Save model</button><span id="mnote" class="sub"></span></div>'+
+    '<h4>Claude account</h4><div class="cauth" id="setclaude"></div>'+
     '<h4>Integrations</h4><div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="atlbox"><span>Atlassian (Jira) MCP<small>once enabled, authorize in any chat: /mcp → atlassian</small></span></label></div>'+
     '<h4>Model traffic</h4><div class="sub">Off by default. When on, every session records what went to the model and back, the commands and file changes it made, and the hosts it connected to.</div>'+
     '<button class="btn" type="button" id="setwire">Model traffic settings &amp; records</button>'+
@@ -1722,6 +1795,7 @@ function openSettings(){
     fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:this.checked})});
   });
   $('setd').classList.add('on');
+  claudeBox($('setclaude'));
   loadAuth().then(function(a){
     $('setacc').innerHTML=a.configured?'Login: <b>'+esc(a.user)+'</b>'+(a.fromEnv?' (from .env; a password set here replaces it)':'')+
       '. Other devices, the phone and the public tunnel ask for it.':'No login yet.';
@@ -1808,108 +1882,242 @@ function gitBox(box, onChange){
   };
   refresh();
 }
-function openSetup(){
-  var w=$('setupw'), body=$('setupbody');
-  function step(n){ [].forEach.call(w.querySelectorAll('[data-st]'), function(s){ s.classList.toggle('on', +s.dataset.st===n); }); }
-  function finish(){ w.classList.remove('on'); }
+// Claude sign-in (claude.ai subscription) from the UI: `claude auth login` runs in the box, the
+// user signs in at claude.ai and pastes back the code it shows (/claude-auth in web-sidecar.js)
+function claudeBox(box, onChange){
+  var poll=null, tries=0;
+  function post(o){ return fetch('/claude-auth',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(o)})
+    .then(function(r){ return r.json().catch(function(){ return {}; }); }); }
+  function idle(err){
+    box.innerHTML=(err?'<div class="ferr">'+esc(err)+'</div>':'')+
+      '<div style="margin-bottom:12px">Sign in with your claude.ai account (Pro, Max, Team or Enterprise).</div>'+
+      '<button class="btn" type="button" data-c="start">Sign in with Claude</button>';
+  }
+  function signedIn(s){
+    box.innerHTML='<div class="done"><span>Signed in to Claude'+(s.email?' as <b>'+esc(s.email)+'</b>':'')+(s.org?' · '+esc(s.org):'')+'</span></div>'+
+      (s.envToken?'<div class="muted" style="margin-top:8px">The token from .env (CLAUDE_CODE_OAUTH_TOKEN) is used first.</div>':'')+
+      '<div style="margin-top:10px"><button class="linkbtn" type="button" data-c="start">Use another account</button></div>';
+    onChange&&onChange(s);
+  }
+  function waiting(url){
+    box.innerHTML='<ol class="how">'+
+      '<li>Sign in at claude.ai: <button class="btn" type="button" data-c="open">Open claude.ai</button></li>'+
+      '<li>claude.ai then shows a code. Paste it here:'+
+        '<input class="finput" id="ccode" placeholder="Paste the code" autocomplete="off" style="display:block;width:100%;margin-top:6px"></li></ol>'+
+      '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap"><button class="btn" type="button" data-c="paste">Finish signing in</button>'+
+      '<button class="btn ghost" type="button" data-c="cancel">Cancel</button><span class="muted" id="cstat"></span></div>';
+    box.dataset.url=url;
+    var i=$('ccode'); i.onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); box.querySelector('[data-c=paste]').click(); } };
+  }
+  function check(){
+    clearTimeout(poll); if(!box.isConnected) return;
+    fetch('/claude-auth').then(function(r){ return r.json(); }).then(function(s){
+      if(!box.isConnected) return;
+      if(s.loggedIn && !s.pending){ signedIn(s); return; }
+      if(s.error){ idle(s.error); return; }
+      if(tries>0){ if(++tries>20){ idle('Still not signed in. Start again.'); return; } poll=setTimeout(check, 1500); return; }
+      if(!box.querySelector('#ccode')) idle();
+    }, function(){ idle('Could not reach the box.'); });
+  }
+  box.onclick=function(e){
+    var b=e.target.closest('[data-c]'); if(!b) return; var c=b.dataset.c;
+    if(c==='open'){ openExt(box.dataset.url); return; }
+    if(c==='start'){
+      box.innerHTML='<div class="muted">Asking claude.ai for a sign-in link…</div>';
+      post({act:'start'}).then(function(o){ if(o.url) waiting(o.url); else idle(o.error||'Could not start the sign-in.'); }, function(){ idle('Could not reach the box.'); });
+      return;
+    }
+    if(c==='cancel'){ clearTimeout(poll); tries=0; post({act:'cancel'}).then(function(){ idle(); }, function(){ idle(); }); return; }
+    if(c==='paste'){
+      var code=($('ccode').value||'').trim(), st=$('cstat');
+      if(!code){ st.textContent='Paste the code first.'; return; }
+      b.disabled=true; st.textContent='Signing in…';
+      post({act:'paste', code:code}).then(function(o){
+        if(!o.ok){ b.disabled=false; st.textContent=o.error||'That did not work.'; return; }
+        tries=1; poll=setTimeout(check, 1500);
+      }, function(){ b.disabled=false; st.textContent='Could not reach the box.'; });
+    }
+  };
+  box.innerHTML='<div class="muted">Checking Claude sign-in…</div>';
+  check();
+}
+// The first-visit wizard: 1 Login (required), 2 Model, 3 GitHub, 4 Jira, then a summary.
+// The sidecar marks the page with data-setup while no login exists, so the wizard is up from the
+// first paint. Progress is kept per browser, so a reload in the middle comes back to the same step.
+var SETUP_KEY='cb-setup-step';
+function setupSaved(){ try { return +localStorage.getItem(SETUP_KEY)||0; } catch(_) { return 0; } }
+function setupSave(n){ try { if(n) localStorage.setItem(SETUP_KEY, String(n)); else localStorage.removeItem(SETUP_KEY); } catch(_) {} }
+function openSetup(startAt){
+  var w=$('setupw'), body=$('setupbody'), back=$('swback'), skip=$('swskip'), next=$('swnext');
+  var S={step:1, state:{}, user:'', model:'', github:'', jira:''};
+  var brand=document.querySelector('.side-head .brand');
+  if(brand && !$('swbrand').firstElementChild){ var c=brand.cloneNode(true); c.id='swbrand'; $('swbrand').replaceWith(c); }
+  function rail(){
+    [].forEach.call(w.querySelectorAll('[data-st]'), function(li){
+      var n=+li.dataset.st, st=S.state[n];
+      li.classList.toggle('cur', n===S.step);
+      li.classList.toggle('ok', st==='ok' && n!==S.step);
+      li.classList.toggle('skip', st==='skip' && n!==S.step);
+      li.querySelector('i').textContent=(st==='ok' && n!==S.step)?'✓':n;
+    });
+    $('swcount').textContent=S.step<=4?'Step '+S.step+' of 4':'Setup complete';
+  }
+  // the nav row: what Back / Skip / Continue do on this step
+  function nav(o){
+    back.classList.toggle('hidden', !o.back); skip.classList.toggle('hidden', !o.skip);
+    next.textContent=o.next||'Continue'; next.disabled=false;
+    back.onclick=o.back||null; skip.onclick=o.skip||null; next.onclick=o.onNext;
+  }
+  function go(n){ S.step=n; if(n<=4) setupSave(n); rail(); [null,loginStep,modelStep,githubStep,jiraStep,summary][n](); }
+  function skipTo(n){ return function(){ if(S.state[S.step]!=='ok') S.state[S.step]='skip'; go(n); }; }
+  function finish(){
+    setupSave(0); w.classList.remove('on'); document.documentElement.removeAttribute('data-setup');
+  }
+
+  function loginStep(){
+    if(AUTH.configured){
+      S.state[1]='ok'; S.user=AUTH.user||S.user;
+      body.innerHTML='<h2>Login is set</h2><p class="lead">This browser stays signed in. Phones, other computers and the public tunnel ask for this login and password.</p>'+
+        '<div class="card done">Login <b>'+esc(S.user)+'</b></div><p class="muted" style="margin-top:12px">To change the password, use Settings → Access.</p>';
+      nav({onNext:function(){ go(2); }}); return;
+    }
+    body.innerHTML='<h2>Welcome to claude-box</h2><p class="lead">You came in with the one-time link, so this browser is already signed in. '+
+      'Pick a login and password for everything else: your phone, other computers and the public tunnel.</p>';
+    var f=pwForm(true, function(){
+      loadAuth().then(function(a){ S.user=a.user||''; S.state[1]='ok'; go(2); });
+    });
+    body.appendChild(f);
+    var hint=el('div','pwhint','At least 8 characters. Stored only as a hash inside the box.');
+    var pw=f.querySelector('input[name=password]'); pw.parentNode.appendChild(hint);
+    nav({onNext:function(){ next.disabled=true; f.requestSubmit(); setTimeout(function(){ next.disabled=false; }, 800); }});
+    var u=f.querySelector('input[name=user]'); if(u){ u.focus(); u.select(); }
+  }
+
   function modelStep(){
-    step(2);
-    body.innerHTML='<h2>Pick the model</h2><p>What powers Claude in this box. Applies to new messages; change it later in Settings.</p>'+
-      '<label class="opt"><input type="radio" name="smprov" value="claude" checked><span>Claude via a claude.ai subscription<small>after saving, the login command is shown below</small></span></label>'+
-      '<label class="opt"><input type="radio" name="smprov" value="glm"><span>GLM-5.3-Flash via z.ai<small>paste your z.ai API key below</small></span></label>'+
-      '<label class="opt"><input type="radio" name="smprov" value="abliteration"><span>Abliteration<small>paste your API key below</small></span></label>'+
-      '<div id="smarea"></div>'+
-      '<div class="acts"><button class="btn" type="button" id="smok">Continue</button><button class="btn ghost" type="button" id="smskip">Skip for now</button></div>';
+    body.innerHTML='<h2>Choose the model</h2><p class="lead">What answers in your chats. It applies to new messages, so you can switch any time in Settings.</p>'+
+      '<div class="provs">'+
+        '<label class="prov"><input type="radio" name="smprov" value="claude"><span class="tag">Recommended</span><b>Claude</b>with a claude.ai subscription</label>'+
+        '<label class="prov"><input type="radio" name="smprov" value="glm"><b>GLM</b>GLM-5.3-Flash via z.ai, with an API key</label>'+
+        '<label class="prov"><input type="radio" name="smprov" value="abliteration"><b>Abliteration</b>with an API key</label>'+
+      '</div><div id="smarea"><div class="muted">Checking the current model…</div></div>';
+    var cur={};
+    function prov(){ return (body.querySelector('input[name="smprov"]:checked')||{}).value; }
     function area(){
-      var prov=(document.querySelector('input[name="smprov"]:checked')||{}).value;
-      var a=$('smarea');
-      if(prov==='claude'){
-        a.innerHTML='<div class="note">After saving, open a <b>Console</b> session and run <b>claude setup-token</b>: '+
-          'open the link it prints, log in at claude.ai, paste the code back, and put the printed token into '+
-          '<b>.env</b> on the host as <b>CLAUDE_CODE_OAUTH_TOKEN</b>.</div>';
+      var p=prov(), a=$('smarea'); if(!a) return;
+      if(p==='claude'){
+        a.innerHTML='<div class="card" id="smclaude"></div>'; claudeBox($('smclaude'));
       } else {
-        a.innerHTML='<input id="smkey" type="password" placeholder="'+(prov==='glm'?'z.ai API key':'API key')+'">';
+        var kept=cur.provider===p && cur.hasKey;
+        a.innerHTML='<label class="field">'+(p==='glm'?'z.ai API key':'Abliteration API key')+
+          '<input id="smkey" type="password" autocomplete="off" placeholder="'+(kept?'Saved. Paste a new key to replace it':'Paste the key')+'"></label>'+
+          '<div class="ferr" id="smerr"></div>';
+        var k=$('smkey'); k.focus(); k.onkeydown=function(e){ if(e.key==='Enter') next.click(); };
       }
     }
     body.querySelectorAll('input[name="smprov"]').forEach(function(r){ r.addEventListener('change', area); });
-    area();
-    $('smok').onclick=function(){
-      var prov=(document.querySelector('input[name="smprov"]:checked')||{}).value;
-      var key=($('smkey')||{}).value||'';
-      if(prov!=='claude' && !key.trim()){ alert('Paste the API key for this provider, or Skip for now.'); return; }
-      fetch('/model',{method:'POST',headers:{'content-type':'application/json'},
-        body:JSON.stringify({provider:prov,key:key})})
-        .then(function(r){ return r.json(); })
-        .then(function(){ githubStep(); }, function(){ githubStep(); });
-    };
-    $('smskip').onclick=githubStep;
-  }
-  function githubStep(){
-    step(3);
-    body.innerHTML='<h2>Connect GitHub</h2><p>Optional. Lets Claude clone your repos, push branches and open pull requests. '+
-      'You can do it later in Settings.</p><div class="gitbox" id="setupgit"></div>'+
-      '<div class="acts"><button class="btn" type="button" id="setupdone">Continue</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
-    gitBox($('setupgit'), function(){ $('setupskip').classList.add('hidden'); });
-    $('setupdone').onclick=jiraStep; $('setupskip').onclick=jiraStep;
-  }
-  function jiraStep(){
-    step(4);
-    body.innerHTML='<h2>Enable the Jira/Atlassian integration</h2><p>Turns on the Atlassian MCP server for this box.</p>'+
-      '<div class="opt"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="atlbox" checked>'+
-      '<span>Atlassian (Jira) MCP enabled</span></label></div>'+
-      '<div class="acts" style="margin-top:10px"><button class="btn" type="button" id="jauth">Authorize Jira now</button></div>'+
-      '<div id="jiraauth"></div>'+
-      '<div class="acts"><button class="btn" type="button" id="setupdone">Done</button><button class="btn ghost" type="button" id="setupskip">Skip for now</button></div>';
-    var save=function(){ var c=$('atlbox');
-      fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:!!(c&&c.checked)})}); };
-    $('jauth').onclick=function(){
-      var a=$('jiraauth');
-      a.innerHTML='<div class="sub">Starting the Jira authorization…</div>';
-      fetch('/jira-auth',{method:'POST',headers:{'content-type':'application/json'},body:'{"act":"start"}'})
+    fetch('/model').then(function(r){ return r.json(); }).catch(function(){ return {}; }).then(function(o){
+      cur=o||{}; var want=S.model||(['glm','abliteration'].indexOf(cur.provider)>=0?cur.provider:'claude');
+      var r=body.querySelector('input[value="'+want+'"]'); if(r) r.checked=true; area();
+    });
+    nav({back:function(){ go(1); }, skip:skipTo(3), onNext:function(){
+      var p=prov(), key=(($('smkey')||{}).value||'').trim();
+      if(!p) return;
+      var kept=cur.provider===p && cur.hasKey;
+      if(p!=='claude' && !key && !kept){ $('smerr').textContent='Paste the API key, or skip this step for now.'; return; }
+      if(p===cur.provider && !key){ S.model=p; S.state[2]='ok'; go(3); return; }   // nothing changed
+      next.disabled=true;
+      fetch('/model',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({provider:p,key:key})})
         .then(function(r){ return r.json(); })
         .then(function(o){
-          if(!o.url){ a.innerHTML='<div class="sub">The authorization link is not ready yet — press again in a moment.</div>'; return; }
-          a.innerHTML='<div class="note">1. Open this link and log in to Atlassian:<br><a href="'+o.url+'" target="_blank" rel="noopener">'+o.url+'</a></div>'+
-            '<div class="sub">2. After login the browser may fail to reach localhost — that is expected. '+
-            'Copy the full address from the browser bar and paste it here:</div>'+
-            '<input id="jurl" placeholder="https://localhost…/callback?code=…" autocomplete="off">'+
-            '<button class="btn" type="button" id="jpaste">Paste &amp; finish</button><span id="jstat" class="sub"></span>';
+          next.disabled=false;
+          if(o && o.error){ var e=$('smerr'); if(e) e.textContent=o.error; else alert(o.error); return; }
+          S.model=p; S.state[2]='ok'; go(3);
+        }, function(){ next.disabled=false; alert('Could not reach the box.'); });
+    }});
+  }
+
+  function githubStep(){
+    body.innerHTML='<h2>Connect GitHub</h2><p class="lead">Lets Claude clone your repositories, push branches and open pull requests. '+
+      'GitHub shows a short code and you confirm it in the browser. No SSH keys or tokens to copy.</p>'+
+      '<div class="card"><div class="gitbox" id="setupgit"></div></div>';
+    gitBox($('setupgit'), function(s){ S.github=s.account; S.state[3]='ok'; skip.classList.add('hidden'); });
+    nav({back:function(){ go(2); }, skip:skipTo(4), onNext:function(){ if(!S.github) S.state[3]='skip'; go(4); }});
+  }
+
+  function jiraStep(){
+    body.innerHTML='<h2>Connect Jira</h2><p class="lead">Lets “New task” find your Jira issues and start a session from one. '+
+      'Claude reads and updates issues through the Atlassian connection.</p><div class="card" id="jiracard"><div class="muted">Checking Jira…</div></div>';
+    var card=$('jiracard'), timer=null;
+    function connected(){ S.jira='connected'; S.state[4]='ok'; card.innerHTML='<div class="done">Jira is connected.</div>'; skip.classList.add('hidden'); }
+    function idle(msg){
+      card.innerHTML=(msg?'<div class="ferr">'+esc(msg)+'</div>':'')+'<div class="muted" style="margin-bottom:10px">Not connected.</div>'+
+        '<button class="btn" type="button" id="jstart">Connect Jira</button>';
+      $('jstart').onclick=start;
+    }
+    function start(){
+      card.innerHTML='<div class="muted">Asking Atlassian for a sign-in link…</div>';
+      fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:true})})
+        .then(function(){ return fetch('/jira-auth',{method:'POST',headers:{'content-type':'application/json'},body:'{"act":"start"}'}); })
+        .then(function(r){ return r.json(); })
+        .then(function(o){
+          if(!o.url){ idle('The sign-in link is not ready yet. Try again in a moment.'); return; }
+          card.innerHTML='<div class="jsteps"><ol class="how">'+
+            '<li>Sign in to Atlassian: <button class="btn" type="button" id="jopen">Open sign-in page</button></li>'+
+            '<li>After you allow access, the browser tries to open a <code>localhost</code> page and fails. That is expected. '+
+              'Copy the full address from the address bar and paste it here:'+
+              '<input id="jurl" placeholder="http://localhost:…/callback?code=…" autocomplete="off"></li></ol>'+
+            '<div class="row2"><button class="btn" type="button" id="jpaste">Finish connecting</button><span id="jstat" class="muted"></span></div></div>';
+          $('jopen').onclick=function(){ openExt(o.url); };
           $('jpaste').onclick=function(){
-            fetch('/jira-auth',{method:'POST',headers:{'content-type':'application/json'},
-              body:JSON.stringify({act:'paste',url:$('jurl').value})})
+            var u=$('jurl').value.trim(); if(!u){ $('jstat').textContent='Paste the address first.'; return; }
+            $('jpaste').disabled=true; $('jstat').textContent='Connecting…';
+            fetch('/jira-auth',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({act:'paste',url:u})})
               .then(function(r){ return r.json(); })
               .then(function(o2){
-                if(!o2.ok){ $('jstat').textContent=o2.error||'error'; return; }
-                $('jstat').textContent='checking…';
+                if(!o2.ok){ $('jpaste').disabled=false; $('jstat').textContent=o2.error||'That did not work. Start again.'; return; }
                 var tries=0;
-                var iv=setInterval(function(){
+                (function poll(){
                   fetch('/jira-auth').then(function(r){ return r.json(); }).then(function(s){
-                    if(s.connected){ clearInterval(iv); a.innerHTML='<div class="note">✓ Jira authorized.</div>'; }
-                    else if(++tries>10){ clearInterval(iv); a.innerHTML='<div class="sub">Not connected yet — try Authorize again.</div>'; }
-                  });
-                }, 3000);
+                    if(!card.isConnected) return;
+                    if(s.connected) connected();
+                    else if(++tries>10) idle('Still not connected. Start again.');
+                    else timer=setTimeout(poll, 3000);
+                  }, function(){ idle('Could not reach the box.'); });
+                })();
               });
           };
         })
-        .catch(function(){ a.innerHTML='<div class="sub">Could not start the authorization.</div>'; });
-    };
-    var save=function(){ var c=$('atlbox');
-      fetch('/integrations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({atlassian:!!(c&&c.checked)})}); };
-    $('setupdone').onclick=function(){ save(); finish(); };
-    $('setupskip').onclick=function(){ save(); finish(); };
+        .catch(function(){ idle('Could not start the sign-in.'); });
+    }
+    fetch('/jira-auth').then(function(r){ return r.json(); }).then(function(s){
+      if(!card.isConnected) return; if(s.connected) connected(); else idle();
+    }, function(){ idle(); });
+    nav({back:function(){ clearTimeout(timer); go(3); }, skip:function(){ clearTimeout(timer); skipTo(5)(); },
+      next:'Finish', onNext:function(){ clearTimeout(timer); if(!S.jira) S.state[4]='skip'; go(5); }});
   }
-  step(1);
-  body.innerHTML='<h2>Welcome to claude-box</h2><p>You are signed in on this browser with the one-time link. '+
-    'Pick a login and password: your phone, other computers and the public tunnel will ask for them.</p>';
-  body.appendChild(pwForm(true, function(){
-    loadAuth(); modelStep();
-    gitBox($('setupgit'), function(){ $('setupskip').classList.add('hidden'); });
-    $('setupdone').onclick=jiraStep; $('setupskip').onclick=jiraStep;
-  }));
+
+  function summary(){
+    setupSave(0);
+    var names={claude:'Claude', glm:'GLM via z.ai', abliteration:'Abliteration'};
+    function row(label, val){ return '<div><span>'+label+'</span>'+(val?'<b>'+esc(val)+'</b>':'<em>Not set. Settings</em>')+'</div>'; }
+    body.innerHTML='<h2>You are all set</h2><p class="lead">claude-box is ready. Start a session from the sidebar, or a task from a Jira issue.</p>'+
+      '<div class="sumlist">'+row('Login', S.user)+row('Model', names[S.model]||'')+row('GitHub', S.github)+row('Jira', S.jira?'Connected':'')+'</div>';
+    nav({back:function(){ go(4); }, next:'Open claude-box', onNext:finish});
+    next.focus();
+  }
+
+  body.innerHTML='<div class="muted">Loading…</div>'; back.classList.add('hidden'); skip.classList.add('hidden'); next.disabled=true;
   w.classList.add('on');
-  var u=body.querySelector('input[name=user]'); if(u) u.focus();
+  loadAuth().then(function(a){
+    S.user=a.user||'';
+    if(a.configured) S.state[1]='ok';
+    go(a.configured ? Math.min(Math.max(startAt||2, 2), 4) : 1);
+  });
 }
-loadAuth().then(function(a){ if(a && a.configured===false) openSetup(); });
+// open the wizard when no login exists (the sidecar marked the page), or resume one left mid-way
+if(document.documentElement.hasAttribute('data-setup')) openSetup(1);
+else if(setupSaved()) openSetup(setupSaved());
+else loadAuth().then(function(a){ if(a && a.configured===false) openSetup(1); });
 
 // ===== model traffic: what a session sent to the model, got back, and did (web-wire.js)
 // Recording is off by default (Settings). A run = one agent process: a chat session from start to

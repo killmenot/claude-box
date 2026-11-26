@@ -147,6 +147,7 @@ let auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cooki
 // ttyd always runs with its own random login (web-serve.js), so a page that reaches its loopback
 // port directly gets nowhere; the sidecar, which has already checked the user, swaps that login in.
 let TTYD_AUTH = '';
+let claudeLogin = null;         // the in-flight 'claude auth login' process (onboarding model step)
 let jiraLogin = null;           // the in-flight 'claude mcp login atlassian' process (onboarding Jira step)
 function ttydHeaders(h) {
   const o = Object.assign({}, h);
@@ -209,7 +210,9 @@ const handler = (req, res) => {
       if (/z\.ai/.test(b)) provider = 'glm';
       else if (/abliteration/.test(b)) provider = 'abliteration';
       else if (b) provider = 'custom';
-      json(res, 200, { provider, baseUrl: b, model: env.ANTHROPIC_DEFAULT_SONNET_MODEL || '', hasKey: !!env.ANTHROPIC_AUTH_TOKEN });
+      // a Claude subscription token from .env, or a `claude login` done inside the box
+      const claudeAuth = !!process.env.CLAUDE_CODE_OAUTH_TOKEN || fs.existsSync(require('path').join(homeDir, '.claude', '.credentials.json'));
+      json(res, 200, { provider, baseUrl: b, model: env.ANTHROPIC_DEFAULT_SONNET_MODEL || '', hasKey: !!env.ANTHROPIC_AUTH_TOKEN, claudeAuth });
       return;
     }
     if (path === '/model' && req.method === 'POST') {
@@ -296,6 +299,67 @@ const handler = (req, res) => {
         if (req.method === 'GET') {
           execFile('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 60000, maxBuffer: 1 << 20 }, (e, out) => {
             json(res, 200, { connected: /atlassian: \S+ .*Connected/.test(String(out)) });
+          });
+          return;
+        }
+        json(res, 400, { error: 'bad act' });
+      });
+      return;
+    }
+    if (path === '/claude-auth') {
+      // Sign Claude in from the UI with `claude auth login` (claude.ai subscription): start -> {url};
+      // the user signs in at claude.ai, which shows a code; paste -> the code goes to the process'
+      // stdin; GET -> `claude auth status`. Credentials land in ~/.claude, like a /login in a terminal.
+      const { spawn, execFile } = require('child_process');
+      readJson(req, 16384, (o) => {
+        const act = o && o.act;
+        if (req.method === 'POST' && act === 'start') {
+          if (claudeLogin && claudeLogin.child && claudeLogin.url) { json(res, 200, { url: claudeLogin.url }); return; }
+          let child;
+          try {
+            child = spawn('claude', ['auth', 'login', '--claudeai'], { stdio: ['pipe', 'pipe', 'pipe'],
+              env: Object.assign({}, process.env, { BROWSER: 'true', NO_COLOR: '1' }) });
+          } catch (e) { json(res, 500, { error: 'claude could not start: ' + e.message }); return; }
+          const L = claudeLogin = { child, url: '', buf: '', exit: null };
+          const collect = (d) => {
+            L.buf = (L.buf + String(d)).slice(-8192);
+            if (!L.url) { const m = /https:\/\/\S+/.exec(L.buf); if (m) L.url = m[0]; }
+          };
+          child.stdout.on('data', collect); child.stderr.on('data', collect);
+          child.on('error', (e) => { L.child = null; L.exit = -1; L.buf += '\n' + e.message; });
+          child.on('exit', (code) => { L.child = null; L.exit = code; });
+          setTimeout(() => { if (L.child) { try { L.child.kill(); } catch (_) {} } }, 10 * 60000);
+          const t0 = Date.now();
+          (function wait() {
+            if (L.url || L.exit !== null || Date.now() - t0 > 8000) json(res, 200, L.url ? { url: L.url } : { error: 'No sign-in link from claude. Try again.' });
+            else setTimeout(wait, 200);
+          })();
+          return;
+        }
+        if (req.method === 'POST' && act === 'paste') {
+          const code = String(o.code || '').trim();
+          if (!code || /[\r\n]/.test(code) || code.length > 4096) { json(res, 400, { error: 'Paste the code from claude.ai.' }); return; }
+          if (!claudeLogin || !claudeLogin.child) { json(res, 400, { error: 'The sign-in expired. Start again.' }); return; }
+          claudeLogin.child.stdin.write(code + '\n');
+          json(res, 200, { ok: true });
+          return;
+        }
+        if (req.method === 'POST' && act === 'cancel') {
+          if (claudeLogin && claudeLogin.child) { try { claudeLogin.child.kill(); } catch (_) {} }
+          claudeLogin = null; json(res, 200, { ok: true });
+          return;
+        }
+        if (req.method === 'GET') {
+          execFile('claude', ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 20000, maxBuffer: 1 << 20 }, (e, out) => {
+            let st = {}; try { st = JSON.parse(String(out || '{}')); } catch (_) {}
+            const L = claudeLogin;
+            const failed = L && L.exit !== null && L.exit !== 0;
+            json(res, 200, {
+              loggedIn: !!st.loggedIn, method: st.authMethod || '', email: st.email || '', org: st.orgName || '',
+              envToken: !!process.env.CLAUDE_CODE_OAUTH_TOKEN,
+              pending: !!(L && L.child),
+              error: failed ? (L.buf.split('\n').map((l) => l.replace(/^.*Paste code here[^>]*>\s*/, '').trim()).filter(Boolean).pop() || 'Sign-in failed.').slice(0, 300) : '',
+            });
           });
           return;
         }
@@ -546,7 +610,9 @@ const handler = (req, res) => {
         try {
           if (e) { res.writeHead(500); res.end('no launcher'); return; }
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'referrer-policy': 'no-referrer' });
-          res.end(buf);
+          // no login yet: mark the page so the setup wizard is up from the first paint, instead of
+          // the app showing for a moment and then being covered by it
+          res.end(authStore.configured() ? buf : Buffer.from(String(buf).replace('<html lang="en">', '<html lang="en" data-setup="1">')));
         } catch (_) {}
       });
       return;
