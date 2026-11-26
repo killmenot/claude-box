@@ -856,6 +856,30 @@
 
   /* ---------- right-hand "Today" panel ---------- */
   .app.rp{grid-template-columns:var(--side) minmax(0,1fr) var(--rp)}
+  /* the artifact panel (show_artifact): takes Today's place while open */
+  .app.art{grid-template-columns:var(--side) minmax(0,1fr) minmax(360px,44%)}
+  .app.art.artwide{grid-template-columns:var(--side) minmax(0,.7fr) minmax(0,1.3fr)}
+  #app.art #rpanel{display:none}
+  #artp{display:none;flex-direction:column;min-height:0;min-width:0;background:var(--panel);border-left:1px solid var(--line)}
+  .app.art #artp{display:flex}
+  #artp .ah{display:flex;align-items:center;gap:6px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--line);min-height:47px}
+  #artp .ah .nm{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #artp .ah .fn{font:11.5px var(--mono);color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+  #artp .ver{display:flex;border:1px solid var(--line);border-radius:8px;overflow:auto;max-width:40%;flex:none}
+  #artp .ver button{border:0;background:none;color:var(--slate);font:12px var(--mono);padding:3px 8px;cursor:pointer;white-space:nowrap}
+  #artp .ver button+button{border-left:1px solid var(--line)}
+  #artp .ver button.on{background:var(--iris);color:#fff}
+  #artp .stage{flex:1;min-height:0;background:var(--codebg);position:relative}
+  #artp iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
+  #artp .af{display:flex;align-items:center;gap:6px;padding:5px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--mute)}
+  #artp .af i{width:7px;height:7px;border-radius:50%;background:var(--live);flex:none}
+  #artp .af.old i{background:var(--stop)}
+  .artcard{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--panel);max-width:460px;margin:6px 0}
+  .artcard .ic{width:30px;height:30px;border-radius:8px;background:var(--tint);color:var(--iris);display:grid;place-items:center;flex:none;font-size:15px}
+  .artcard .tx{flex:1;min-width:0} .artcard b{display:block;font-weight:600;font-size:13.5px}
+  .artcard small{display:block;color:var(--mute);font:11.5px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .artcard.err small{color:var(--err)}
+  .artcard button{border:1px solid var(--line);background:var(--panel);color:var(--iris);font:600 12.5px var(--sans);padding:4px 11px;border-radius:8px;cursor:pointer}
   #rpanel{display:none;flex-direction:column;min-height:0;background:var(--panel);border-left:1px solid var(--line);font-size:13px;line-height:1.4}
   .app.rp #rpanel{display:flex}
   #rpbtn.on{background:var(--hover);color:var(--ink)}
@@ -947,6 +971,8 @@
   @media (max-width:1100px){
     .app.rp{grid-template-columns:var(--side) minmax(0,1fr)}
     #rpanel{position:fixed;z-index:18;right:0;top:0;bottom:0;width:min(92vw,var(--rp));box-shadow:0 0 40px rgba(0,0,0,.25)}
+    .app.art,.app.art.artwide{grid-template-columns:var(--side) minmax(0,1fr)}
+    #artp{position:fixed;z-index:19;inset:0 0 0 auto;width:min(100vw,720px);box-shadow:0 0 40px rgba(0,0,0,.25)}
   }
   @media (max-width:760px){
     .app.rp{grid-template-columns:1fr}
@@ -1122,6 +1148,16 @@
     <div id="fmhost"><div class="inner"></div></div>
   </div>
 </main>
+<aside id="artp" aria-label="Artifact">
+  <div class="ah"><span class="nm" id="artname"></span><span class="fn" id="artfile"></span>
+    <div class="ver" id="artver"></div>
+    <button class="iconbtn" type="button" id="artreload" title="Reload">↻</button>
+    <a class="iconbtn" id="arttab" target="_blank" rel="noopener" title="Open in a new tab" aria-label="Open in a new tab">↗</a>
+    <button class="iconbtn" type="button" id="artwide" title="Wide">⤢</button>
+    <button class="iconbtn" type="button" id="artclose" title="Close">✕</button></div>
+  <div class="stage"><iframe id="artframe" sandbox="allow-scripts allow-forms allow-popups allow-modals" referrerpolicy="no-referrer" title="Artifact"></iframe></div>
+  <div class="af" id="artfoot"><i></i><span></span></div>
+</aside>
 <aside id="rpanel">
   <div class="rph"><h3>Today</h3>
     <button class="iconbtn" type="button" id="rprefresh" title="Refresh now (GitHub instantly; calendar, Jira and Slack take about a minute)">↻</button>
@@ -1652,7 +1688,7 @@ function activate(key){
     if(q.tframe) q.tframe.classList.toggle('on', k===key && !!p.tview && !p.cview); });
   $('blank').classList.add('hidden');
   if(p.fview) fmShowFor(p); else $('fmhost').classList.remove('on');
-  evict(); syncUrl(); renderList(true); renderTop();
+  evict(); syncUrl(); renderList(true); renderTop(); artRender();
   $('app').classList.remove('drawer');
   setTimeout(focusActive, 0);
 }
@@ -2670,6 +2706,70 @@ function resultText(c){
   if(Array.isArray(c)) return c.map(function(x){ return x.type==='text'?x.text:(x.type==='image'?'[image]':''); }).join('\n');
   return '';
 }
+// ---------- artifacts: pages Claude shows with show_artifact (cb-mcp.js), in the panel on the right ----------
+// Each call is a version: the latest shows the live file (reloaded when it changes), earlier ones the
+// snapshot taken at the call. The frame is sandboxed and the file is served with a sandbox CSP
+// (web-artifact.js), so the page cannot reach the box's cookies or API.
+var ART_TOOL='mcp__claude-box__show_artifact', ART_POLL=null, ART_SEEN=0;
+function artUrl(file){ return 'artifact/f'+String(file).split('/').map(encodeURIComponent).join('/'); }
+function addArt(p, b){
+  p.arts=p.arts||[]; p.artById=p.artById||{};
+  var inp=b.input||{}, a={id:b.id, title:String(inp.title||'').trim()||String(inp.path||'').split('/').pop()||'Artifact', path:String(inp.path||''), snap:'', err:''};
+  if(p.prepending) p.arts.unshift(a); else p.arts.push(a);
+  p.artById[b.id]=a;
+  var d=el('div','artcard','<span class="ic">◧</span><span class="tx"><b></b><small></small></span><button type="button">Open</button>');
+  d.querySelector('b').textContent=a.title; d.querySelector('small').textContent=a.path;
+  d.querySelector('button').onclick=function(){ artOpen(p, p.arts.indexOf(a)); };
+  a.card=d; before(p); p.inner.appendChild(d);
+}
+function artResult(p, b){
+  var a=p.artById[b.tool_use_id]; if(!a) return;
+  var t=resultText(b.content)||'';
+  if(b.is_error){ a.err=t.replace(/^Not shown:\s*/,''); a.card.classList.add('err'); a.card.querySelector('small').textContent=a.err; return; }
+  var j=null; t.split('\n').some(function(l){ if(l.charAt(0)!=='{') return false; try{ j=JSON.parse(l); }catch(e){} return !!j; });
+  if(j){ a.path=j.path||a.path; a.snap=j.snapshot||''; a.title=j.title||a.title;
+    a.card.querySelector('b').textContent=a.title; a.card.querySelector('small').textContent=a.path; }
+  // a new version while the user is here: show it at once
+  if(!p.replaying && !p.prepending) artOpen(p, p.arts.indexOf(a));
+  else if(p.artOpen && PANES[ACTIVE]===p) artRender();
+}
+function artOpen(p, i){
+  if(!p.arts || !p.arts[i] || p.arts[i].err) return;
+  p.artOpen=true; p.artCur=i;
+  if(PANES[ACTIVE]===p) artRender();
+}
+function artRender(){
+  var p=PANES[ACTIVE], app=$('app');
+  var on=!!(p && p.artOpen && p.arts && p.arts.length);
+  app.classList.toggle('art', on);
+  clearInterval(ART_POLL); ART_POLL=null;
+  if(!on){ $('artframe').removeAttribute('src'); return; }
+  var i=Math.min(p.artCur==null?p.arts.length-1:p.artCur, p.arts.length-1), a=p.arts[i], latest=i===p.arts.length-1;
+  $('artname').textContent=a.title; $('artfile').textContent=a.path.split('/').pop();
+  $('artfile').title=a.path;
+  $('artver').innerHTML=p.arts.length>1 ? p.arts.map(function(x, k){ return '<button type="button" data-k="'+k+'" class="'+(k===i?'on':'')+'"'+(x.err?' disabled':'')+'>v'+(k+1)+'</button>'; }).join('') : '';
+  $('artver').classList.toggle('hidden', p.arts.length<2);
+  var file=(!latest && a.snap) ? a.snap : a.path, f=$('artframe');
+  var src=artUrl(file);
+  if(f.dataset.file!==file){ f.dataset.file=file; ART_SEEN=0; f.src=src; }
+  $('arttab').href=src;
+  $('artfoot').classList.toggle('old', !latest);
+  $('artfoot').querySelector('span').textContent=latest ? 'Live: reloads when the file changes · sandboxed, no access to claude-box'
+    : 'Version '+(i+1)+' of '+p.arts.length+' as it was shown · sandboxed';
+  if(latest) ART_POLL=setInterval(function(){
+    if(document.hidden) return;
+    fetch('artifact/stat?p='+encodeURIComponent(file)).then(function(r){ return r.ok?r.json():null; }).then(function(s){
+      if(!s || $('artframe').dataset.file!==file) return;
+      if(ART_SEEN && s.mtime!==ART_SEEN) $('artframe').src=src+'?t='+Math.round(s.mtime);
+      ART_SEEN=s.mtime;
+    }).catch(function(){});
+  }, 2000);
+}
+$('artver').addEventListener('click', function(e){ var b=e.target.closest('button'); var p=PANES[ACTIVE]; if(!b||!p) return; p.artCur=+b.dataset.k; artRender(); });
+$('artreload').addEventListener('click', function(){ var f=$('artframe'); if(f.dataset.file) f.src=artUrl(f.dataset.file)+'?t='+Date.now(); });
+$('artwide').addEventListener('click', function(){ $('app').classList.toggle('artwide'); });
+$('artclose').addEventListener('click', function(){ var p=PANES[ACTIVE]; if(p) p.artOpen=false; artRender(); });
+
 function addToolResult(p, b){
   var d=p.r.tools[b.tool_use_id]; if(!d) return;
   d.classList.remove('pending'); if(b.is_error) d.classList.add('err');
@@ -2944,7 +3044,7 @@ function renderItem(p, m){
     if(typeof c==='string'){ userTextHtml(p,c); return; }
     var imgs=[];
     (c||[]).forEach(function(b){
-      if(b.type==='tool_result') addToolResult(p,b);
+      if(b.type==='tool_result'){ if(p.artById && p.artById[b.tool_use_id]) artResult(p,b); else addToolResult(p,b); }
       else if(b.type==='text'){ userTextHtml(p,b.text||'',imgs); imgs=[]; }
       else if(b.type==='image') imgs.push({name:'image', url:(b.source&&b.source.type==='base64')?'data:'+b.source.media_type+';base64,'+b.source.data:''});
     });
@@ -2957,7 +3057,7 @@ function renderItem(p, m){
         var live=p.r.live.shift();
         if(live){ live.classList.remove('live'); live.innerHTML=md(b.text); stampMsg(live, b.text); }
         else { var ad=el('div','msg asst', md(b.text)); stampMsg(ad, b.text); p.inner.appendChild(ad); }
-      } else if(b.type==='tool_use') addTool(p,b);
+      } else if(b.type==='tool_use'){ if(b.name===ART_TOOL) addArt(p,b); else addTool(p,b); }
       else if(b.type==='thinking' && b.thinking){
         var tl=p.inner.lastElementChild, g;
         if(tl && tl.classList.contains('tgroup') && !tl.classList.contains('skill')) g=tl;   // the current tool/thinking run
@@ -3109,8 +3209,10 @@ function onEvent(p, o){
   switch(o.ev){
     case 'history':
       p.inner.innerHTML=''; p.r={tools:{}, live:[], seen:{}, pendingEcho:[]}; p.permsEl.innerHTML=''; p.perms={};
-      p.olderEl=null; p.oldest=null;
-      (o.items||[]).forEach(function(m){ renderItem(p,m); });
+      p.olderEl=null; p.oldest=null; p.arts=[]; p.artById={};
+      p.replaying=true;
+      try{ (o.items||[]).forEach(function(m){ renderItem(p,m); }); } finally { p.replaying=false; }
+      if(p.artOpen) artRender();
       setOlder(p, o.more, o.items);
       if(!o.items || !o.items.length) p.inner.appendChild(el('div','note hint', p.token?'(empty session)':'Start the conversation below.'));
       p.info=o.info||{}; p.agFacts=o.agents||{}; p.consoleActive=!!o.console; renderBanner(p); applyMode(p);

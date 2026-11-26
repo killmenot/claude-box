@@ -17,6 +17,7 @@
 //   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
 //   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
+//   /artifact    -> the artifact panel's files (web-artifact.js): GET /artifact/f/<abs path>, /artifact/stat?p=
 //   /code        -> VS Code (code-server) for the Code tab, only with ./claude-box --vscode (web-code.js); POST /codetheme {theme}
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
 const http = require('http');
@@ -30,6 +31,7 @@ const { search } = require('./web-search.js');
 // CSRF / cross-site WebSocket / DNS-rebinding guard + the login check (see web-guard.js)
 const webGuard = require('./web-guard.js');
 const code = require('./web-code.js');
+const artifact = require('./web-artifact.js');
 const guard = webGuard.makeGuard();
 
 // The address the listeners bind to inside the container. WEB_LISTEN_ADDR is set only by the
@@ -208,6 +210,11 @@ const handler = (req, res) => {
       res.end(); return;
     }
     const path = req.url.split('?')[0];
+    if (path.startsWith('/artifact/f/')) { artifact.serve(req, res, req.url.split('?')[0].slice('/artifact/f'.length)); return; }
+    if (path === '/artifact/stat') {
+      const q = new URL(req.url, 'http://x').searchParams.get('p') || '';
+      const r = artifact.stat(q); json(res, r.error || 200, r); return;
+    }
     if (path === '/codetheme' && req.method === 'POST') {       // VS Code follows the launcher's theme
       if (!code.enabled()) { json(res, 404, { error: 'VS Code is off' }); return; }
       readJson(req, 1024, (o) => { try { json(res, 200, { ok: code.setTheme(o && o.theme) }); } catch (e) { json(res, 400, { error: e.message }); } });

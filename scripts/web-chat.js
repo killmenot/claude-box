@@ -458,6 +458,8 @@ class Chat {
     } catch (e) { log(this.name, 'settings', e.message); }
   }
   askPermission(tool, input, o) {
+    // the box's own artifact panel only shows a file Claude already wrote: no question for that
+    if (tool === 'mcp__claude-box__show_artifact') return Promise.resolve({ behavior: 'allow', updatedInput: input });
     return new Promise((resolve) => {
       const id = 'p' + (++permSeq);
       const p = { resolve, tool, input, reason: o && o.decisionReason, suggestions: (o && o.suggestions) || [] };

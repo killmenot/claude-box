@@ -60,6 +60,13 @@ on the session's folder (for a task, all its repo worktrees). Switching sessions
 the last three stay loaded, and VS Code follows the light/dark theme. code-server starts on the first click, listens on a private unix socket
 (no port) and is served at `/code/` behind the claude-box login. Claude Code and GitLens extensions
 are installed on its first start. The flag is not remembered: a start without it has no VS Code.
+
+**Artifacts**: ask for a design, mockup, chart or report and Claude writes one HTML file in the
+session's `.artifacts/` and calls `show_artifact` (the box's own MCP server, `scripts/cb-mcp.js`). The
+chat gets a card, and the page opens in a panel on the right: every call is a version (v1, v2, …), the
+latest reloads when the file changes, ⤢ widens it, ↗ opens it in a tab. Everything stays in the box
+(nothing goes to claude.ai) and works with any model. The page is served from `/artifact/f/…` in a CSP
+sandbox: it runs its scripts but cannot read the box's cookies or call its API.
 The login and password can be changed later in **Settings → Access**; they are kept as a scrypt hash
 in `home/.claude/web-auth.json`. An older `WEB_TERMINAL_PASSWORD` in `.env` still works until one is
 set in the UI. `--tunnel` refuses to start until a login exists.
