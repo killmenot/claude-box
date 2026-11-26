@@ -70,3 +70,19 @@ test('WebSocket upgrades go through with the prefix stripped', async () => {
   assert.match(reply, /101 Switching Protocols/);
   assert.match(reply, /x-path: \/stable-abc\?reconnectionToken=t/);
 });
+
+test('VS Code follows the launcher theme; other settings stay; a JSONC file is left alone', () => {
+  const f = path.join(tmp, '.local', 'share', 'code-server', 'User', 'settings.json');
+  assert.strictEqual(code.setTheme('dark'), true);
+  assert.strictEqual(JSON.parse(fs.readFileSync(f, 'utf8'))['workbench.colorTheme'], 'Default Dark Modern');
+  fs.writeFileSync(f, JSON.stringify({ 'editor.fontSize': 15, 'workbench.colorTheme': 'Default Dark Modern' }));
+  code.setTheme('light');
+  const o = JSON.parse(fs.readFileSync(f, 'utf8'));
+  assert.strictEqual(o['workbench.colorTheme'], 'Default Light Modern');
+  assert.strictEqual(o['editor.fontSize'], 15);
+  assert.strictEqual(o['window.autoDetectColorScheme'], false);
+  fs.writeFileSync(f, '{ // mine\n "editor.fontSize": 15 }');
+  assert.strictEqual(code.setTheme('dark'), false);
+  assert.match(fs.readFileSync(f, 'utf8'), /\/\/ mine/);
+  assert.throws(() => code.setTheme('blue'), /dark or light/);
+});

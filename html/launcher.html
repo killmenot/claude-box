@@ -1151,9 +1151,18 @@ var THEME_ICON={
   light:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
 };
 function sysTheme(){ return THEME_MQ.matches?'dark':'light'; }
+// VS Code (the Code tab) follows this theme: the server writes it into code-server's settings
+var CODE_THEME='';
+function codeTheme(){
+  var t=document.documentElement.dataset.theme==='dark'?'dark':'light';
+  if(!CODE_ON || CODE_THEME===t) return;
+  CODE_THEME=t;
+  fetch('codetheme',{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({theme:t})}).catch(function(){ CODE_THEME=''; });
+}
 function applyTheme(){
   var t=ls('cb-theme'); if(t!=='light'&&t!=='dark') t=sysTheme();
   document.documentElement.dataset.theme=t;
+  codeTheme();
   var b=$('themebtn'); if(!b) return;
   b.title='Switch to the '+(t==='dark'?'light':'dark')+' theme';
   b.setAttribute('aria-label', b.title);
@@ -1269,12 +1278,16 @@ var MAXCODE=3;        // Code tabs kept loaded (each is a VS Code window with it
 var MAXCONSOLES=8;     // console iframes kept warm (each holds a websocket + a tmux client)
 var newSeq=0;
 var CLOSED=JSON.parse(ls('cb.closed')||'{}');
-var CATS={cats:[], map:{}};
-// The system category: every session with activity in the last ACTIVE_DAYS shows up here as well as
+var CATS={cats:[], map:{}, quiet:{}};
+// The system category: every session with activity in the last ACTIVE_HOURS shows up here as well as
 // in its own place. It can be renamed and moved like any category, but not deleted or dropped onto.
-var ACTIVE_CAT='__active', ACTIVE_DAYS=2;
+// Sessions marked "Hide from Active" (CATS.quiet: loops, monitors that run on their own) stay out.
+var ACTIVE_CAT='__active', ACTIVE_HOURS=24, ACTIVE_NAME='Active (24 h)';
 function ensureActiveCat(){
-  if(!CATS.cats.some(function(c){ return c.id===ACTIVE_CAT; })) CATS.cats.unshift({id:ACTIVE_CAT, name:'Active ('+ACTIVE_DAYS+' days)'});
+  CATS.quiet=CATS.quiet||{};
+  var a=CATS.cats.filter(function(c){ return c.id===ACTIVE_CAT; })[0];
+  if(!a) CATS.cats.unshift({id:ACTIVE_CAT, name:ACTIVE_NAME});
+  else if(a.name==='Active (2 days)') a.name=ACTIVE_NAME;          // the default name of the first version
   Object.keys(CATS.map).forEach(function(k){ if(CATS.map[k]===ACTIVE_CAT) delete CATS.map[k]; });
 }
 ensureActiveCat();   // sidebar categories (server-side, shared by all devices)
@@ -3188,10 +3201,10 @@ function renderList(force){
   if(!CATS.cats.some(function(c){ return c.id!==ACTIVE_CAT; })) h+='<div class="drop zone" data-cat="__new">Drag a session here to create a category</div>';
   CATS.cats.forEach(function(c){
     var sys=c.id===ACTIVE_CAT;
-    var arr=(sys ? rows.filter(function(s){ return now-(s.lastActivity||0) < ACTIVE_DAYS*86400; }) : (inCat[c.id]||[]))
+    var arr=(sys ? rows.filter(function(s){ return now-(s.lastActivity||0) < ACTIVE_HOURS*3600 && !CATS.quiet[s.token]; }) : (inCat[c.id]||[]))
       .slice().sort(function(a,b){ return (b.lastActivity||0)-(a.lastActivity||0); });
-    h+='<div class="zone'+(sys?' sys':'')+'" data-cat="'+esc(c.id)+'">'+group('c:'+c.id, c.name, sys?'Sessions with activity in the last '+ACTIVE_DAYS+' days (they stay in their own place too)':c.name, arr, false, c.id)+
-       (arr.length||isClosed('c:'+c.id,false)?'':'<div class="drop">'+(sys?'Nothing in the last '+ACTIVE_DAYS+' days':'Drop sessions here')+'</div>')+'</div>';
+    h+='<div class="zone'+(sys?' sys':'')+'" data-cat="'+esc(c.id)+'">'+group('c:'+c.id, c.name, sys?'Sessions with activity in the last '+ACTIVE_HOURS+' hours (they stay in their own place too). Hide a session from here with ⋯ → Hide from Active':c.name, arr, false, c.id)+
+       (arr.length||isClosed('c:'+c.id,false)?'':'<div class="drop">'+(sys?'Nothing in the last '+ACTIVE_HOURS+' hours':'Drop sessions here')+'</div>')+'</div>';
   });
   // everything else: by folder, then "Older"
   var recent=rest.filter(function(s){ return s.live || now-(s.lastActivity||0)<RECENT_SEC; });
@@ -3341,7 +3354,7 @@ inboxLoad(); inboxPoll();
 // ---------- categories: storage + actions ----------
 function loadCats(){
   return fetch('categories').then(function(r){ return r.ok?r.json():null; }).then(function(o){
-    if(o && o.cats){ CATS={cats:o.cats, map:o.map||{}}; ensureActiveCat(); renderList(true); } }).catch(function(){});
+    if(o && o.cats){ CATS={cats:o.cats, map:o.map||{}, quiet:o.quiet||{}}; ensureActiveCat(); renderList(true); } }).catch(function(){});
 }
 function saveCats(){
   renderList(true);
@@ -3401,13 +3414,19 @@ function placeCategory(id, targetId, after){
   CATS.cats.splice(after?j+1:j, 0, c); saveCats();
 }
 // keep a session's category when its token changes (new session gets a token, /clear, ...)
-function moveCat(oldTok, newTok){ if(CATS.map[oldTok]){ CATS.map[newTok]=CATS.map[oldTok]; delete CATS.map[oldTok]; saveCats(); } }
+function moveCat(oldTok, newTok){
+  var ch=false;
+  if(CATS.map[oldTok]){ CATS.map[newTok]=CATS.map[oldTok]; delete CATS.map[oldTok]; ch=true; }
+  if(CATS.quiet && CATS.quiet[oldTok]){ CATS.quiet[newTok]=1; delete CATS.quiet[oldTok]; ch=true; }
+  if(ch) saveCats();
+}
 
 // ---------- "Move to…" menu (works on touch screens, where drag-and-drop doesn't) ----------
 var menuEl=$('menu');
 function openMenu(tok, anchor){
   var cur=CATS.map[tok]||'';
-  var h='<button type="button" data-act="rename">✎ Rename…</button><button type="button" data-act="wire">🔍 Model traffic &amp; actions</button><hr><div class="mh">Move to</div>';
+  var h='<button type="button" data-act="rename">✎ Rename…</button><button type="button" data-act="wire">🔍 Model traffic &amp; actions</button>'+
+    '<button type="button" data-act="quiet">'+(CATS.quiet&&CATS.quiet[tok]?'↺ Show in Active':'⊘ Hide from Active')+'</button><hr><div class="mh">Move to</div>';
   CATS.cats.forEach(function(c){ if(c.id===ACTIVE_CAT) return; h+='<button type="button" data-cat="'+esc(c.id)+'"'+(cur===c.id?' class="cur"':'')+'>'+esc(c.name)+'</button>'; });
   h+='<button type="button" data-cat=""'+(cur?'':' class="cur"')+'>No category</button><hr>'+
      '<button type="button" data-cat="__new">＋ New category…</button>';
@@ -3432,6 +3451,7 @@ menuEl.addEventListener('click', function(e){
   var tok=menuEl.dataset.tok; closeMenu();
   if(b.getAttribute('data-act')==='rename'){ renameSession(tok); return; }
   if(b.getAttribute('data-act')==='wire'){ openWire(null, tok); return; }
+  if(b.getAttribute('data-act')==='quiet'){ CATS.quiet=CATS.quiet||{}; if(CATS.quiet[tok]) delete CATS.quiet[tok]; else CATS.quiet[tok]=1; saveCats(); return; }
   assign(tok, b.getAttribute('data-cat'));
 });
 document.addEventListener('pointerdown', function(e){ if(!menuEl.contains(e.target) && !e.target.closest('.more')) closeMenu(); });
@@ -4504,7 +4524,7 @@ $('menubtn').addEventListener('click', function(){ $('app').classList.toggle('dr
 $('scrim').addEventListener('click', function(){ $('app').classList.remove('drawer'); });
 
 fetch('chat/info').then(function(r){ return r.ok?r.json():{}; }).catch(function(){ return {}; }).then(function(i){
-  CHAT_ON=!!(i&&i.enabled); CODE_ON=!!(i&&i.code);
+  CHAT_ON=!!(i&&i.enabled); CODE_ON=!!(i&&i.code); codeTheme();
   wsConnect();
   var s=new URLSearchParams(location.search).get('s');
   fetch('sessions').then(function(r){ return r.ok?r.json():[]; }).catch(function(){ return []; }).then(function(rows){

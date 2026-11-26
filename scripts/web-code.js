@@ -104,6 +104,25 @@ function upgrade(req, socket, head) {
   }, () => socket.destroy());
 }
 
+// VS Code follows the launcher's light/dark theme: the color theme is written to code-server's user
+// settings, which open windows pick up live. Only that key (and the OS auto-detect, which would
+// override it) is touched; a settings file that is not plain JSON (comments) is left alone.
+const SETTINGS = path.join(HOME, '.local', 'share', 'code-server', 'User', 'settings.json');
+const THEMES = { dark: 'Default Dark Modern', light: 'Default Light Modern' };
+function setTheme(mode) {
+  const theme = THEMES[mode];
+  if (!theme) throw new Error('theme: dark or light');
+  let o = {};
+  try { o = JSON.parse(fs.readFileSync(SETTINGS, 'utf8')); } catch (e) { if (e.code !== 'ENOENT') return false; }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+  if (o['workbench.colorTheme'] === theme && o['window.autoDetectColorScheme'] === false) return true;
+  o['workbench.colorTheme'] = theme; o['window.autoDetectColorScheme'] = false;
+  fs.mkdirSync(path.dirname(SETTINGS), { recursive: true });
+  const tmp = SETTINGS + '.' + process.pid + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(o, null, 2) + '\n'); fs.renameSync(tmp, SETTINGS);
+  return true;
+}
+
 function stop() { if (proc) try { proc.kill('SIGTERM'); } catch (_) {} }
 
-module.exports = { enabled, ensure, proxy, upgrade, stop, strip };
+module.exports = { enabled, ensure, proxy, upgrade, stop, strip, setTheme };

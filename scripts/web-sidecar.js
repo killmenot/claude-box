@@ -17,7 +17,7 @@
 //   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
 //   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
-//   /code        -> VS Code (code-server) for the Code tab, only with ./claude-box --vscode (web-code.js)
+//   /code        -> VS Code (code-server) for the Code tab, only with ./claude-box --vscode (web-code.js); POST /codetheme {theme}
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
 const http = require('http');
 const https = require('https');
@@ -64,7 +64,10 @@ function cleanCats(o) {
   const ids = new Set(cats.map((c) => c.id)), map = {};
   Object.entries((o && typeof o.map === 'object' && o.map) || {}).slice(0, 5000)
     .forEach(([k, v]) => { if (ids.has(String(v))) map[str(k, 64)] = String(v); });
-  return { cats, map };
+  // sessions kept out of the "Active" system category (loops, monitors)
+  const quiet = {};
+  Object.keys((o && typeof o.quiet === 'object' && o.quiet) || {}).slice(0, 5000).forEach((k) => { quiet[str(k, 64)] = 1; });
+  return { cats, map, quiet };
 }
 function writeCats(o) {
   const tmp = CATS_FILE + '.' + process.pid + '.tmp';
@@ -201,6 +204,11 @@ const handler = (req, res) => {
       res.end(); return;
     }
     const path = req.url.split('?')[0];
+    if (path === '/codetheme' && req.method === 'POST') {       // VS Code follows the launcher's theme
+      if (!code.enabled()) { json(res, 404, { error: 'VS Code is off' }); return; }
+      readJson(req, 1024, (o) => { try { json(res, 200, { ok: code.setTheme(o && o.theme) }); } catch (e) { json(res, 400, { error: e.message }); } });
+      return;
+    }
     if (path === '/code' || path.startsWith('/code/')) {
       if (!code.enabled()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('VS Code is off: start claude-box with --vscode'); return; }
       code.proxy(req, res); return;

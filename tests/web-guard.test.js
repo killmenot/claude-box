@@ -187,7 +187,7 @@ test('sidecar: cross-site requests refused, ttyd gets its own login, frames and 
     child.on('exit', (c) => { clearTimeout(timer); rej(new Error('sidecar exited (' + c + '): ' + err)); });
   });
   const host = '127.0.0.1:' + port;
-  const body = JSON.stringify({ cats: [{ id: 'a', name: 'A' }], map: {} });
+  const body = JSON.stringify({ cats: [{ id: 'a', name: 'A' }], map: {}, quiet: { tok1: 1 } });
 
   // the classic CSRF shape: a text/plain form POST from another site, with the cached login
   const evil = await call(port, 'POST', '/categories',
@@ -199,6 +199,7 @@ test('sidecar: cross-site requests refused, ttyd gets its own login, frames and 
     { host, authorization: auth, origin: 'http://' + host, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' }, body);
   assert.strictEqual(same.status, 200);
   assert.ok(fs.existsSync(cats));
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(cats, 'utf8')).quiet, { tok1: 1 }, '"Hide from Active" marks are kept');
 
   const cli = await call(port, 'POST', '/chat/api/new', { host, authorization: auth, 'content-type': 'application/json' }, '{"prompt":"x"}');
   assert.notStrictEqual(cli.status, 403, 'non-browser clients are not blocked');
