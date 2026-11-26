@@ -17,6 +17,7 @@
 //   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
 //   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
+//   /sessions/{storage,archive,restore,remove} -> archive or delete a session with its folder (web-archive.js)
 //   /context     -> a session's PRs, Slack threads and Jira issues for the context strip (web-context.js)
 //   /browser     -> the built-in browser (web-browser.js, only with ./claude-box --browser): viewer page, noVNC, WS /browser/websockify
 //   /artifact    -> the artifact panel's files (web-artifact.js): GET /artifact/f/<abs path>, /artifact/stat?p=
@@ -87,6 +88,7 @@ function writeCats(o) {
 let workspace = null;
 try { workspace = require(process.env.WEB_WORKSPACE_MODULE || './web-workspace.js'); }
 catch (e) { console.error('workspace manager disabled:', e.message); }
+const archive = require('./web-archive.js');
 let tasks = null;
 try { tasks = require(process.env.WEB_TASKS_MODULE || './web-tasks.js'); }
 catch (e) { console.error('tasks disabled:', e.message); }
@@ -186,6 +188,19 @@ function proxy(req, res) {
   res.on('error', () => up.destroy());
   req.on('error', () => up.destroy());
   req.pipe(up);
+}
+
+// the archive module's helpers, wired on first use (chat and tasks load optionally)
+let archiveWired = false;
+function archiveReady() {
+  if (archiveWired) return;
+  archiveWired = true;
+  archive.init({ registry, tasks, transcriptPath: (cid, cwd) => (chat && chat.transcriptPath ? chat.transcriptPath(cid, cwd) : null),
+    // the chat process, and the console's tmux session if this session runs there
+    stop: (tok) => Promise.resolve(chat && chat.stopByToken(tok)).catch(() => {}).then(() => {
+      let name = null; try { name = registry.owns(tok); } catch (_) {}
+      if (name) return new Promise((r) => require('child_process').execFile('tmux', ['kill-session', '-t', '=' + name], () => r()));
+    }) });
 }
 
 const handler = (req, res) => {
@@ -710,6 +725,24 @@ const handler = (req, res) => {
       if (!m) { try { res.writeHead(400, { 'content-type': 'application/json' }); res.end('{}'); } catch (_) {} return; }
       preview(safeDecode(m[1]), /(?:^|&)full=1(?:&|$)/.test(q))
         .then((o) => json(res, 200, o), () => json(res, 500, '{}'));
+      return;
+    }
+    // archive / restore / remove a session with its folder; the Storage list (web-archive.js)
+    if (path === '/sessions/inspect') {                                    // what archive / delete would remove
+      archiveReady();
+      const id = new URL(req.url, 'http://x').searchParams.get('id') || '';
+      archive.inspect(id).then((o) => json(res, 200, { folder: o.folder ? o.folder.dir : '', kind: o.folder ? o.folder.kind : '', size: o.size,
+        issues: o.issues, sharedWith: o.sharedWith, archived: !!o.rec.archived }), (e) => json(res, 400, { error: e.message }));
+      return;
+    }
+    if (path === '/sessions/storage') { archiveReady(); archive.storage().then((r) => json(res, 200, r), (e) => json(res, 500, { error: e.message })); return; }
+    if (/^\/sessions\/(archive|restore|remove)$/.test(path) && req.method === 'POST') {
+      archiveReady();
+      readJson(req, 4096, (o) => {
+        const op = path.split('/')[2], id = String((o && o.id) || '');
+        const p = op === 'restore' ? archive.restore(id) : archive[op](id, !!(o && o.force));
+        p.then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message }));
+      });
       return;
     }
     if (path === '/delete' && req.method === 'POST') {

@@ -126,6 +126,17 @@ function owns(token) {
   return rec && ownsSession(reg, tmuxSessions(), rec.tmuxSession, token) ? rec.tmuxSession : null;
 }
 
+// set or clear extra fields of a record (archived: see web-archive.js); null removes a field
+function patch(token, fields) {
+  return locked(() => {
+    const reg = read(), rec = reg[token];
+    if (!rec) return null;
+    for (const [k, v] of Object.entries(fields || {})) { if (v === null || v === undefined) delete rec[k]; else rec[k] = v; }
+    write(reg);
+    return rec;
+  });
+}
+
 function remove(token) {
   return locked(() => {
     const reg = read(), rec = reg[token];
@@ -182,7 +193,7 @@ function restore(log = (s) => console.error(s)) {
   }
 }
 
-module.exports = { REG, upsert, get, list, owns, remove, snapshot, restore };
+module.exports = { REG, upsert, get, list, owns, patch, remove, snapshot, restore };
 
 // ---------- CLI ----------
 if (require.main === module) {

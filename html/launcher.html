@@ -247,6 +247,15 @@
   /* ---------- main ---------- */
   #main{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel)}
   #topbar{display:flex;align-items:center;gap:10px;height:48px;padding:0 10px 0 16px;border-bottom:1px solid var(--line);font-size:14px}
+  .archz{margin-top:6px;opacity:.85} .archz .row .nm{color:var(--slate)}
+  .stor table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
+  .stor th{text-align:left;font-weight:600;color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:4px 6px;border-bottom:1px solid var(--line)}
+  .stor td{padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+  .stor td.nm{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stor td.f{font:11.5px var(--mono);color:var(--slate);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stor .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap} .stor td.w{color:var(--mute);white-space:nowrap}
+  .stor td.a{white-space:nowrap;text-align:right} .stor td.a .btn{padding:3px 8px;font-size:12px;margin-left:4px}
+  .stor tr.arch td{color:var(--mute)} .stor .tag{font-size:10.5px;border-radius:999px;padding:0 6px;background:var(--hover);color:var(--slate)}
   /* the context strip: the session's PRs, Slack threads and Jira issues (web-context.js) */
   #ctxbar{display:flex;flex-direction:column;border-bottom:1px solid var(--line);background:var(--paper)}
   #ctxbar.hidden{display:none}
@@ -1469,7 +1478,10 @@ function showFolder(rel){
 function statusClass(s){ if(!s.live) return 'stop'; if(s.state==='waiting') return 'wait';
   if(s.state==='working') return 'work'; return 'live'; }
 function dispName(s){ var t=(s.title||'').trim(); return t || s.name || s.token; }
-function visibleRows(rows){ return rows.filter(function(s){ return !/^\/tmp\/claude-scratch/.test(s.cwd||''); }); }
+function visibleRows(rows){ return rows.filter(function(s){ return !/^\/tmp\/claude-scratch/.test(s.cwd||'') && !s.archived; }); }
+// archived sessions (web-archive.js): their own group at the bottom, a click offers to restore
+var ARCH_ROWS=[], ARCH_BY={};
+function archRows(rows){ ARCH_ROWS=(rows||[]).filter(function(s){ return s.archived; }); ARCH_BY={}; ARCH_ROWS.forEach(function(s){ ARCH_BY[s.token]=s; }); }
 
 var ROWS=[], BYTOK={};
 var PANES={};          // key (token, or "new-N" until Claude reports the session) -> pane
@@ -1488,7 +1500,7 @@ var CATS={cats:[], map:{}, quiet:{}};
 // The system category: every session with activity in the last ACTIVE_HOURS shows up here as well as
 // in its own place. It can be renamed and moved like any category, but not deleted or dropped onto.
 // Sessions marked "Hide from Active" (CATS.quiet: loops, monitors that run on their own) stay out.
-var ACTIVE_CAT='__active', ACTIVE_HOURS=24, ACTIVE_NAME='Active (24 h)';
+var ACTIVE_CAT='__active', ACTIVE_HOURS=24, ACTIVE_NAME='Active (24 h)', ACTIVE_MIN=15;   // shown once there are more than ACTIVE_MIN sessions
 function ensureActiveCat(){
   CATS.quiet=CATS.quiet||{};
   var a=CATS.cats.filter(function(c){ return c.id===ACTIVE_CAT; })[0];
@@ -2402,7 +2414,8 @@ var SET_SECS=[
   {id:'access', label:'Access', ic:'<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'},
   {id:'github', label:'GitHub', ic:'<circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M6 8.2v7.6M18 11.2c0 3.5-4 3.3-10.2 5.3"/>'},
   {id:'jira', label:'Jira', ic:'<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/>'},
-  {id:'traffic', label:'Model traffic', ic:'<path d="M3 12h4l3 8 4-16 3 8h4"/>'}
+  {id:'traffic', label:'Model traffic', ic:'<path d="M3 12h4l3 8 4-16 3 8h4"/>'},
+  {id:'storage', label:'Storage', ic:'<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>'}
 ];
 var SETCUR=ls('cb.setsec'); if(!SET_SECS.some(function(s){ return s.id===SETCUR; })) SETCUR='general';
 var SETDOT={};          // section -> true (connected) / false (not) / undefined (no dot)
@@ -2433,7 +2446,7 @@ function showSetSec(id){
   var s=SET_SECS.filter(function(x){ return x.id===id; })[0];
   $('setttl').textContent=s.label;
   var body=$('setbody'); body.innerHTML=''; body.scrollTop=0;
-  ({general:setGeneral, models:setModels, access:setAccess, github:setGitHub, jira:setJira, traffic:setTraffic})[id](body);
+  ({general:setGeneral, models:setModels, access:setAccess, github:setGitHub, jira:setJira, traffic:setTraffic, storage:setStorage})[id](body);
 }
 function secHtml(title, sub, inner){ return '<section class="ssec"><h3>'+title+'</h3>'+(sub?'<p>'+sub+'</p>':'')+(inner||'')+'</section>'; }
 function setGeneral(body){
@@ -2530,6 +2543,28 @@ function setJira(body){
 function setTraffic(body){
   body.innerHTML=secHtml('Model traffic','Off by default. When on, every session records what went to the model and back, the commands and file changes it made, and the hosts it connected to. Sessions on GLM, Abliteration or a custom endpoint are not recorded.',
     '<button class="btn" type="button" id="setwire">Model traffic settings &amp; records</button>');
+}
+// Settings > Storage: what each session takes on disk, largest first. Nothing is cleaned up on its
+// own: archive (folder gone, conversation kept) or delete, one session at a time.
+function setStorage(body){
+  body.innerHTML=secHtml('Storage','Each session\'s own folder (under tasks/ or tmp/) and its conversation, largest first. Archive removes the folder and keeps the conversation; Delete removes both. Nothing here happens on its own.',
+    '<div class="stor" id="stor"><div class="sub">Measuring folders…</div></div>');
+  fetch('sessions/storage').then(function(r){ return r.json(); }).then(function(o){
+    var rows=(o&&o.rows)||[], box=$('stor'); if(!box) return;
+    if(!rows.length){ box.innerHTML='<div class="sub">No sessions.</div>'; return; }
+    var total=rows.reduce(function(n,r){ return n+(r.folderSize||0)+(r.conversationSize||0); },0);
+    box.innerHTML='<div class="sub">Total: '+hsize(total)+'</div><table><thead><tr><th>Session</th><th>Folder</th><th class="n">Folder</th><th class="n">Chat</th><th>Last</th><th></th></tr></thead><tbody>'+
+      rows.map(function(r){
+        var nm=(BYTOK[r.token]&&dispName(BYTOK[r.token]))||(ARCH_BY[r.token]&&dispName(ARCH_BY[r.token]))||r.title||r.token;
+        var acts=r.archived ? '<button class="btn ghost" type="button" data-sa="restore" data-tok="'+esc(r.token)+'">Restore</button>'
+          : '<button class="btn ghost" type="button" data-sa="archive" data-tok="'+esc(r.token)+'"'+(r.folder?'':' title="No folder of its own: only the conversation is archived"')+'>Archive</button>';
+        return '<tr'+(r.archived?' class="arch"':'')+'><td class="nm" title="'+esc(r.cwd)+'">'+esc(nm)+(r.archived?' <span class="tag">archived</span>':'')+'</td>'+
+          '<td class="f">'+esc((r.folder||'').replace(/^\/workspace\//,''))+'</td><td class="n">'+(r.folderSize?hsize(r.folderSize):'—')+'</td><td class="n">'+(r.conversationSize?hsize(r.conversationSize):'—')+'</td>'+
+          '<td class="w">'+fmt(r.lastActivity)+'</td><td class="a">'+acts+'<button class="btn ghost" type="button" data-sa="remove" data-tok="'+esc(r.token)+'">Delete</button></td></tr>';
+      }).join('')+'</tbody></table>';
+    box.onclick=function(e){ var b=e.target.closest('[data-sa]'); if(!b) return; var t=b.dataset.tok;
+      if(b.dataset.sa==='archive') sessArchive(t); else if(b.dataset.sa==='restore') sessRestore(t); else delSession(t); };
+  }, function(){ var box=$('stor'); if(box) box.innerHTML='<div class="ferr">Could not measure.</div>'; });
 }
 function closeSettings(){ $('setd').classList.remove('on'); }
 $('setbtn').addEventListener('click', function(){ openSettings(); });
@@ -3908,7 +3943,7 @@ function renderList(force){
   var rows=ROWS, now=Date.now()/1000;
   var pend=Object.keys(PANES).filter(function(k){ return /^(new-|shell:)/.test(k); });
   var sig=JSON.stringify([ACTIVE,pend,CLOSED,CATS,rows.map(function(s){
-    return [s.token,statusClass(s),dispName(s),s.cwd,fmt(s.lastActivity),s.mode]; })]);
+    return [s.token,statusClass(s),dispName(s),s.cwd,fmt(s.lastActivity),s.mode]; }),ARCH_ROWS.map(function(s){ return s.token; })]);
   if(!force && sig===LISTSIG) return; LISTSIG=sig;
   var catIds={}; CATS.cats.forEach(function(c){ catIds[c.id]=1; });
   var inCat={}, rest=[];
@@ -3924,6 +3959,7 @@ function renderList(force){
   if(!CATS.cats.some(function(c){ return c.id!==ACTIVE_CAT; })) h+='<div class="drop zone" data-cat="__new">Drag a session here to create a category</div>';
   CATS.cats.forEach(function(c){
     var sys=c.id===ACTIVE_CAT;
+    if(sys && rows.length<=ACTIVE_MIN) return;          // a short list needs no Active section
     var arr=(sys ? rows.filter(function(s){ return now-(s.lastActivity||0) < ACTIVE_HOURS*3600 && !CATS.quiet[s.token]; }) : (inCat[c.id]||[]))
       .slice().sort(function(a,b){ return (b.lastActivity||0)-(a.lastActivity||0); });
     h+='<div class="zone'+(sys?' sys':'')+'" data-cat="'+esc(c.id)+'">'+group('c:'+c.id, c.name, sys?'Sessions with activity in the last '+ACTIVE_HOURS+' hours (they stay in their own place too). Hide a session from here with ⋯ → Hide from Active':c.name, arr, false, c.id)+
@@ -3941,6 +3977,8 @@ function renderList(force){
   if(old.length) h+=group('older', 'Older', 'inactive for more than 3 days', old, true);
   if(!rows.length && !pend.length) h+='<div class="empty">No sessions yet — start a new one above.</div>';
   h+='</div>';
+  if(ARCH_ROWS.length) h+='<div class="archz">'+group('archived', 'Archived', 'Their folders were removed to free space; the conversations are kept. Click one to restore it.',
+    ARCH_ROWS.slice().sort(function(a,b){ return ((b.archived&&b.archived.at)||0)-((a.archived&&a.archived.at)||0); }), true)+'</div>';
   $('list').innerHTML=h;
 }
 function mx(arr){ return Math.max.apply(null, arr.map(function(s){ return s.lastActivity||0; })); }
@@ -4148,7 +4186,15 @@ function moveCat(oldTok, newTok){
 var menuEl=$('menu');
 function openMenu(tok, anchor){
   var cur=CATS.map[tok]||'';
+  if(ARCH_BY[tok]){
+    menuEl.innerHTML='<button type="button" data-act="restore">↺ Restore…</button><button type="button" data-act="remove">✕ Delete…</button>';
+    menuEl.dataset.tok=tok; menuEl.dataset.mode='session'; menuEl.classList.remove('sessm'); menuEl.style.display='block';
+    var ra=anchor.getBoundingClientRect(), rw=menuEl.offsetWidth;
+    menuEl.style.left=Math.max(8, Math.min(ra.right-rw, innerWidth-rw-8))+'px'; menuEl.style.top=(ra.bottom+4)+'px';
+    return;
+  }
   var h='<button type="button" data-act="rename">✎ Rename…</button><button type="button" data-act="wire">🔍 Model traffic &amp; actions</button>'+
+    '<button type="button" data-act="archive">🗄 Archive…</button>'+
     '<button type="button" data-act="quiet">'+(CATS.quiet&&CATS.quiet[tok]?'↺ Show in Active':'⊘ Hide from Active')+'</button><hr><div class="mh">Move to</div>';
   CATS.cats.forEach(function(c){ if(c.id===ACTIVE_CAT) return; h+='<button type="button" data-cat="'+esc(c.id)+'"'+(cur===c.id?' class="cur"':'')+'>'+esc(c.name)+'</button>'; });
   h+='<button type="button" data-cat=""'+(cur?'':' class="cur"')+'>No category</button><hr>'+
@@ -4173,6 +4219,9 @@ menuEl.addEventListener('click', function(e){
   if(menuEl.dataset.mode==='sess'){ var st=b.getAttribute('data-tok'), sp=b.getAttribute('data-start'); closeMenu(); if(st) openSession(st); else if(sp) startIn(sp); return; }
   var tok=menuEl.dataset.tok; closeMenu();
   if(b.getAttribute('data-act')==='rename'){ renameSession(tok); return; }
+  if(b.getAttribute('data-act')==='archive'){ sessArchive(tok); return; }
+  if(b.getAttribute('data-act')==='restore'){ sessRestore(tok); return; }
+  if(b.getAttribute('data-act')==='remove'){ delSession(tok); return; }
   if(b.getAttribute('data-act')==='wire'){ openWire(null, tok); return; }
   if(b.getAttribute('data-act')==='quiet'){ CATS.quiet=CATS.quiet||{}; if(CATS.quiet[tok]) delete CATS.quiet[tok]; else CATS.quiet[tok]=1; saveCats(); return; }
   assign(tok, b.getAttribute('data-cat'));
@@ -4246,21 +4295,48 @@ $('list').addEventListener('click', function(e){
   var key=row.getAttribute('data-key');
   if(e.target.closest('.del')){ delSession(key); return; }
   if(e.target.closest('.more')){ if(menuEl.style.display==='block' && menuEl.dataset.tok===key) closeMenu(); else openMenu(key, e.target.closest('.more')); return; }
+  if(ARCH_BY[key]){ sessRestore(key); return; }
   if(PANES[key]) activate(key); else openSession(key);
 });
+// ---------- archive / restore / delete (web-archive.js) ----------
+// The question shows what goes: the session's own folder and its size, and anything not saved
+// elsewhere (uncommitted changes; for a temp folder, commits on no remote and its files).
+function sessOp(op, tok, force){
+  return fetch('sessions/'+op,{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({id:tok, force:!!force})})
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(o){ if(!r.ok) throw new Error(o.error||'failed'); return o; }); });
+}
+function sessInfo(tok){ return fetch('sessions/inspect?id='+encodeURIComponent(tok)).then(function(r){ return r.json(); }); }
+function sessName(tok){ var s=BYTOK[tok]||ARCH_BY[tok]; return s?dispName(s):tok; }
+function hsize(n){ return n>=1073741824?(n/1073741824).toFixed(1)+' GB':n>=1048576?Math.round(n/1048576)+' MB':Math.max(1,Math.round(n/1024))+' KB'; }
+function lossText(o){
+  var t='';
+  if(o.folder) t+='\n\nThe folder '+o.folder.replace(/^\/workspace\//,'')+' ('+hsize(o.size||0)+') is removed'+(o.kind==='task'?' (the task\'s branches stay in repos/).':'.');
+  else if(o.sharedWith && o.sharedWith.length) t+='\n\nIts folder is kept: other sessions work there too.';
+  else t+='\n\nIt has no folder of its own to remove.';
+  if(o.issues && o.issues.length) t+='\n\nNot saved anywhere else:\n• '+o.issues.join('\n• ');
+  return t;
+}
+function sessGone(tok){ var was=ACTIVE===tok; if(PANES[tok]) dropPane(PANES[tok]); if(CATS.map[tok]){ delete CATS.map[tok]; saveCats(); } if(was) showBlank(); tick(); }
+function sessArchive(tok){
+  sessInfo(tok).then(function(o){
+    if(o.error) throw new Error(o.error);
+    if(!confirm('Archive "'+sessName(tok)+'"? The conversation is kept and the session can be restored later.'+lossText(o))) return;
+    return sessOp('archive', tok, true).then(function(){ sessGone(tok); if($('setd').classList.contains('on') && SETCUR==='storage') showSetSec('storage'); });
+  }).catch(function(e){ alert('Archive failed: '+e.message); });
+}
+function sessRestore(tok){
+  if(!confirm('Restore "'+sessName(tok)+'"? Its conversation comes back'+(ARCH_BY[tok]&&ARCH_BY[tok].archived&&ARCH_BY[tok].archived.kind==='task'?' and the task\'s worktrees are created again on its branch.':'.'))) return;
+  sessOp('restore', tok).then(function(){ tick(); setTimeout(function(){ openSession(tok); }, 700); if($('setd').classList.contains('on') && SETCUR==='storage') showSetSec('storage'); })
+    .catch(function(e){ alert('Restore failed: '+e.message); });
+}
 function delSession(tok){
-  var s=BYTOK[tok]; var dn=s?dispName(s):tok;
-  if(!confirm('Delete session "'+dn+'"?'+(s&&s.live?' It is running — it will be stopped.':''))) return;
-  if(PANES[tok]) dropIframe(PANES[tok]);
-  fetch('delete?id='+encodeURIComponent(tok),{method:'POST'})
-    .then(function(r){ return r.ok?r.json():null; })
-    .then(function(p){
-      if(!(p&&p.ok)){ alert('Failed to delete session'); return; }
-      var was=(ACTIVE===tok); if(PANES[tok]) dropPane(PANES[tok]);
-      if(CATS.map[tok]){ delete CATS.map[tok]; saveCats(); }
-      if(was) showBlank();
-      tick();
-    }).catch(function(){ alert('Failed to delete session'); });
+  sessInfo(tok).then(function(o){
+    if(o.error) throw new Error(o.error);
+    var s=BYTOK[tok];
+    if(!confirm('Delete "'+sessName(tok)+'"? Its conversation is deleted for good.'+(s&&s.live?' It is running: it will be stopped.':'')+lossText(o))) return;
+    if(PANES[tok]) dropIframe(PANES[tok]);
+    return sessOp('remove', tok, true).then(function(){ sessGone(tok); if($('setd').classList.contains('on') && SETCUR==='storage') showSetSec('storage'); });
+  }).catch(function(e){ alert('Delete failed: '+e.message); });
 }
 
 // ======================= workspace page: a file manager over /workspace =======================
@@ -5234,7 +5310,7 @@ function tick(){
   followConsoles();
   fetch('sessions').then(function(r){ return r.ok?r.json():null; }).then(function(rows){
     if(!rows) return;
-    ROWS=visibleRows(rows); BYTOK={};
+    ROWS=visibleRows(rows); archRows(rows); BYTOK={};
     ROWS.forEach(function(s){ BYTOK[s.token]=s; });
     renderList(); renderTop(); notifyTick(ROWS); if(rpOn()) rpRender();
   }).catch(function(){});
@@ -5255,7 +5331,7 @@ fetch('chat/info').then(function(r){ return r.ok?r.json():{}; }).catch(function(
   wsConnect();
   var s=new URLSearchParams(location.search).get('s');
   fetch('sessions').then(function(r){ return r.ok?r.json():[]; }).catch(function(){ return []; }).then(function(rows){
-    ROWS=visibleRows(rows||[]); BYTOK={}; ROWS.forEach(function(x){ BYTOK[x.token]=x; });
+    ROWS=visibleRows(rows||[]); archRows(rows); BYTOK={}; ROWS.forEach(function(x){ BYTOK[x.token]=x; });
     renderList(true);
     if(taskFromUrl()) return;
     if(s) openSession(s); else { showBlank(); if(innerWidth<=760) $('app').classList.add('drawer'); }

@@ -90,6 +90,13 @@ function seedDefaults() {
   if (!fs.existsSync(settingsFile) && fs.existsSync(path.join(DEF, 'settings.json'))) {
     fs.copyFileSync(path.join(DEF, 'settings.json'), settingsFile);
   }
+  // Claude Code deletes conversations older than cleanupPeriodDays (30 by default) on its own; the box
+  // keeps them a year, so an archived or old session can still be resumed. A value the user set stays.
+  const st = readJson(settingsFile);
+  if (st && typeof st === 'object' && st.cleanupPeriodDays === undefined) {
+    st.cleanupPeriodDays = 365;
+    try { const tmp = settingsFile + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(st, null, 2) + '\n'); fs.renameSync(tmp, settingsFile); } catch (_) {}
+  }
   const config = readJson(configFile) || {};
   const mcp = readJson(path.join(DEF, 'mcp.json'));
   if (mcp && mcp.mcpServers) {

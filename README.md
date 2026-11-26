@@ -100,6 +100,19 @@ channel and author; a Jira issue its status (Slack and Jira details come from th
 line while there is at most one of each, a line per kind once there are more. A click, or a click on
 such a link in the chat, opens it in the Browser tab (a PR or issue in its own tab, Slack in one tab),
 or in a new tab of your browser without `--browser`.
+
+**Archive, restore, delete**: a session's menu has **Archive…**: it stops the session, removes the
+session's own folder (a task's worktrees go through the task archive, so the branches stay in
+`/workspace/repos`; a temp folder is deleted) and gzips the conversation into
+`home/.claude/web-archive/`. Archived sessions sit in the closed **Archived** group at the bottom of the
+sidebar; a click or **Restore…** brings the conversation back and makes the folder again. **Delete…**
+removes the session, its conversation and checkpoints, and its own folder. Only a folder under
+`/workspace/tasks/` or `/workspace/tmp/` that no other session uses is ever removed, never a project
+folder; when work would be lost (uncommitted changes, commits on no remote, files of a temp folder) the
+dialog lists it and asks first. Nothing is archived or deleted automatically. **Settings → Storage**
+lists the sessions by folder size, with Archive / Restore / Delete on each row. The box sets Claude
+Code's `cleanupPeriodDays` to 365 (unless you set it), so old conversations stay resumable for a year.
+The **Active (24 h)** group shows only once there are more than 15 sessions.
 The login and password can be changed later in **Settings → Access**; they are kept as a scrypt hash
 in `home/.claude/web-auth.json`. An older `WEB_TERMINAL_PASSWORD` in `.env` still works until one is
 set in the UI. `--tunnel` refuses to start until a login exists.
