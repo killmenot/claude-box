@@ -186,4 +186,32 @@ test('launcher: /usage dialog meters, account, behaviors, no-limits login', () =
   assert.match(h2, /Plan limits don't apply/);
   assert.match(h2, /Scanning this box's sessions/);
   assert.match(h2, /Totals show while the session is running/);
+  // a token for another endpoint (ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL) is not a Claude account;
+  // a stopped session shows the totals saved in its transcript
+  const other = Object.assign({}, v, { limitsAvailable: false, limits: null, plan: null,
+    account: { tokenSource: 'ANTHROPIC_AUTH_TOKEN', provider: 'firstParty', endpoint: 'llm.example.test' },
+    session: wc.savedSession(COST_STATE) });
+  const h3 = ctx.usageHtml({ live: false, data: other }, null, 'day');
+  assert.match(h3, /Auth token \(ANTHROPIC_AUTH_TOKEN\)/); assert.doesNotMatch(h3, /Claude account/);
+  assert.match(h3, /llm\.example\.test/); assert.match(h3, /requests go to llm\.example\.test/);
+  assert.match(h3, /\$89\.55/); assert.match(h3, /GLM-5\.3-Flash/); assert.match(h3, /\+6491/);
+  assert.match(h3, /Totals saved when the session last stopped/); assert.match(h3, /cost is an estimate/);
+});
+
+const COST_STATE = { type: 'cost-state', sessionId: 'cid-saved', totalCostUSD: 89.55, totalAPIDuration: 9554741, totalDuration: 50114000,
+  totalLinesAdded: 6491, totalLinesRemoved: 285, hasUnknownModelCost: true,
+  modelUsage: { 'GLM-5.3-Flash': { inputTokens: 2810073, outputTokens: 394932, cacheReadInputTokens: 61054912, cacheCreationInputTokens: 0, costUSD: 54.45 } } };
+
+test('stats on a stopped session: totals from the last non-zero cost-state of its transcript', async () => {
+  const cwd = fs.mkdtempSync(path.join(tmp, 'w-'));
+  const proj = path.join(tmp, '.claude', 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+  fs.mkdirSync(proj, { recursive: true });
+  const zero = Object.assign({}, COST_STATE, { totalCostUSD: 0, modelUsage: {} });
+  fs.writeFileSync(path.join(proj, 'cid-saved.jsonl'), [COST_STATE, zero].map((o) => JSON.stringify(o)).join('\n') + '\n');
+  const chat = new wc.Chat({ cid: 'cid-saved', cwd, name: 'chat-s', token: 'tok-s' });
+  const u = await chat.stats('usage');
+  assert.strictEqual(u.live, false);
+  assert.strictEqual(u.data.session.cost, 89.55);
+  assert.strictEqual(u.data.session.saved, true);
+  assert.strictEqual(u.data.session.models['GLM-5.3-Flash'].output, 394932);
 });

@@ -484,7 +484,9 @@ class Chat {
         return usageView(u, a);
       };
       const data = q ? await ask(q) : await withProbe(this.cwd, ask);
-      if (data && !q) data.session = null;            // a fresh process has no totals of this session
+      // a fresh process has no totals of this session: the transcript keeps the ones of its last run
+      const empty = (x) => !x || (!x.cost && !Object.keys(x.models || {}).length);
+      if (data && (!q || empty(data.session))) data.session = savedSession(this.cid ? transcriptExtras(this).cost : null) || (q ? data.session : null);
       return { live: !!q, data };
     }
     throw new Error('unknown stats: ' + kind);
@@ -621,6 +623,22 @@ function usageFn(q) {
   const n = USAGE_FNS.find((k) => q && typeof q[k] === 'function');
   return n ? (o) => q[n](o) : null;
 }
+// The session totals Claude Code saved in the transcript (its last cost-state), for a session
+// that is not running: the same shape as usageView's session.
+function savedSession(cs) {
+  if (!cs) return null;
+  const models = {};
+  for (const [k, m] of Object.entries(cs.modelUsage || {})) models[k] = { input: m.inputTokens, output: m.outputTokens,
+    cacheRead: m.cacheReadInputTokens, cacheWrite: m.cacheCreationInputTokens, cost: m.costUSD };
+  return { cost: cs.totalCostUSD, apiMs: cs.totalAPIDuration, wallMs: cs.totalDuration, added: cs.totalLinesAdded,
+    removed: cs.totalLinesRemoved, models, unknownCost: !!cs.hasUnknownModelCost, saved: true };
+}
+// Where the requests go when it is not Anthropic's API (ANTHROPIC_BASE_URL): the host only.
+function apiEndpoint() {
+  const u = process.env.ANTHROPIC_BASE_URL;
+  if (!u) return '';
+  try { const h = new URL(u).host; return /(^|\.)anthropic\.com$/.test(h) ? '' : h; } catch (_) { return ''; }
+}
 function usageView(u, a) {
   if (!u || typeof u !== 'object' || !('rate_limits_available' in u || 'session' in u)) return null;
   const s = u.session || null, models = {};
@@ -631,7 +649,7 @@ function usageView(u, a) {
     session: s && { cost: s.total_cost_usd, apiMs: s.total_api_duration_ms, wallMs: s.total_duration_ms,
       added: s.total_lines_added, removed: s.total_lines_removed, models },
     account: { email: a.email || '', organization: a.organization || '', tokenSource: a.tokenSource || '',
-      apiKeySource: a.apiKeySource || '', provider: a.apiProvider || '' } };
+      apiKeySource: a.apiKeySource || '', provider: a.apiProvider || '', endpoint: apiEndpoint() } };
 }
 // "What's contributing to your limits usage": a scan of every transcript touched in the last
 // seven days. It runs in its own process (a session's process would stall its turn meanwhile),
@@ -733,7 +751,7 @@ const UUID_TS = /"uuid":"([^"]+)","timestamp":"([^"]+)"/;
 // a moved, rewritten or shrunk file starts over. The 1 KB overlap re-parses the line that was
 // cut at the previous read boundary; map entries are overwritten, so duplicates are harmless.
 const EXTRAS = new Map();          // cid -> {file, size, map, times}
-const EMPTY_EXTRAS = () => ({ extra: new Map(), times: new Map(), agents: new Map() });
+const EMPTY_EXTRAS = () => ({ extra: new Map(), times: new Map(), agents: new Map(), cost: null });
 // Sub-agent facts the transcript keeps outside the messages getSessionMessages returns: the model
 // (toolUseResult.resolvedModel), whether it was launched in the background, and how it ended with
 // its totals (the result's <usage>, or the <task-notification> of a background agent).
@@ -766,7 +784,7 @@ function transcriptExtras(chat) {
   let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
   if (!st) return EMPTY_EXTRAS();
   let c = EXTRAS.get(chat.cid);
-  if (!c || c.file !== f || st.size < c.size) { c = { file: f, size: 0, map: new Map(), times: new Map(), agents: new Map() }; EXTRAS.set(chat.cid, c); }
+  if (!c || c.file !== f || st.size < c.size) { c = { file: f, size: 0, map: new Map(), times: new Map(), agents: new Map(), cost: null }; EXTRAS.set(chat.cid, c); }
   if (st.size > c.size) {
     const fd = fs.openSync(f, 'r');
     try {
@@ -778,6 +796,11 @@ function transcriptExtras(chat) {
         const t = UUID_TS.exec(l);
         if (t) { const ms = Date.parse(t[2]); if (ms) c.times.set(t[1], ms); }
         if (!l.includes('"isSidechain":true')) scanAgentLine(l, c.agents);
+        if (l.startsWith('{"type":"cost-state"')) {
+          // the session's totals, written when its process ends; a resume that sends nothing writes a zeroed one
+          let e; try { e = JSON.parse(l); } catch (_) { e = null; }
+          if (e && (e.totalCostUSD > 0 || Object.keys(e.modelUsage || {}).length)) c.cost = e;
+        }
         if (!l.includes('"local_command"')) continue;
         let e; try { e = JSON.parse(l); } catch (_) { continue; }
         if (e.type !== 'system' || e.subtype !== 'local_command' || e.isSidechain) continue;
@@ -790,7 +813,7 @@ function transcriptExtras(chat) {
     } finally { fs.closeSync(fd); }
     c.size = st.size;
   }
-  return { extra: c.map, times: c.times, agents: c.agents };
+  return { extra: c.map, times: c.times, agents: c.agents, cost: c.cost };
 }
 
 // Every sub-agent of a session the page may show: the transcript's facts, overlaid with what the
@@ -1205,5 +1228,5 @@ async function sendTo(token, text) {
   return { via: 'chat' };
 }
 
-module.exports = { Chat, ctxView, usageView, launchDir, sessionTitles, transcriptExtras, agentUsage, agentFacts, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+module.exports = { Chat, ctxView, usageView, savedSession, launchDir, sessionTitles, transcriptExtras, agentUsage, agentFacts, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };

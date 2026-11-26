@@ -2238,7 +2238,6 @@ function agentRow(p, b, into){
 }
 var AG_STATE={run:'running', err:'failed', stopped:'stopped', done:'done'};
 function fmtTok(n){ return n>=1e6 ? (n/1e6).toFixed(n>=1e7?0:1)+'M' : n>=1e3 ? (n/1e3).toFixed(n>=1e4?0:1)+'k' : String(n); }
-function fmtDur(ms){ var s=Math.max(0,Math.round(ms/1000)); return s<60 ? s+'s' : s<3600 ? Math.floor(s/60)+'m '+('0'+s%60).slice(-2)+'s' : Math.floor(s/3600)+'h '+('0'+Math.floor(s%3600/60)).slice(-2)+'m'; }
 // running · 2m 14s · 18 tools · 48.2k tok · opus-5-5 · Read   (· quiet 1m 05s when nothing came for a while)
 function agentDesc(a){
   var now=Date.now(), n=Math.max(a.steps, a.tools||0), bits=[AG_STATE[a.state]||a.state];
@@ -2627,11 +2626,15 @@ function meter(label, w){
 }
 function usageHtml(o, beh, win){
   var d=o.data, a=d.account||{}, h='';
+  // tokenSource: "claude.ai" (signed in), or the env variable / helper the token comes from
+  var ts=a.tokenSource && a.tokenSource!=='none' ? a.tokenSource : '';
   var auth=a.provider && a.provider!=='firstParty' ? (AUTH_PROVIDERS[a.provider]||a.provider)
-    : a.apiKeySource ? 'API key ('+a.apiKeySource+')' : (a.tokenSource && a.tokenSource!=='none') ? 'Claude account' : '';
+    : a.apiKeySource ? 'API key ('+a.apiKeySource+')'
+    : ts==='claude.ai' || ts==='CLAUDE_CODE_OAUTH_TOKEN' ? 'Claude account'+(ts==='claude.ai'?'':' ('+ts+')')
+    : ts ? 'Auth token ('+ts+')' : '';
   var plan=d.plan ? 'Claude '+d.plan.charAt(0).toUpperCase()+d.plan.slice(1) : '';
-  if(auth||a.email||a.organization||plan){
-    h+='<div class="sh">Account</div>'+(auth?kv('Auth method', esc(auth)):'')+(a.email?kv('Email', esc(a.email)):'')+
+  if(auth||a.endpoint||a.email||a.organization||plan){
+    h+='<div class="sh">Account</div>'+(auth?kv('Auth method', esc(auth)):'')+(a.endpoint?kv('API endpoint', esc(a.endpoint)):'')+(a.email?kv('Email', esc(a.email)):'')+
       (a.organization?kv('Organization', esc(a.organization)):'')+(plan?kv('Plan', esc(plan)):'');
   }
   h+='<div class="sh">Plan usage</div>';
@@ -2645,7 +2648,8 @@ function usageHtml(o, beh, win){
       rows.push(x.utilization!=null ? meter('Extra usage · '+amt(x.used_credits)+' of '+amt(x.monthly_limit), x) : kv('Extra usage', amt(x.used_credits)+' of '+amt(x.monthly_limit)));
     }
     h+=rows.join('')||'<div class="fine">No usage windows reported.</div>';
-  } else h+='<div class="fine">Plan limits don\'t apply to this login (an API key or another provider).</div>';
+  } else h+='<div class="fine">'+(a.endpoint ? 'Plan limits don\'t apply: requests go to '+esc(a.endpoint)+', not to a Claude plan.'
+    : 'Plan limits don\'t apply to this login (an API key or another provider).')+'</div>';
   h+='<div class="sh">This session</div>';
   var s=d.session;
   if(s){
@@ -2655,6 +2659,10 @@ function usageHtml(o, beh, win){
     if(ms.length) h+='<table><tr><th>Model</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th><th>Cost</th></tr>'+ms.map(function(k){
       var m=s.models[k]; return '<tr><td style="font:12px var(--mono)">'+esc(k)+'</td><td>'+ctxK(m.input)+'</td><td>'+ctxK(m.output)+'</td><td>'+ctxK(m.cacheRead)+
         '</td><td>'+ctxK(m.cacheWrite)+'</td><td>'+(m.cost!=null?'$'+Number(m.cost).toFixed(2):'—')+'</td></tr>'; }).join('')+'</table>';
+    var sn=[];
+    if(s.saved) sn.push('Totals saved when the session last stopped.');
+    if(s.unknownCost) sn.push('The cost is an estimate: Claude Code has no prices for some of these models.');
+    if(sn.length) h+='<div class="fine" style="margin-top:8px">'+esc(sn.join(' '))+'</div>';
   } else h+='<div class="fine">'+(o.live?'No totals yet.':'Totals show while the session is running.')+'</div>';
   if(beh===undefined) h+='<div class="sh">What\'s contributing to your limits usage</div><div class="fine">Scanning this box\'s sessions…</div>';
   else if(beh && (beh.day||beh.week)){
