@@ -351,11 +351,13 @@
   .msg .mmeta button{border:0;background:none;color:inherit;cursor:pointer;padding:3px 7px;border-radius:6px;font:inherit}
   .msg .mmeta button:hover{background:var(--hover);color:var(--ink)}
   /* code blocks: floating Run/Copy bar + the run result card */
-  .runbar{position:absolute;z-index:30;display:none;gap:4px;align-items:center;background:var(--card,#1b2030);border:1px solid var(--line);border-radius:8px;padding:2px 6px;font:11.5px var(--sans);box-shadow:0 6px 18px rgba(0,0,0,.18)}
-  .runbar button{border:0;background:none;color:var(--ink);cursor:pointer;font:inherit;padding:3px 6px;border-radius:6px}
-  .runbar button:hover{background:var(--hover)}
-  .runbar button:disabled{opacity:.5;cursor:default}
-  .runbar .rnote{color:var(--mute);font-size:10.5px;padding-right:4px}
+  .codeblk{position:relative}
+  .codeblk .cbar{display:none}
+  .chat .log .codeblk .cbar{display:flex;justify-content:flex-end;gap:4px;margin:6px 0 -4px}
+  .codeblk .cbar button{border:1px solid var(--line);background:var(--panel);color:var(--slate);cursor:pointer;font:600 11.5px var(--sans);padding:3px 9px;border-radius:7px}
+  .codeblk .cbar button:hover{color:var(--ink);border-color:var(--slate)}
+  .codeblk .cbar button[data-cb="term"]{color:var(--iris);border-color:#cfd0f5}
+  .codeblk .cbar button:disabled{opacity:.5;cursor:default}
   .runout{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden;background:var(--card)}
   .runout .rh{display:flex;gap:10px;align-items:center;padding:6px 10px;font:12px var(--mono);color:var(--slate);background:var(--hover)}
   .runout .rc{font-weight:600}
@@ -487,6 +489,8 @@
   #taskd .tbody{padding:4px 22px 16px;overflow:auto;display:flex;flex-direction:column}
   #taskd .nlbl{display:flex;justify-content:space-between;align-items:baseline;margin:14px 0 6px;font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--mute)}
   #taskd .nlbl em{font-style:normal;text-transform:none;letter-spacing:0;font-weight:500;color:var(--slate)}
+  #taskd .nname{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:15px var(--sans);color:var(--ink);background:var(--panel)}
+  #taskd .nname:focus{outline:2px solid var(--iris);outline-offset:-1px;border-color:transparent}
   #taskd .nbox{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
   #taskd .nbox.pop{margin-top:6px;box-shadow:0 16px 40px rgba(14,17,22,.14)}
   #taskd .nq{position:relative;border-bottom:1px solid var(--line)}
@@ -983,11 +987,13 @@
   <div id="taskd" role="dialog" aria-modal="true" aria-label="New session"><div class="tbox">
     <div class="thead"><h2>New session</h2><button class="iconbtn" type="button" id="taskclose" aria-label="Close" title="Close">✕</button></div>
     <div class="tbody">
+      <div class="nlbl">Session name</div>
+      <input class="nname" id="tname" placeholder="How this session is called in the sidebar" autocomplete="off" maxlength="120">
       <div id="tjnote"></div>
-      <div class="nlbl">What are you working on <em id="tqhint">↑↓ to move, Enter to pick</em></div>
+      <div class="nlbl">Jira issue <em id="tqhint">optional · ↑↓ and Enter pick</em></div>
       <div class="picked hidden" id="tpicked"></div>
       <div class="nbox" id="tsearch">
-        <div class="nq"><input id="tq" placeholder="Find a Jira issue, or type what the session is about" autocomplete="off"></div>
+        <div class="nq"><input id="tq" placeholder="Find an issue by key or words" autocomplete="off"></div>
         <div class="nscroll" id="tdlist"></div>
         <div class="jfoot hidden" id="tdnew"></div>
       </div>
@@ -1131,7 +1137,11 @@ function md(src){
     var l=lines[i], m;
     if((m=/^\s*```(\S*)/.exec(l))){ var buf=[]; i++;
       while(i<lines.length && !/^\s*```\s*$/.test(lines[i])) buf.push(lines[i++]); i++;
-      out.push('<pre><code>'+esc(buf.join('\n'))+'</code></pre>'); continue; }
+      // shell-looking blocks get ▶ Terminal / Run in chat (the bar only shows inside a chat log)
+      var shell=/^(|bash|sh|shell|zsh|console|terminal)$/i.test(m[1]);
+      out.push('<div class="codeblk"><div class="cbar">'+(shell?'<button type="button" data-cb="term" title="Run in this session\'s Terminal tab (bash in the session folder)">▶ Terminal</button>'+
+        '<button type="button" data-cb="run" title="Run once in a fresh bash here; the output comes back as a card (2 min limit)">Run</button>':'')+
+        '<button type="button" data-cb="copy" title="Copy the block">Copy</button></div><pre><code>'+esc(buf.join('\n'))+'</code></pre></div>'); continue; }
     if(!l.trim()){ i++; continue; }
     if((m=/^(#{1,6})\s+(.*)$/.exec(l))){ var n=Math.min(4,m[1].length); out.push('<h'+n+'>'+mdInline(m[2])+'</h'+n+'>'); i++; continue; }
     if(/^\s*([-*_])\s*\1\s*\1[\s\1]*$/.test(l)){ out.push('<hr>'); i++; continue; }
@@ -1365,7 +1375,7 @@ function buildChat(p){
 }
 function openChat(p){
   buildChat(p); p.ready=false;          // until the history arrives, sends are queued (it redraws the log)
-  var o={op:'open', key:p.wire}; if(p.token) o.token=p.token; else o.cwd=p.cwd;
+  var o={op:'open', key:p.wire}; if(p.token) o.token=p.token; else { o.cwd=p.cwd; if(p.title) o.title=p.title; }
   wsSend(o);
 }
 // ---- attachments: picked, pasted or dropped files are sent inline (base64) with the message ----
@@ -1596,9 +1606,10 @@ function openSession(tok){
   makePane(tok, {token:tok, cwd:s&&s.cwd, mode:mode});
   activate(tok);
 }
-function newChat(cwd){
+// title: the session's name, picked in the New session dialog (shown at once, kept like a rename)
+function newChat(cwd, title){
   var key='new-'+(++newSeq);
-  makePane(key, {cwd:cwd, mode:'chat'}); activate(key);
+  var p=makePane(key, {cwd:cwd, mode:'chat'}); if(title){ p.title=title; p.firstText=title; } activate(key);
 }
 function newConsole(){ var key='new-'+(++newSeq); makePane(key,{mode:'console'}); activate(key); }
 // Terminal: bash in the container, one persistent tmux session per folder (see claude-web-menu shell:)
@@ -1752,35 +1763,38 @@ document.addEventListener('click', function(e){
     wsSend({op:'fork', key:key, uuid:u});
   }
 });
-// ---- code blocks in chat: a floating bar with ▶ Run / ⧉ Copy ------------------------------
-// Run executes the block in a FRESH bash in the session's folder (one-shot, no state kept,
-// 2 min timeout) and the result comes back as a card in the log. Works over hover (desktop).
-var runbar=document.createElement('div'); runbar.className='runbar'; runbar.style.display='none';
-runbar.innerHTML='<button type="button" data-a="run" title="Run in a fresh bash in the session folder (state is not kept, 2 min limit)">▶ Run</button>'+
-  '<button type="button" data-a="copy" title="Copy the block">⧉ Copy</button><span class="rnote"></span>';
-var runpre=null, runbusy=false;
-document.addEventListener('mouseover', function(e){
-  var pre=e.target.closest && e.target.closest('.chat .log pre');
-  if(!pre || !WSOPEN || runbusy){ if(!runbusy) runbar.style.display='none'; return; }
-  var host=pre.closest('[data-key]'); if(!host){ runbar.style.display='none'; return; }
-  runpre=pre; runbar.dataset.key=host.dataset.key;
-  var r=pre.getBoundingClientRect();
-  runbar.style.display='flex';
-  runbar.style.left=Math.max(8, r.right+window.scrollX-150)+'px';
-  runbar.style.top=(r.top+window.scrollY-26)+'px';
-});
-runbar.addEventListener('mouseleave', function(){ if(!runbusy) runbar.style.display='none'; });
-runbar.addEventListener('click', function(e){
-  var b=e.target.closest('button'); if(!b||!runpre) return;
-  var nb=runbar.querySelector('.rnote');
-  if(b.dataset.a==='copy'){ copyText(runpre.textContent).then(function(){ nb.textContent='copied'; setTimeout(function(){ nb.textContent=''; },1200); }); return; }
-  if(runbusy) return;
-  runbusy=true; b.disabled=true; nb.textContent='running…';
-  wsSend({op:'run', key:runbar.dataset.key, cmd:runpre.textContent.slice(0,4000)});
+// ---- code blocks in chat: ▶ Terminal / Run / Copy above each block -----------------------------
+// ▶ Terminal opens the session's Terminal tab (bash in its folder, a persistent tmux) and types the
+// block there, so the output stays and the shell can be used further. Run executes the block once in
+// a FRESH bash in the session's folder (no state kept, 2 min limit); the result comes back as a card.
+function blockCmd(pre){ return pre.textContent.replace(/^\$ /gm,'').replace(/\s+$/,''); }
+function termRun(p, cmd){
+  if(!paneCwd(p)){ note(p,'This session has no folder yet, so it has no terminal.'); return; }
+  p.tview=true; p.fview=false; activate(p.key);
+  var t0=Date.now();
+  (function wait(){
+    var w=null; try{ w=p.tframe && p.tframe.contentWindow; }catch(e){}
+    if(w && w.cbTerm && w.cbTerm.ready()){ setTimeout(function(){ w.cbTerm.input(cmd+'\r'); }, 300); return; }
+    if(Date.now()-t0<15000) setTimeout(wait, 200); else note(p,'The terminal did not connect; the command was not run.', true);
+  })();
+}
+var runbusy=false;
+document.addEventListener('click', function(e){
+  var b=e.target.closest && e.target.closest('.codeblk [data-cb]'); if(!b) return;
+  var pre=b.closest('.codeblk').querySelector('pre'), host=b.closest('[data-key]'), p=host&&WIRE[host.dataset.key];
+  var cmd=blockCmd(pre);
+  if(b.dataset.cb==='copy'){ copyText(pre.textContent).then(function(){ b.textContent='Copied'; setTimeout(function(){ b.textContent='Copy'; }, 1200); }); return; }
+  if(!p) return;
+  if(b.dataset.cb==='term'){ termRun(p, cmd.slice(0,4000)); return; }
+  if(b.dataset.cb==='run'){
+    if(runbusy) return;
+    runbusy=true; b.disabled=true; b.textContent='Running…';
+    wsSend({op:'run', key:p.wire, token:p.token||undefined, cmd:cmd.slice(0,4000)});
+  }
 });
 function runResult(p, o){
-  runbusy=false; runbar.style.display='none';
-  var nb=runbar.querySelector('.rnote'); if(nb){ nb.textContent=''; var rb=runbar.querySelector('[data-a="run"]'); if(rb) rb.disabled=false; }
+  runbusy=false;
+  [].forEach.call(document.querySelectorAll('.codeblk [data-cb="run"][disabled]'), function(b){ b.disabled=false; b.textContent='Run'; });
   before(p);
   var d=el('div','runout'+(o.code?' err':''));
   var codeTxt=(o.code===0?'exit 0':'exit '+(o.code==null?'?':o.code));
@@ -2944,7 +2958,7 @@ function renderList(force){
   var h='';
   pend.forEach(function(k){ var p=PANES[k];
     h+='<div class="row pend'+(k===ACTIVE?' active':'')+'" data-key="'+esc(k)+'"><span class="dot"></span>'+
-       '<span class="nm">'+(p.shell?'&gt;_ Terminal':'New session')+(p.cwd?' · '+esc(base(p.cwd)):'')+'</span></div>'; });
+       '<span class="nm">'+(p.shell?'&gt;_ Terminal':p.title?esc(p.title):'New session')+(p.cwd&&!p.title?' · '+esc(base(p.cwd)):'')+'</span></div>'; });
   // user categories (in their saved order); members newest first
   h+='<div class="sectlbl">Categories<button type="button" data-act="newcat" title="New category">＋</button></div>';
   if(!CATS.cats.length) h+='<div class="drop zone" data-cat="__new">Drag a session here to create a category</div>';
@@ -3302,13 +3316,19 @@ function fjoin(a,b){ return a?a+'/'+b:b; }
 function fparent(r){ var i=r.lastIndexOf('/'); return i<0?'':r.slice(0,i); }
 function fabs(r){ return r?WSDATA.root+'/'+r:WSDATA.root; }
 function wsGet(u){ return fetch(u).then(function(r){ return r.json().then(function(o){ if(!r.ok) throw new Error(o.error||'failed'); return o; }); }); }
+// A listing answers for the folder it was asked for: an older request that comes back after the
+// view moved on (e.g. the root list from page load, after a session's Files opened its folder) is
+// dropped instead of replacing the current folder's rows under its breadcrumbs.
 function loadDirs(){
-  return wsGet('workspace/ls?hidden=1&p='+encodeURIComponent(FREL)).then(function(o){   // dotfiles too
+  var rel=FREL;
+  return wsGet('workspace/ls?hidden=1&p='+encodeURIComponent(rel)).then(function(o){   // dotfiles too
+    if(rel!==FREL) return;
     WSDATA={root:o.root, rel:o.rel, path:o.path, entries:o.entries, jobs:o.jobs, dirs:o.entries.filter(function(e){ return e.dir; })};
     $('wsroot').textContent=o.root||'';
     Object.keys(FSEL).forEach(function(k){ if(!o.entries.some(function(e){ return fjoin(FREL,e.name)===k; })) delete FSEL[k]; });
     renderDirs(); renderJobs(); loadSizes();
   }).catch(function(e){
+    if(rel!==FREL) return;
     if(FREL){ FREL=fparent(FREL); syncUrl(); return loadDirs(); }       // the folder is gone: go up
     $('dirs').innerHTML='<div class="empty">Failed to list the folder: '+esc(e.message)+'</div>';
   });
@@ -3809,7 +3829,7 @@ function openTask(t, extra){
   var ss=ROWS.filter(function(s){ return s.cwd===t.path; }).sort(function(a,b){ return (b.lastActivity||0)-(a.lastActivity||0); });
   if(ss.length){ openSession(ss[0].token); return; }
   if(!CHAT_ON){ newConsole(); return; }
-  newChat(t.path);
+  newChat(t.path, t.title);
   var p=PANES[ACTIVE]; if(p && p.ta && !p.ta.value){ p.ta.value=(extra?extra+'\n\n':'')+taskPrompt(t); p.ta.dispatchEvent(new Event('input')); p.ta.focus(); }
 }
 function openTaskMenu(slug, anchor){
@@ -3892,9 +3912,9 @@ function jiraItem(i){
 }
 function jiraMatch(i, ql){ return !ql || (i.key+' '+i.title).toLowerCase().indexOf(ql)>=0; }
 function openTaskDialog(){
-  $('taskd').classList.add('on'); $('tq').value=''; TD.found=null; TD.foundQ=''; TD.pick=null; TD.hl=0; TD.starting=false;
+  $('taskd').classList.add('on'); $('tq').value=''; $('tname').value=''; TD.found=null; TD.foundQ=''; TD.pick=null; TD.hl=0; TD.starting=false;
   TDR=[]; $('tdrq').value=''; repoPop(false);
-  renderTaskDialog(); $('tq').focus();
+  renderTaskDialog(); $('tname').focus();
   fetch('panel').then(function(r){ return r.json(); }).then(function(o){
     var a=(o&&o.agent)||{}; TD.mine=(a.jira||[]).map(jiraItem); TD.connected=a.sources?!!a.sources.jira:null; renderTaskDialog();
   }).catch(function(){});
@@ -3937,8 +3957,8 @@ function renderTaskDialog(){
   $('tqhint').classList.toggle('hidden', picked);
   if(picked){
     var p=TD.pick;
-    $('tpicked').innerHTML=(p.key?'<span class="k">'+esc(p.key)+'</span>':'<span class="k">'+(p.create?'New Jira issue':'No Jira')+'</span>')+
-      '<span class="t">'+esc(p.title)+'</span><button type="button" class="linkbtn" id="tchange">Change</button>';
+    $('tpicked').innerHTML='<span class="k">'+(p.key?esc(p.key):'New Jira issue')+'</span>'+
+      '<span class="t">'+esc(p.key?p.title:'created by the session first thing')+'</span><button type="button" class="linkbtn" id="tchange">Change</button>';
   } else {
     var q=$('tq').value.trim(), ql=q.toLowerCase(), h='', seen={};
     var mine=TD.mine.filter(function(i){ return jiraMatch(i, ql); });
@@ -3956,12 +3976,10 @@ function renderTaskDialog(){
       else if(!TD.busy) h+='<div class="muted">Searching when you stop typing…</div>';
     }
     var keep=$('tdlist').scrollTop; $('tdlist').innerHTML=h; $('tdlist').scrollTop=keep;
-    $('tdnew').innerHTML=q?'<button type="button" class="jrow new" data-tact="create">＋ Create a Jira issue “'+esc(q)+'”</button>'+
-      '<button type="button" class="jrow plain" data-tact="plain">Without Jira: a session about “'+esc(q)+'”</button>':'';
-    $('tdnew').classList.toggle('hidden', !q);
+    $('tdnew').innerHTML='<button type="button" class="jrow new" data-tact="create">＋ Create a new Jira issue for this session</button>';
+    $('tdnew').classList.remove('hidden');
     tdHighlight(false);
   }
-  $('trsel').disabled=!picked; $('trlbl').classList.toggle('dis', !picked); $('trsel').classList.toggle('dis', !picked);
   renderTdRepos(); tdSummary();
 }
 // keyboard: ↑↓ move through the issue rows and the two "new" rows, Enter picks
@@ -3975,19 +3993,21 @@ function tdHighlight(scroll){
 function tdPick(b){
   var a=b.dataset.tact, q=$('tq').value.trim();
   if(a==='pick') TD.pick={key:b.dataset.key, title:b.dataset.title, url:b.dataset.url, status:b.dataset.status};
-  else if(a==='create') TD.pick={create:true, title:q};
-  else if(a==='plain') TD.pick={plain:true, title:q};
+  else if(a==='create') TD.pick={create:true};
   else return;
-  renderTaskDialog(); repoPop(true);
+  // the issue's title is a good first guess for the name; whatever the user typed stays
+  if(!$('tname').value.trim()) $('tname').value=TD.pick.key ? TD.pick.title : q;
+  renderTaskDialog();
+  if(!$('tname').value.trim()) $('tname').focus(); else repoPop(true);
 }
 function tdSummary(){
-  var s=$('tdsum'), p=TD.pick;
+  var s=$('tdsum'), p=TD.pick, name=$('tname').value.trim();
   if(TD.starting) return;
-  if(!p){ s.textContent='Pick an issue or type what the session is about'; $('tdgo').disabled=true; return; }
-  $('tdgo').disabled=false;
+  $('tdgo').disabled=!name;
+  if(!name){ s.textContent='Name the session to start it'; return; }
   var n=TDR.length;
   s.innerHTML=(n?n+' repositor'+(n>1?'ies':'y')+', a worktree each on the task\'s branch':'No repositories yet (you can add them later)')+
-    (p.key?' · <code>/jira-check '+esc(p.key)+'</code> goes into the message box':'');
+    (p&&p.key?' · <code>/jira-check '+esc(p.key)+'</code> goes into the message box':'');
 }
 // ---- repositories: a field that opens a list with checkboxes; selected first, then the repos already
 // in the workspace (repos/), then everything this GitHub account can reach
@@ -4049,9 +4069,9 @@ $('tdrlist').addEventListener('click', function(e){
   renderTdRepos();
 });
 function tdStart(){
-  var p=TD.pick; if(!p || TD.starting) return;
-  var body=p.key?{key:p.key, title:p.title, url:p.url}:{key:'', title:p.title};
-  var extra=p.create?'First create a Jira issue for this task with the summary “'+p.title+
+  var p=TD.pick||{}, name=$('tname').value.replace(/\s+/g,' ').trim(); if(!name || TD.starting) return;
+  var body={key:p.key||'', title:name, url:p.url||''};
+  var extra=p.create?'First create a Jira issue for this task with the summary “'+name+
     '” (in the project my recent issues are in; ask me if that is unclear), tell me its key, then continue.':'';
   body.repos=TDR.map(function(r){ return r.url?{url:r.url}:r.name; });
   TD.starting=true; $('tdgo').disabled=true; repoPop(false);
@@ -4073,6 +4093,8 @@ $('tpicked').addEventListener('click', function(e){
   TD.pick=null; repoPop(false); renderTaskDialog(); $('tq').focus();
 });
 $('tdgo').addEventListener('click', tdStart);
+$('tname').addEventListener('input', tdSummary);
+$('tname').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); if(e.metaKey||e.ctrlKey) tdStart(); else if(TD.pick) repoPop(true); else $('tq').focus(); } });
 $('taskbtn').addEventListener('click', openTaskDialog);
 $('taskclose').addEventListener('click', closeTaskDialog);
 $('taskcancel').addEventListener('click', closeTaskDialog);

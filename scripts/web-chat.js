@@ -18,6 +18,7 @@
 //     {op:'interrupt', key}            stop the current turn
 //     {op:'perm', key, id, allow, always?, answers?}   answer a permission / question request
 //     {op:'mode', key, mode}           permission mode (default|acceptEdits|plan|auto)
+//     {op:'open', key, cwd, title}     a new session; title = its name (kept like /rename)
 //     {op:'model', key, model}         "provider/model id" (web-models.js): same provider switches
 //                                      live; another provider restarts the process and resumes
 //     {op:'release', key}              stop the chat process (before switching to console)
@@ -323,6 +324,9 @@ class Chat {
       this.info.permissionMode = m.permissionMode; this.emit({ ev: 'info', info: this.info });
     }
     if (m.type === 'result') {
+      // a name picked when the session was opened (New session dialog): written like /rename once
+      // the transcript exists, so Claude's own generated title does not replace it
+      if (this.customTitle && this.cid) { const t = this.customTitle; this.customTitle = null; setTitle(this.cid, this.cwd, t).catch((e) => log(this.name, 'title', e.message)); }
       this.info.cost = m.total_cost_usd; this.emit({ ev: 'info', info: this.info });
       measureCtx(this);
       this.turn = [];
@@ -631,7 +635,11 @@ async function chatFor(msg) {
   }
   const cwd = msg.cwd && path.resolve(msg.cwd);
   if (!cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('folder not found: ' + msg.cwd);
-  return new Chat({ cwd, name: 'chat-' + sanitizeName(path.basename(cwd)) + '-' + Date.now().toString(36).slice(-4) + (++newSeq) });
+  const chat = new Chat({ cwd, name: 'chat-' + sanitizeName(path.basename(cwd)) + '-' + Date.now().toString(36).slice(-4) + (++newSeq) });
+  // a name picked for the new session: shown right away (registry title) and kept (customTitle)
+  const title = String(msg.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (title) { chat.pendingTitle = title; chat.customTitle = title; }
+  return chat;
 }
 
 function onConnection(ws) {
@@ -813,19 +821,19 @@ function sessionTitles(cid, cwd) {
   return t;
 }
 
+async function setTitle(cid, cwd, title) {
+  await sdkReady;
+  if (sdk && sdk.renameSession) { await sdk.renameSession(cid, title, { dir: cwd }); return; }
+  const f = transcriptPath(cid, cwd);                                           // SDK unavailable: same entry by hand
+  if (!f) throw new Error('transcript not found');
+  fs.appendFileSync(f, JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: cid }) + '\n');
+}
 async function rename(token, title) {
   title = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
   if (!title) throw new Error('empty title');
   const rec = await registry.get(token);
   if (!rec || !rec.claudeSessionId) throw new Error('unknown session');
-  await sdkReady;
-  if (sdk && sdk.renameSession) {
-    await sdk.renameSession(rec.claudeSessionId, title, { dir: rec.cwd });
-  } else {                                                                      // SDK unavailable: same entry by hand
-    const f = transcriptPath(rec.claudeSessionId, rec.cwd);
-    if (!f) throw new Error('transcript not found');
-    fs.appendFileSync(f, JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: rec.claudeSessionId }) + '\n');
-  }
+  await setTitle(rec.claudeSessionId, rec.cwd, title);
   return title;
 }
 
