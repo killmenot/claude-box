@@ -223,9 +223,14 @@ function serveFile(res, rel, download) {
   const ext = path.extname(p).toLowerCase(), name = path.basename(p);
   let type = TYPES[ext] || (looksText(p) ? 'text/plain; charset=utf-8' : 'application/octet-stream');
   if (ext === '.svg') type = 'text/plain; charset=utf-8';          // never run a workspace SVG's scripts on our origin
+  // An HTML report (a link in chat) is shown as a page, but sandboxed: an opaque origin with no
+  // scripts, so it can neither run code nor reach the launcher's cookies or API.
+  const page = !download && (ext === '.html' || ext === '.htm') && type.startsWith('text/plain');
+  if (page) type = 'text/html; charset=utf-8';
   const inline = !download && type !== 'application/octet-stream';
   res.writeHead(200, { 'content-type': type, 'content-length': st.size, 'x-content-type-options': 'nosniff',
-    'content-security-policy': "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    'content-security-policy': (page ? 'sandbox; ' : '') +
+      "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; font-src data:; frame-ancestors 'self'",
     'content-disposition': (inline ? 'inline' : 'attachment') + "; filename*=UTF-8''" + encodeURIComponent(name) });
   fs.createReadStream(p).on('error', () => res.destroy()).pipe(res);
 }

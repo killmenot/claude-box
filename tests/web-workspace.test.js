@@ -59,3 +59,33 @@ test('sizes: each folder gets its du total, tasks/ is listed at the root, repos/
   assert.ok(!names.includes('repos'));
   await assert.rejects(() => ws.sizes('../etc'), /invalid path|outside/);
 });
+
+// serveFile only writes headers and pipes the file: a stand-in response that records them
+function fakeRes() {
+  const { PassThrough } = require('stream');
+  const res = new PassThrough();
+  res.writeHead = (code, h) => { res.code = code; res.headers = h; };
+  return res;
+}
+
+test('serveFile: an HTML file is a sandboxed page (no scripts, opaque origin); download stays an attachment', () => {
+  fs.writeFileSync(path.join(tmp, 'report.html'), '<h1>hi</h1><script>alert(1)</script>');
+  const r = fakeRes(); ws.serveFile(r, 'report.html', false);
+  assert.strictEqual(r.headers['content-type'], 'text/html; charset=utf-8');
+  assert.match(r.headers['content-security-policy'], /^sandbox; default-src 'none'/);
+  assert.doesNotMatch(r.headers['content-security-policy'], /script-src|allow-/);
+  assert.match(r.headers['content-disposition'], /^inline/);
+  const d = fakeRes(); ws.serveFile(d, 'report.html', true);
+  assert.match(d.headers['content-disposition'], /^attachment/);
+  assert.doesNotMatch(d.headers['content-type'], /html/);
+});
+
+test('serveFile: other text stays text/plain without a sandbox; SVG is never a document', () => {
+  fs.writeFileSync(path.join(tmp, 'notes.md'), '# notes');
+  fs.writeFileSync(path.join(tmp, 'pic.svg'), '<svg onload="alert(1)"/>');
+  const r = fakeRes(); ws.serveFile(r, 'notes.md', false);
+  assert.strictEqual(r.headers['content-type'], 'text/plain; charset=utf-8');
+  assert.doesNotMatch(r.headers['content-security-policy'], /sandbox/);
+  const s = fakeRes(); ws.serveFile(s, 'pic.svg', false);
+  assert.strictEqual(s.headers['content-type'], 'text/plain; charset=utf-8');
+});

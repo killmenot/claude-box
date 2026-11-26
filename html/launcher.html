@@ -651,6 +651,8 @@
   a.mdimg{display:inline-block;max-width:100%;margin:6px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden;line-height:0;background:var(--hover)}
   a.mdimg img{display:block;max-width:100%;max-height:480px;object-fit:contain}
   a.mdimg.broken{line-height:1.4;padding:6px 10px;font-size:12px;color:var(--mute)}
+  a.vsc{margin-left:3px;font-size:.85em;text-decoration:none;color:var(--mute)}
+  a.vsc:hover{color:var(--iris)}
   .note{margin:10px 0;color:var(--mute);font-size:13px;text-align:center}
   .note.older{cursor:pointer;opacity:.8}
   .chat .loading{color:var(--mute);font-size:13px;padding:22px 0;text-align:center;animation:pulse 1.2s ease-in-out infinite}
@@ -1054,6 +1056,23 @@ function imgHtml(src, alt){
   var u=imgSrc(src); if(!u) return esc(alt||src);
   return '<a class="mdimg" href="'+esc(u)+'" target="_blank" rel="noopener" title="'+esc(src)+'"><img src="'+esc(u)+'" alt="'+esc(alt||'')+'" loading="lazy"></a>';
 }
+// A file link in chat, [text](path): the path is relative to the open session's folder (or
+// absolute, or file://), may end in #L42. Only paths inside the workspace become links: they open
+// in the launcher (data-ws) and, on the box's own machine, in VS Code. -> {rel, line} or null
+function localTarget(u){
+  u=String(u||'').trim();
+  if(/^file:\/\//i.test(u)) u=u.slice(7);
+  else if(/^([a-z][a-z0-9+.-]*:|[#?]|\/\/)/i.test(u)) return null;     // other schemes, anchors
+  var m=/#L(\d+)/.exec(u), line=m?m[1]:'';
+  u=u.replace(/[#?].*$/,'');
+  try{ u=decodeURIComponent(u); }catch(e){}
+  if(!u || u.indexOf('\0')>=0) return null;
+  if(u[0]!=='/'){ var p=PANES[ACTIVE], cwd=(p&&p.cwd)||(p&&p.info&&p.info.cwd)||''; if(!cwd) return null; u=cwd+'/'+u; }
+  var parts=[]; u.split('/').forEach(function(x){ if(!x||x==='.') return; if(x==='..') parts.pop(); else parts.push(x); });
+  var abs='/'+parts.join('/'), root=WS_ROOT.replace(/\/+$/,'');
+  if(abs!==root && abs.indexOf(root+'/')!==0) return null;
+  return {rel:abs===root?'':abs.slice(root.length+1), line:line};
+}
 function mdInline(s){
   var keep=[];
   function hold(html){ keep.push(html); return '\u0000'+(keep.length-1)+'\u0000'; }
@@ -1064,8 +1083,18 @@ function mdInline(s){
     var t=c.trim();
     if(/^(\/|~\/)\S+$/.test(t) && IMG_EXT.test(t) && t[0]==='/') return hold('<a href="'+esc(imgSrc(t))+'" target="_blank" rel="noopener" title="Open the image"><code>'+esc(c)+'</code></a>');
     return hold('<code>'+esc(c)+'</code>'); });
-  s=s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+)\)|(^|[\s(])(https?:\/\/[^\s<>")\u0000]+)/g,
-    function(_,t,u,pre,bare){ return u ? link(u,t) : pre+link(bare,bare); });
+  function fileLink(t, text){
+    var h='<a href="workspace/file?p='+encodeURIComponent(t.rel)+'" target="_blank" rel="noopener" data-ws="'+esc(t.rel)+'">'+esc(text)+'</a>';
+    if(WS_HOST) h+='<a class="vsc" href="'+esc('vscode://file'+encodeURI(WS_HOST.replace(/\/+$/,'')+(t.rel?'/'+t.rel:''))+(t.line?':'+t.line:''))+
+      '" title="Open in VS Code on this computer">↗</a>';
+    return hold(h);
+  }
+  // web links, file links ([text](path), see localTarget) and bare URLs, in one pass
+  s=s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)\u0000]+)\)|\[([^\]]+)\]\(<?([^\s()<>\u0000]+)>?\)|(^|[\s(])(https?:\/\/[^\s<>")\u0000]+)/g,
+    function(all,t,u,lt,lu,pre,bare){
+      if(u) return link(u,t);
+      if(lt!=null){ var f=localTarget(lu); return f ? fileLink(f,lt) : all; }
+      return pre+link(bare,bare); });
   s=esc(s)
     .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
     .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g,'$1<em>$2</em>');
@@ -1118,6 +1147,24 @@ document.addEventListener('error', function(e){
   var a=im.parentNode; a.classList.add('broken'); a.textContent='🖼 image not available: '+(a.title||im.alt||'');
 }, true);
 
+// a file link in chat (data-ws, a workspace-relative path): a folder opens in the session's Files
+// view, HTML / media in a new tab (decided up front: a popup must open within the click), any
+// other file in the text editor. A modified click keeps the browser's own new-tab behaviour.
+document.addEventListener('click', function(e){
+  var a=e.target.closest && e.target.closest('a[data-ws]');
+  if(!a || e.button!==0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  var rel=a.getAttribute('data-ws');
+  if(/\.html?$/i.test(rel) || NOEDIT.test(rel)){ fraw(rel); return; }
+  wsGet('workspace/ls?hidden=1&p='+encodeURIComponent(rel)).then(function(){ showFolder(rel); }, function(){ fedOpen(rel); });
+});
+function showFolder(rel){
+  var p=PANES[ACTIVE];
+  if(!p){ fnav(rel); return; }
+  p.fmRel=rel;
+  if(p.fview) fnav(rel); else { p.fview=true; activate(p.key); }
+}
+
 function statusClass(s){ if(!s.live) return 'stop'; if(s.state==='waiting') return 'wait';
   if(s.state==='working') return 'work'; return 'live'; }
 function dispName(s){ var t=(s.title||'').trim(); return t || s.name || s.token; }
@@ -1128,6 +1175,8 @@ var PANES={};          // key (token, or "new-N" until Claude reports the sessio
 var INBOX={open:false, data:null, by:{}, filter:'all', reply:{}, busy:{}, err:{}, timer:null, sig:''};   // Inbox view state (see the Inbox section)
 var ACTIVE=null;       // active pane key; null -> the "new session" page
 var CHAT_ON=false;     // web chat available on the server
+var WS_ROOT='/workspace';   // the workspace folder inside the box (chat/info)
+var WS_HOST='';        // the same folder on the host, only while this browser runs there (VS Code links)
 var MAXCONSOLES=8;     // console iframes kept warm (each holds a websocket + a tmux client)
 var newSeq=0;
 var CLOSED=JSON.parse(ls('cb.closed')||'{}');
@@ -4077,6 +4126,10 @@ $('scrim').addEventListener('click', function(){ $('app').classList.remove('draw
 
 fetch('chat/info').then(function(r){ return r.ok?r.json():{}; }).catch(function(){ return {}; }).then(function(i){
   CHAT_ON=!!(i&&i.enabled);
+  if(i&&i.workspace) WS_ROOT=i.workspace;
+  // a vscode:// link opens the path on the machine the browser runs on: only offer it when that is
+  // the box's own host (a loopback address), not over a tunnel or from another device
+  WS_HOST=(i&&i.workspaceHost&&/^(localhost|127(\.\d+){3}|\[::1\])$/.test(location.hostname))?i.workspaceHost:'';
   wsConnect();
   var s=new URLSearchParams(location.search).get('s');
   fetch('sessions').then(function(r){ return r.ok?r.json():[]; }).catch(function(){ return []; }).then(function(rows){
