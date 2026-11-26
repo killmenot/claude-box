@@ -300,13 +300,19 @@ const handler = (req, res) => {
     if (path === '/jira-auth') {
       // Drive `claude mcp login atlassian` for the onboarding step: start → {url}; paste the
       // redirected URL back in → the login completes; status → is the server connected now.
+      // The login command requires a TTY, so we use the `script` command to provide a pseudo-terminal.
       const { spawn } = require('child_process');
       const { execFile } = require('child_process');
       readJson(req, 16384, (o) => {
         const act = o && o.act;
         if (req.method === 'POST' && act === 'start') {
           if (jiraLogin && jiraLogin.child) { json(res, 200, { url: jiraLogin.url || '' }); return; }
-          const child = spawn('claude', ['mcp', 'login', 'atlassian'], { stdio: ['pipe', 'pipe', 'pipe'] });
+          // Use `script -q -c` to run the command in a pseudo-terminal and capture output
+          // -q: quiet mode (no header/trailer), -c: command to run, -f: output to stdout
+          const child = spawn('script', ['-q', '-f', '-', '-c', 'claude mcp login atlassian'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: Object.assign({}, process.env, { TERM: 'xterm-256color' })
+          });
           jiraLogin = { child, url: '', buf: '' };
           const collect = (d) => {
             jiraLogin.buf += String(d);
