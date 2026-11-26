@@ -26,6 +26,7 @@ Guidance for Claude Code (and other agents) working in this repository.
   `scripts/web-models.js` — model providers (Claude, GLM, Abliteration, custom) and each chat's model; keys in `~/.claude/web-providers.json` (`/models`).
   `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with a git worktree per repo of `/workspace/repos`, kept fresh by a fetch timer), served at `/tasks`.
   `scripts/cb-mcp.js` — the box's own MCP server (`claude-box`): `show_artifact` for the artifact panel; `scripts/web-artifact.js` serves those files sandboxed at `/artifact/`.
+  `scripts/web-browser.js` — the session's Browser tab: one Chromium for the box (only with `./claude-box --browser`) on Xvfb, shown via x11vnc on a unix socket + noVNC at `/browser/`; Claude's playwright MCP drives it over CDP.
   `scripts/web-code.js` — the session's Code tab: code-server (only with `./claude-box --vscode`) on a private unix socket, proxied at `/code/`.
   `scripts/claude-default.sh` — starts console `claude` with the default model and, in a task folder, its repos as `--add-dir`.
 - `claude-defaults/` — seeded into `~/.claude` at startup: `settings.json` (once), `mcp.json` (merged every start),

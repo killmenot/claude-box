@@ -1,0 +1,16 @@
+# Overlay for `./claude-box --browser` (per start, not remembered): the image is built with Chromium,
+# Xvfb, x11vnc and noVNC, and the web UI shows the Browser tab (one Chromium for the whole box, see
+# scripts/web-browser.js). Claude's playwright MCP tools then drive that same browser.
+# seccomp-browser.json is Docker's default profile (github.com/moby/profiles, seccomp/default.json)
+# with one rule added: clone/unshare/setns are allowed without CAP_SYS_ADMIN, so Chromium can build its
+# own sandbox from user namespaces. Without it Chromium would need --no-sandbox; the box's processes
+# keep no capabilities either way (web-entry.sh drops them all).
+services:
+  web:
+    build:
+      args:
+        BROWSER: "1"
+    environment:
+      - WEB_BROWSER=1
+    security_opt:
+      - seccomp=./seccomp-browser.json

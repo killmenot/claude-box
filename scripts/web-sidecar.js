@@ -17,6 +17,7 @@
 //   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
 //   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
+//   /browser     -> the built-in browser (web-browser.js, only with ./claude-box --browser): viewer page, noVNC, WS /browser/websockify
 //   /artifact    -> the artifact panel's files (web-artifact.js): GET /artifact/f/<abs path>, /artifact/stat?p=
 //   /code        -> VS Code (code-server) for the Code tab, only with ./claude-box --vscode (web-code.js); POST /codetheme {theme}
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
@@ -32,6 +33,7 @@ const { search } = require('./web-search.js');
 const webGuard = require('./web-guard.js');
 const code = require('./web-code.js');
 const artifact = require('./web-artifact.js');
+const browser = require('./web-browser.js');
 const guard = webGuard.makeGuard();
 
 // The address the listeners bind to inside the container. WEB_LISTEN_ADDR is set only by the
@@ -210,6 +212,12 @@ const handler = (req, res) => {
       res.end(); return;
     }
     const path = req.url.split('?')[0];
+    if (path === '/browser/status') { browser.status().then((st) => json(res, 200, st)); return; }
+    if (path === '/browser' || path.startsWith('/browser/')) {
+      if (!browser.enabled()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('The browser is off: start claude-box with --browser'); return; }
+      if (path === '/browser') { res.writeHead(302, { location: '/browser/' }); res.end(); return; }
+      browser.serve(req, res, path.slice('/browser'.length)); return;
+    }
     if (path.startsWith('/artifact/f/')) { artifact.serve(req, res, req.url.split('?')[0].slice('/artifact/f'.length)); return; }
     if (path === '/artifact/stat') {
       const q = new URL(req.url, 'http://x').searchParams.get('p') || '';
@@ -449,7 +457,7 @@ const handler = (req, res) => {
     }
     if (path === '/chat/info') {
       if (!chat) { json(res, 200, { enabled: false, error: 'chat module not loaded' }); return; }
-      chat.info().then((i) => json(res, 200, Object.assign({}, i, { code: code.enabled() })), () => json(res, 200, { enabled: false, code: code.enabled() }));
+      chat.info().then((i) => json(res, 200, Object.assign({}, i, { code: code.enabled(), browser: browser.enabled() })), () => json(res, 200, { enabled: false, code: code.enabled(), browser: browser.enabled() }));
       return;
     }
     if (path === '/dirs') { json(res, 200, chat ? chat.dirs() : []); return; }
@@ -717,6 +725,10 @@ function onUpgrade(req, socket, head) {
     if (denied) { socket.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
     const a = auth(req);
     if (!a.ok) { socket.end(a.status === 429 ? 'HTTP/1.1 429 Too Many Requests\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
+    if (req.url.split('?')[0] === '/browser/websockify') {
+      if (!browser.enabled()) { socket.end('HTTP/1.1 404 Not Found\r\n\r\n'); return; }
+      browser.upgrade(req, socket, head); return;
+    }
     if (/^\/code(\/|$)/.test(req.url.split('?')[0])) {
       if (!code.enabled()) { socket.end('HTTP/1.1 404 Not Found\r\n\r\n'); return; }
       code.upgrade(req, socket, head); return;
@@ -748,6 +760,8 @@ function start(opts) {
   if (opts.apiToken) auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cookie: COOKIE, apiToken: opts.apiToken });
   const tls = loadTls();
   if (tasks && tasks.startSync && !opts.noRepoSync) tasks.startSync();     // keep /workspace/repos fresh
+  // the built-in browser is up from the start, so Claude's playwright tools find it before anyone opens the tab
+  if (browser.enabled()) browser.ensure().then(() => console.error('browser: up'), (e) => console.error('browser:', e.message));
   const servers = [];
   // requestTimeout 0: large uploads to the Workspace file manager may take longer than Node's 5 min default
   const httpServer = http.createServer({ requestTimeout: 0 }, handler);

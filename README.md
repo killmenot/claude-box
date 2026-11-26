@@ -66,7 +66,21 @@ session's `.artifacts/` and calls `show_artifact` (the box's own MCP server, `sc
 chat gets a card, and the page opens in a panel on the right: every call is a version (v1, v2, …), the
 latest reloads when the file changes, ⤢ widens it, ↗ opens it in a tab. Everything stays in the box
 (nothing goes to claude.ai) and works with any model. The page is served from `/artifact/f/…` in a CSP
-sandbox: it runs its scripts but cannot read the box's cookies or call its API.
+sandbox: it runs its scripts but cannot read the box's cookies or call its API. Drag the panel's left
+edge to resize it (kept per browser; double-click resets).
+
+**Browser** (`./claude-box --browser`): that start builds the image with Chromium (a virtual display,
+x11vnc and noVNC; a few hundred MB more) and every session gets a **Browser** tab: one Chromium for the
+whole box, shown live, where you click, type and sign in like in any browser. The profile (logins,
+cookies) is kept in `home/.config/claude-box-browser`, so a login survives restarts and serves every
+session. Claude drives the same browser with its `playwright` tools (pointed at it with
+`--cdp-endpoint`); while it does, the tab shows a pill with **Stop Claude**. The screen goes through
+`/browser/` behind the claude-box login (VNC on a private unix socket, no port). Chromium keeps its own
+sandbox: `docker-compose.browser.yml` runs the box with `seccomp-browser.json`, Docker's default profile
+plus one rule for the namespaces it needs. Hardware keys (YubiKey, passkeys) do not reach it; sign in
+with a password and a code. Its DevTools port is on 127.0.0.1 inside the container: in the Linux host
+network mode that is the host's loopback, so other local users of that host could reach it. Like
+`--vscode`, the flag is not remembered.
 The login and password can be changed later in **Settings → Access**; they are kept as a scrypt hash
 in `home/.claude/web-auth.json`. An older `WEB_TERMINAL_PASSWORD` in `.env` still works until one is
 set in the UI. `--tunnel` refuses to start until a login exists.

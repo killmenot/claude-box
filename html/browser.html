@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browser · claude-box</title>
+<style>
+  /* The built-in browser's screen (scripts/web-browser.js): noVNC draws the box's Chromium here,
+     scaled to fit; mouse, keyboard and the clipboard go back to it. */
+  :root{ --bg:#0e1116; --fg:#cdd2dc; --mute:#8a93a2; --iris:#8080f0; }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
+  #screen{position:absolute;inset:0}
+  #msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--mute);pointer-events:none}
+  #msg b{color:var(--fg);font-weight:600}
+  #msg.hidden{display:none}
+</style>
+</head>
+<body>
+<div id="screen"></div>
+<div id="msg"><b>Starting the browser…</b><span>Chromium in the box, shared by every session</span></div>
+<script type="module">
+import RFB from './core/rfb.js';
+const screen = document.getElementById('screen'), msg = document.getElementById('msg');
+const url = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + location.pathname.replace(/[^/]*$/, '') + 'websockify';
+let rfb = null, retry = 0;
+function say(title, sub) { msg.classList.toggle('hidden', !title); msg.innerHTML = title ? '<b>' + title + '</b><span>' + (sub || '') + '</span>' : ''; }
+function connect() {
+  rfb = new RFB(screen, url, { wsProtocols: ['binary'] });
+  rfb.scaleViewport = true; rfb.resizeSession = false; rfb.focusOnClick = true; rfb.background = '#0e1116';
+  rfb.addEventListener('connect', () => { retry = 0; say(''); });
+  rfb.addEventListener('disconnect', () => {
+    rfb = null;
+    say('Reconnecting to the browser…', 'If it does not come back, the box may have been started without --browser');
+    setTimeout(connect, Math.min(5000, 500 * (++retry)));
+  });
+  // the browser's clipboard -> this computer's (needs https; the page must have focus)
+  rfb.addEventListener('clipboard', (e) => { try { navigator.clipboard.writeText(e.detail.text).catch(() => {}); } catch (_) {} });
+}
+// this computer's clipboard -> the browser: on paste, and when the tab gets focus
+document.addEventListener('paste', (e) => { const t = e.clipboardData && e.clipboardData.getData('text'); if (t && rfb) rfb.clipboardPasteFrom(t); });
+window.addEventListener('focus', () => { try { navigator.clipboard.readText().then((t) => { if (t && rfb) rfb.clipboardPasteFrom(t); }, () => {}); } catch (_) {} });
+// the launcher calls this when the tab is shown, so typing goes to the browser at once
+window.cbBrowser = { focus() { if (rfb) rfb.focus(); } };
+connect();
+</script>
+</body>
+</html>

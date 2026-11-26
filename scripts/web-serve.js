@@ -95,6 +95,11 @@ function seedDefaults() {
   if (mcp && mcp.mcpServers) {
     const servers = {};
     for (const [k, v] of Object.entries(mcp.mcpServers)) servers[k] = v && v.url ? Object.assign({}, v, { url: expandUrl(v.url) }) : v;
+    // --browser: Claude's playwright tools drive the box's own Chromium (the Browser tab), not a browser of their own
+    if (env.WEB_BROWSER === '1' && servers.playwright && Array.isArray(servers.playwright.args)) {
+      servers.playwright = Object.assign({}, servers.playwright, { args: servers.playwright.args.filter((a, i, l) => a !== '--cdp-endpoint' && l[i - 1] !== '--cdp-endpoint')
+        .concat(['--cdp-endpoint', 'http://127.0.0.1:' + (env.CB_BROWSER_CDP_PORT || '9333')]) });
+    }
     config.mcpServers = Object.assign({}, config.mcpServers, servers);
   }
   // MCP_ATLASSIAN=0 in .env (the wizard asks) keeps the Atlassian server out of this box
@@ -290,6 +295,7 @@ async function run() {
     // final snapshot BEFORE killing tmux — otherwise it would record "nothing is running"
     if (RESTORE) { try { registry.snapshot(); } catch (_) {} }
     try { execFileSync('tmux', ['kill-server'], { stdio: 'ignore' }); } catch (_) {}   // SIGHUP -> Claude flushes state
+    try { require('./web-browser.js').stop(); } catch (_) {}                         // Chromium writes its cookies on SIGTERM
     setTimeout(() => {
       for (const p of [ttyd, tunnel]) if (p) try { p.kill(); } catch (_) {}
       try { fs.writeFileSync(TUNNEL_URL_FILE, ''); } catch (_) {}

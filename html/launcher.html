@@ -254,6 +254,12 @@
      its real dimensions and switching is instant — no refit, no reconnect, no redraw. */
   #views iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;visibility:hidden}
   #views iframe.on{visibility:visible}
+  .bpill{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:5;display:flex;align-items:center;gap:10px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:5px 6px 5px 12px;font-size:12.5px;box-shadow:0 6px 20px rgba(0,0,0,.18);white-space:nowrap}
+  .bpill.hidden{display:none}
+  .bpill i{width:8px;height:8px;border-radius:50%;background:var(--work);animation:bpulse 1.4s ease-in-out infinite}
+  @keyframes bpulse{50%{opacity:.35}}
+  @media (prefers-reduced-motion:reduce){.bpill i{animation:none}}
+  .bpill button{border:0;background:var(--iris);color:#fff;font:600 12px var(--sans);padding:4px 10px;border-radius:999px;cursor:pointer}
   #views .chat{position:absolute;inset:0;display:none;flex-direction:column}
   #views .chat.on{display:flex}
   #fmhost{position:absolute;inset:0;overflow:auto;padding:24px;display:none}
@@ -1100,7 +1106,7 @@
   <div id="topbar">
     <button id="menubtn" class="iconbtn" type="button" title="Sessions" aria-label="Sessions">☰</button>
     <span id="ttl"></span>
-    <div class="seg hidden" id="modeseg"><button type="button" data-m="chat">Chat</button><button type="button" data-m="console">Console</button><button type="button" data-m="term" title="A shell (bash) in this session's folder">Terminal</button><button type="button" data-m="files" title="Files in this session's folder">Files</button><button type="button" data-m="code" class="hidden" title="VS Code in this session's folder">VS Code</button></div>
+    <div class="seg hidden" id="modeseg"><button type="button" data-m="chat">Chat</button><button type="button" data-m="console">Console</button><button type="button" data-m="term" title="A shell (bash) in this session's folder">Terminal</button><button type="button" data-m="files" title="Files in this session's folder">Files</button><button type="button" data-m="code" class="hidden" title="VS Code in this session's folder">VS Code</button><button type="button" data-m="web" class="hidden" title="The box's own browser (Chromium), shared by all sessions; Claude can use it too">Browser</button></div>
     <a id="popout" class="iconbtn hidden" target="_blank" rel="noopener" title="Open the console in a new browser tab" aria-label="Open the console in a new browser tab">↗</a>
     <button id="rpbtn" class="iconbtn" type="button" title="Today: meetings, tasks, PRs, Slack" aria-label="Today panel">◧</button>
   </div>
@@ -1320,6 +1326,7 @@ var INBOX={open:false, data:null, by:{}, filter:'all', reply:{}, busy:{}, err:{}
 var ACTIVE=null;       // active pane key; null -> the "new session" page
 var CHAT_ON=false;     // web chat available on the server
 var CODE_ON=false;     // VS Code (code-server) available: ./claude-box --vscode
+var BROWSER_ON=false;  // the built-in browser available: ./claude-box --browser
 var MAXCODE=3;        // Code tabs kept loaded (each is a VS Code window with its own extension host)
 var MAXCONSOLES=8;     // console iframes kept warm (each holds a websocket + a tmux client)
 var newSeq=0;
@@ -1693,11 +1700,14 @@ function activate(key){
   if(p.cview && !CODE_ON) p.cview=false;
   if(p.tview) ensureTerm(p);
   if(p.cview) ensureCode(p);
-  Object.keys(PANES).forEach(function(k){ var q=PANES[k], vis=k===key && !p.fview && !p.tview && !p.cview;
-    if(q.cframe) q.cframe.classList.toggle('on', k===key && !!p.cview && !p.fview && !p.tview);
+  if(p.wview && !BROWSER_ON) p.wview=false;
+  if(p.wview) ensureBrowser();
+  if(BFRAME) BFRAME.classList.toggle('on', !!p.wview);
+  Object.keys(PANES).forEach(function(k){ var q=PANES[k], vis=k===key && !p.fview && !p.tview && !p.cview && !p.wview;
+    if(q.cframe) q.cframe.classList.toggle('on', k===key && !!p.cview && !p.fview && !p.tview && !p.wview);
     if(q.el) q.el.classList.toggle('on', vis && q.mode==='chat');
     if(q.iframe) q.iframe.classList.toggle('on', vis && q.mode==='console');
-    if(q.tframe) q.tframe.classList.toggle('on', k===key && !!p.tview && !p.cview); });
+    if(q.tframe) q.tframe.classList.toggle('on', k===key && !!p.tview && !p.cview && !p.wview); });
   $('blank').classList.add('hidden');
   if(p.fview) fmShowFor(p); else $('fmhost').classList.remove('on');
   evict(); syncUrl(); renderList(true); renderTop(); artRender();
@@ -1707,6 +1717,7 @@ function activate(key){
 function focusActive(){
   var p=PANES[ACTIVE]; if(!p) return;
   if(p.fview) return;
+  if(p.wview){ try{ BFRAME.contentWindow.focus(); BFRAME.contentWindow.cbBrowser.focus(); }catch(e){} return; }
   if(p.cview){ try{ p.cframe.contentWindow.focus(); }catch(e){} return; }
   if(p.tview){ try{ var tw=p.tframe.contentWindow; tw.focus(); var tt=tw.document.querySelector('.xterm-helper-textarea'); if(tt) tt.focus(); }catch(e){} return; }
   if(p.mode==='chat'){ if(p.ta && innerWidth>760) p.ta.focus(); return; }
@@ -1751,6 +1762,27 @@ function ensureCode(p){
   if(open.length>=MAXCODE) open.sort(function(a,b){ return PANES[a].used-PANES[b].used; }).slice(0, open.length-MAXCODE+1)
     .forEach(function(k){ var q=PANES[k]; q.cframe.remove(); q.cframe=null; q.cview=false; });
 }
+// The session's Browser tab: the box's one Chromium (web-browser.js), the same frame for every
+// session. While Claude's playwright tools are at work in the session, a pill says so and stops it.
+var BFRAME=null, BPILL=null;
+function ensureBrowser(){
+  if(BFRAME) return;
+  BFRAME=document.createElement('iframe');
+  BFRAME.setAttribute('allow','clipboard-read; clipboard-write'); BFRAME.title='Browser';
+  BFRAME.src='browser/';
+  BFRAME.addEventListener('load', function(){ var p=PANES[ACTIVE]; if(p && p.wview) focusActive(); });
+  views.appendChild(BFRAME);
+  BPILL=el('div','bpill hidden','<i></i><span>Claude is using the browser</span><button type="button">Stop Claude</button>');
+  BPILL.querySelector('button').onclick=function(){ var p=PANES[ACTIVE]; if(p) wsSend({op:'interrupt', key:p.wire}); };
+  views.appendChild(BPILL);
+}
+function browserPill(){
+  if(!BPILL) return;
+  var p=PANES[ACTIVE];
+  var on=!!(p && p.wview && p.browserAt && Date.now()-p.browserAt<20000 && /running|starting|requires_action/.test(p.state||''));
+  BPILL.classList.toggle('hidden', !on);
+}
+setInterval(browserPill, 1500);
 function evict(){
   var cons=Object.keys(PANES).filter(function(k){ return PANES[k].iframe && k!==ACTIVE; });
   if(cons.length<MAXCONSOLES) return;
@@ -2013,7 +2045,7 @@ document.addEventListener('click', function(e){
 function blockCmd(pre){ return pre.textContent.replace(/^\$ /gm,'').replace(/\s+$/,''); }
 function termRun(p, cmd){
   if(!paneCwd(p)){ note(p,'This session has no folder yet, so it has no terminal.'); return; }
-  p.tview=true; p.fview=false; p.cview=false; activate(p.key);
+  p.tview=true; p.fview=false; p.cview=false; p.wview=false; activate(p.key);
   var t0=Date.now();
   (function wait(){
     var w=null; try{ w=p.tframe && p.tframe.contentWindow; }catch(e){}
@@ -3120,7 +3152,10 @@ function renderItem(p, m){
         var live=p.r.live.shift();
         if(live){ live.classList.remove('live'); live.innerHTML=md(b.text); stampMsg(live, b.text); }
         else { var ad=el('div','msg asst', md(b.text)); stampMsg(ad, b.text); p.inner.appendChild(ad); }
-      } else if(b.type==='tool_use'){ if(b.name===ART_TOOL) addArt(p,b); else addTool(p,b); }
+      } else if(b.type==='tool_use'){
+        if(!p.replaying && /^mcp__playwright__/.test(b.name||'')){ p.browserAt=Date.now(); browserPill(); }
+        if(b.name===ART_TOOL) addArt(p,b); else addTool(p,b);
+      }
       else if(b.type==='thinking' && b.thinking){
         var tl=p.inner.lastElementChild, g;
         if(tl && tl.classList.contains('tgroup') && !tl.classList.contains('skill')) g=tl;   // the current tool/thinking run
@@ -3335,24 +3370,27 @@ function renderTop(){
   ttl.innerHTML=esc(name)+((s&&s.cwd)||p.cwd ? '<span class="cwd">'+esc((s&&s.cwd)||p.cwd)+'</span>' : '');
   seg.classList.remove('hidden');
   [].forEach.call(seg.querySelectorAll('button'), function(b){
-    b.classList.toggle('on', p.fview ? b.dataset.m==='files' : p.tview ? b.dataset.m==='term' : p.cview ? b.dataset.m==='code' : b.dataset.m===p.mode);
+    b.classList.toggle('on', p.fview ? b.dataset.m==='files' : p.tview ? b.dataset.m==='term' : p.cview ? b.dataset.m==='code' : p.wview ? b.dataset.m==='web' : b.dataset.m===p.mode);
     if(b.dataset.m==='code') b.classList.toggle('hidden', !CODE_ON);
+    if(b.dataset.m==='web'){ b.classList.toggle('hidden', !BROWSER_ON); b.disabled=false; return; }
     b.disabled = (b.dataset.m==='files'||b.dataset.m==='term'||b.dataset.m==='code') ? !((s&&s.cwd)||p.cwd) : !!p.switching || (b.dataset.m==='console' ? !p.token : !CHAT_ON);
   });
   var t=name;
   if(p.mode==='console' && p.iframe){ try{ t=p.iframe.contentDocument.title||name; }catch(e){} }
   else { var mk={running:'⏳ ',starting:'⏳ ',requires_action:'🟡 '}[p.state]||''; t=mk+name; }
   document.title=t;
-  if(p.cview && paneCwd(p)){ pop.href='code/?folder='+encodeURIComponent(paneCwd(p)); pop.classList.remove('hidden'); }
+  if(p.wview){ pop.href='browser/'; pop.classList.remove('hidden'); }
+  else if(p.cview && paneCwd(p)){ pop.href='code/?folder='+encodeURIComponent(paneCwd(p)); pop.classList.remove('hidden'); }
   else if(p.tview && paneCwd(p)){ pop.href='term/?shell='+encodeURIComponent(paneCwd(p)); pop.classList.remove('hidden'); }
   else if(p.token){ pop.href='term/?id='+encodeURIComponent(p.token); pop.classList.remove('hidden'); } else pop.classList.add('hidden');
 }
 $('modeseg').addEventListener('click', function(e){
   var b=e.target.closest('button'); var p=PANES[ACTIVE]; if(!b||!p||b.disabled) return;
-  if(b.dataset.m==='files'){ p.fview=true; p.tview=false; p.cview=false; activate(p.key); return; }
-  if(b.dataset.m==='term'){ p.tview=true; p.fview=false; p.cview=false; activate(p.key); return; }
-  if(b.dataset.m==='code'){ p.cview=true; p.fview=false; p.tview=false; activate(p.key); return; }
-  var was=p.fview||p.tview||p.cview; p.fview=false; p.tview=false; p.cview=false;
+  if(b.dataset.m==='files'){ p.fview=true; p.tview=false; p.cview=false; p.wview=false; activate(p.key); return; }
+  if(b.dataset.m==='term'){ p.tview=true; p.fview=false; p.cview=false; p.wview=false; activate(p.key); return; }
+  if(b.dataset.m==='code'){ p.cview=true; p.fview=false; p.tview=false; p.wview=false; activate(p.key); return; }
+  if(b.dataset.m==='web'){ p.wview=true; p.fview=false; p.tview=false; p.cview=false; activate(p.key); return; }
+  var was=p.fview||p.tview||p.cview||p.wview; p.fview=false; p.tview=false; p.cview=false; p.wview=false;
   if(b.dataset.m==='console'){ if(p.mode==='console') activate(p.key); else { if(was) activate(p.key); toConsole(p); } }
   else if(p.mode==='chat') activate(p.key); else toChat(p);
 });
@@ -4708,7 +4746,7 @@ $('menubtn').addEventListener('click', function(){ $('app').classList.toggle('dr
 $('scrim').addEventListener('click', function(){ $('app').classList.remove('drawer'); });
 
 fetch('chat/info').then(function(r){ return r.ok?r.json():{}; }).catch(function(){ return {}; }).then(function(i){
-  CHAT_ON=!!(i&&i.enabled); CODE_ON=!!(i&&i.code); codeTheme();
+  CHAT_ON=!!(i&&i.enabled); CODE_ON=!!(i&&i.code); BROWSER_ON=!!(i&&i.browser); codeTheme();
   wsConnect();
   var s=new URLSearchParams(location.search).get('s');
   fetch('sessions').then(function(r){ return r.ok?r.json():[]; }).catch(function(){ return []; }).then(function(rows){

@@ -181,6 +181,10 @@ check "start: no forced recreate"                  0 "$(grep -c -- '--force-recr
 bash "$repo/claude-box" --restart </dev/null >/dev/null 2>&1
 check "--restart: builds through bake"             1 "$(grep -c 'buildx bake' "$tmp/docker.log")"
 check "--restart: recreates the container"         1 "$(grep -c 'up -d --force-recreate web' "$tmp/docker.log")"
+check "no --browser: no browser overlay"           0 "$(grep -c 'docker-compose.browser.yml' "$tmp/docker.log")"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" --browser </dev/null >/dev/null 2>&1
+check "--browser: overlay on build and up"         1 "$(grep -c 'docker-compose.browser.yml.* up -d web' "$tmp/docker.log")"
 bash "$repo/claude-box" --bogus </dev/null >/dev/null 2>&1; rc=$?
 check "unknown option: exit 2"                     2 "$rc"
 

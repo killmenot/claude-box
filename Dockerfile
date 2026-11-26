@@ -82,6 +82,21 @@ RUN mkdir -p /opt/claude-web-chat && cd /opt/claude-web-chat \
       "@anthropic-ai/claude-agent-sdk@${CLAUDE_AGENT_SDK_VERSION}" "ws@${WS_VERSION}" \
  && npm cache clean --force
 
+# The built-in browser for the Browser tab — only when built by `./claude-box --browser` (BROWSER=1):
+# Chromium on a virtual display (Xvfb), shown through x11vnc + noVNC (pinned, its ES modules only).
+# Placed before the html and script copies, so editing those does not download it again.
+ARG BROWSER=0
+ARG NOVNC_VERSION=1.5.0
+RUN if [ "$BROWSER" = 1 ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        chromium xvfb x11vnc fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
+      && rm -rf /var/lib/apt/lists/* \
+      && mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix \
+      && mkdir -p /opt/novnc \
+      && curl -fsSL --retry 5 --retry-all-errors "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+         | tar -xz -C /opt/novnc --strip-components=1 "noVNC-${NOVNC_VERSION}/core" "noVNC-${NOVNC_VERSION}/vendor"; \
+    fi
+
 # Custom ttyd frontend (--index): sound on bell, hidden scroll, deep-link.
 # xterm is vendored locally (html/vendor) and inlined into a self-contained index.html
 # (ttyd serves a SINGLE file; we don't use a CDN — the terminal has shell access).
@@ -89,7 +104,8 @@ COPY html/ /opt/claude-web-src/
 RUN node /opt/claude-web-src/build-index.js \
       /opt/claude-web-src/index.html /usr/local/share/claude-web/index.html \
  && node /opt/claude-web-src/build-launcher.js \
-      /opt/claude-web-src/launcher.html /usr/local/share/claude-web/launcher.html
+      /opt/claude-web-src/launcher.html /usr/local/share/claude-web/launcher.html \
+ && cp /opt/claude-web-src/browser.html /usr/local/share/claude-web/browser.html
 
 # The web server (Node): entrypoint, sidecar, chat, session registry, metrics, search, preview.
 # VS Code in the browser (code-server) for the Code tab — only when built by `./claude-box --vscode`
