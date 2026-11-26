@@ -1204,10 +1204,23 @@ function wsConnect(){
   WS=new WebSocket(url);
   WS.onopen=function(){ WSOPEN=true; wsRetry=0;
     Object.keys(WIRE).forEach(function(w){ var p=WIRE[w]; if(p && p.mode==='chat') openChat(p); }); };   // p: skip stale entries, one bad key must not blank every chat
-  WS.onmessage=function(e){ var o; try{ o=JSON.parse(e.data); }catch(_){ return; } var p=WIRE[o.key]; if(p) onEvent(p,o); };
+  WS.onmessage=function(e){ WSSEEN=Date.now(); var o; try{ o=JSON.parse(e.data); }catch(_){ return; } var p=WIRE[o.key]; if(p) onEvent(p,o); };
   WS.onclose=function(){ WSOPEN=false; setTimeout(wsConnect, Math.min(4000, 300*(++wsRetry))); };
+  WSSEEN=Date.now();
 }
 function wsSend(o){ if(WSOPEN){ try{ WS.send(JSON.stringify(o)); return true; }catch(_){} } return false; }
+// Liveness: a socket can look open while nothing comes back (a reply lost in a server stall, a
+// dead forwarder). Ping it; if it stays silent, or a chat never gets its history, reconnect —
+// onopen re-opens every chat, so a stuck pane recovers on its own.
+var WSSEEN=0;
+function wsReset(){ if(WS){ try{ WS.close(); }catch(_){} } }
+setInterval(function(){
+  if(!WSOPEN || document.hidden) return;
+  wsSend({op:'ping'});
+  if(Date.now()-WSSEEN>60000){ wsReset(); return; }
+  var stuck=Object.keys(WIRE).some(function(w){ var p=WIRE[w]; return p && p.mode==='chat' && p.el && !p.ready && p.openAt && Date.now()-p.openAt>15000; });
+  if(stuck) wsReset();
+}, 20000);
 
 // ======================= voice input (Web Speech API) =======================
 // Dictation into the composer: final phrases are appended to the textarea, the phrase being
@@ -1376,7 +1389,7 @@ function buildChat(p){
 function openChat(p){
   buildChat(p); p.ready=false;          // until the history arrives, sends are queued (it redraws the log)
   var o={op:'open', key:p.wire}; if(p.token) o.token=p.token; else { o.cwd=p.cwd; if(p.title) o.title=p.title; }
-  wsSend(o);
+  p.openAt=Date.now(); wsSend(o);
 }
 // ---- attachments: picked, pasted or dropped files are sent inline (base64) with the message ----
 var ATT_MAX=30*1024*1024;      // per message, raw bytes (the socket allows ~48 MB after base64)
@@ -1510,7 +1523,10 @@ function send(p){
   if(files.some(function(a){ return a.data===null; })){ note(p,'Still reading the attached files — try again in a moment.'); return; }
   function clear(){ p.ta.value=''; p.ta.style.height='auto'; p.files=[]; p.voiced=''; renderAtts(p);
     clearTimeout(p.draftT); p.draftAt=Date.now(); draftStore(p,''); }
-  if(!p.ready){ (p.queue=p.queue||[]).push({t:t, files:files, voice:voiced}); clear(); return; }
+  // not loaded yet: queue it, but show it at once (the history redraw clears this copy, the flush re-adds it)
+  if(!p.ready){ (p.queue=p.queue||[]).push({t:t, files:files, voice:voiced}); clear();
+    addUser(p, t, true, files, voiced); p.inner.appendChild(el('div','note','Waiting for the session to load — this message is sent as soon as it does.'));
+    scrollEnd(p, true); return; }
   var wire=files.map(function(a){ return {name:a.name, type:a.type, data:a.data}; });
   if(!wsSend({op:'send', key:p.wire, text:voiced?voiceNote(voiced)+'\n'+t:t, files:wire})){ note(p,'Not connected to the server — retrying…',true); return; }
   clear();

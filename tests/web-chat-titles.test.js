@@ -124,3 +124,11 @@ test('runInShell: fresh bash, output captured, bounded', async () => {
   assert.notStrictEqual(r3.code, 0);                                 // a bad cwd must not look like success
   assert.strictEqual(r3.out, '');
 });
+
+test('tailPage: a prompt appended after the page was read shows up on reopen', () => {
+  wc.tailPage(chat, null);                                        // builds the reader cache
+  fs.appendFileSync(file, '{"uuid":"p31","sessionId":"c-titles","timestamp":"2026-01-01T00:31:00Z","type":"user","message":{"role":"user","content":"prompt 31"}}\n');
+  const pg = wc.tailPage(chat, null);
+  const prompts = pg.items.filter((i) => i.type === 'user').map((i) => i.message.content);
+  assert.strictEqual(prompts[prompts.length - 1], 'prompt 31');
+});

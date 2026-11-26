@@ -519,7 +519,7 @@ function extendBack(entry, chat, minPrompts) {
   const f = transcriptPath(chat.cid, chat.cwd);
   if (!f) { entry.atStart = true; return; }
   let size; try { size = fs.statSync(f).size; } catch (_) { entry.atStart = true; return; }
-  if (entry.file !== f) { Object.assign(entry, { file: f, front: size, items: [], extras: new Map(), times: new Map(), atStart: false, read: 0 }); }
+  if (entry.file !== f) { Object.assign(entry, { file: f, size, front: size, items: [], extras: new Map(), times: new Map(), atStart: false, read: 0 }); }
   const prompts = () => entry.items.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
   const enough = () => prompts() >= minPrompts || entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES;
   while (!entry.atStart && !enough()) {
@@ -561,6 +561,12 @@ function extendBack(entry, chat, minPrompts) {
 function tailPage(chat, beforeUuid) {
   if (!chat.cid) return { items: [], more: 0 };
   const entry = readerFor(chat);
+  // the reader only walks backward from where it started; for the latest page, start over once the
+  // transcript has grown, or prompts sent since (which never show up in chat.turn) vanish on reopen
+  if (!beforeUuid && entry.file) {
+    let size = -1; try { size = fs.statSync(entry.file).size; } catch (_) {}
+    if (size !== entry.size) entry.file = null;
+  }
   extendBack(entry, chat, PAGE_PROMPTS);
   let end = beforeUuid ? entry.items.findIndex((i) => i.uuid === beforeUuid) : entry.items.length;
   let guard = 0;
@@ -652,6 +658,8 @@ function onConnection(ws) {
   async function handle(raw) {
     let msg; try { msg = JSON.parse(String(raw)); } catch (_) { return; }
     const key = String(msg.key || '');
+    // liveness check from the launcher; answered in order, so a wedged op chain shows up as silence
+    if (msg.op === 'ping') { reply({ ev: 'pong' }); return; }
     try {
       if (msg.op === 'open') {
         let chat = mine.get(key);
