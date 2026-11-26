@@ -113,6 +113,8 @@ setup_workspace() {
     fi
     # docker would mount a folder the user cannot write as read-only-in-practice /workspace
     [ -w "$dir" ] || { echo "  $dir is not writable by you (uid $(id -u)); pick another folder." >&2; continue; }
+    # the box's own layout: tasks and their repo clones, scratch space, session exports
+    mkdir -p "$dir/tasks" "$dir/tmp" "$dir/repos" "$dir/sessions"
     break
   done
   env_set PROJECT_DIR "$(cd "$dir" && pwd -P)"

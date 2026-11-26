@@ -31,6 +31,7 @@ check "first run: .env created"                    yes "$([ -f "$repo/.env" ] &&
 check "first run: .env is private"                 600 "$(stat -c %a "$repo/.env")"
 check "first run: projects default to ./workspace" "$repo/workspace" "$(val PROJECT_DIR)"
 check "first run: projects folder created"         yes "$([ -d "$repo/workspace" ] && echo yes)"
+check "first run: layout dirs created"             yes "$([ -d "$repo/workspace/tasks" ] && [ -d "$repo/workspace/tmp" ] && [ -d "$repo/workspace/repos" ] && [ -d "$repo/workspace/sessions" ] && echo yes)"
 check "first run: model asked in wizard"           0 "$(printf '%s' "$out" | grep -c 'Choose \[1/2/3\]')"
 check "first run: jira asked in wizard"            0 "$(printf '%s' "$out" | grep -c 'Enable the Jira')"
 check "first run: other settings kept"             7681 "$(val WEB_TERMINAL_PORT)"
