@@ -138,3 +138,27 @@ test('skills from the image: installed with a marker, updated on restart, own an
   assert.strictEqual(fs.readFileSync(path.join(dst, 'pr-review', 'SKILL.md'), 'utf8'), 'edited');
   assert.deepStrictEqual(syncSkills(path.join(tmp, 'missing'), dst), []);
 });
+
+test('skills: no copyFile (breaks on virtiofs), exec bit kept, a broken half-copy is healed, a failed copy leaves nothing', () => {
+  const { syncSkills } = require('../scripts/web-serve.js');
+  const src = path.join(tmp, 'img2'), dst = path.join(tmp, 'skills2');
+  fs.mkdirSync(path.join(src, 'w', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'w', 'SKILL.md'), 'skill');
+  fs.writeFileSync(path.join(src, 'w', 'bin', 'tool'), '#!/bin/sh\n', { mode: 0o755 });
+  // what an interrupted copy left on the bind mount: an empty, write-only SKILL.md and no marker
+  fs.mkdirSync(path.join(dst, 'w'), { recursive: true });
+  fs.writeFileSync(path.join(dst, 'w', 'SKILL.md'), '');
+  fs.chmodSync(path.join(dst, 'w', 'SKILL.md'), 0o200);
+  const orig = { cp: fs.copyFileSync, cpSync: fs.cpSync };
+  fs.copyFileSync = fs.cpSync = () => { throw new Error('copyFile must not be used'); };
+  try { assert.deepStrictEqual(syncSkills(src, dst), ['w']); } finally { fs.copyFileSync = orig.cp; fs.cpSync = orig.cpSync; }
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'w', 'SKILL.md'), 'utf8'), 'skill');
+  assert.ok(fs.statSync(path.join(dst, 'w', 'bin', 'tool')).mode & 0o100, 'executable stays executable');
+  // a failing write: the installed copy stays as it was and no temp folder is left behind
+  const write = fs.writeFileSync;
+  fs.writeFileSync(path.join(src, 'w', 'SKILL.md'), 'v2');
+  fs.writeFileSync = (f, ...a) => { if (String(f).includes('.tmp-')) throw new Error('disk full'); return write(f, ...a); };
+  try { assert.deepStrictEqual(syncSkills(src, dst), []); } finally { fs.writeFileSync = write; }
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'w', 'SKILL.md'), 'utf8'), 'skill');
+  assert.deepStrictEqual(fs.readdirSync(dst).filter((n) => n.includes('.tmp-')), []);
+});

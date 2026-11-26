@@ -101,22 +101,43 @@ function seedDefaults() {
 // Skills shipped with the box (claude-defaults/skills/<name>) are copied to ~/.claude/skills/<name>
 // on every start, so an image update brings the new version. A copy holds a marker file; delete the
 // marker to keep your own edits (the box then leaves that folder alone). A folder of the same name
-// without the marker is the user's own skill and is never touched.
+// without the marker is the user's own skill and is never touched — unless it is a broken copy left by
+// an interrupted sync (no SKILL.md, or an empty one), which is replaced.
+//
+// Files are copied with plain read/write, not fs.copyFile/cpSync: on the Colima/virtiofs bind mount
+// copyFile can fail halfway and leave an empty, write-only file behind. The copy is built in a temp
+// folder and renamed into place, so a failure never leaves a half-copied skill.
 const SKILL_MARK = '.claude-box-managed';
+function copyTree(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, e.name), d = path.join(dst, e.name);
+    if (e.isDirectory()) copyTree(s, d);
+    else if (e.isFile()) fs.writeFileSync(d, fs.readFileSync(s), { mode: (fs.statSync(s).mode & 0o777) | 0o600 });
+  }
+}
+function brokenCopy(dir) {
+  try { return fs.statSync(path.join(dir, 'SKILL.md')).size === 0; } catch (_) { return true; }
+}
 function syncSkills(from, to) {
   let names;
   try { names = fs.readdirSync(from, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch (_) { return []; }
   const done = [];
   for (const name of names) {
     const dst = path.join(to, name);
-    if (fs.existsSync(dst) && !fs.existsSync(path.join(dst, SKILL_MARK))) continue;
+    if (fs.existsSync(dst) && !fs.existsSync(path.join(dst, SKILL_MARK)) && !brokenCopy(dst)) continue;
+    const tmp = path.join(to, `.${name}.tmp-${process.pid}`);
     try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      copyTree(path.join(from, name), tmp);
+      fs.writeFileSync(path.join(tmp, SKILL_MARK), 'Installed by claude-box and replaced on every start. Delete this file to keep your own changes.\n');
       fs.rmSync(dst, { recursive: true, force: true });
-      fs.mkdirSync(to, { recursive: true });
-      fs.cpSync(path.join(from, name), dst, { recursive: true });
-      fs.writeFileSync(path.join(dst, SKILL_MARK), 'Installed by claude-box and replaced on every start. Delete this file to keep your own changes.\n');
+      fs.renameSync(tmp, dst);
       done.push(name);
-    } catch (e) { warn(`skill ${name}: ${e.message}`); }
+    } catch (e) {
+      warn(`skill ${name}: ${e.message}`);
+      try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+    }
   }
   return done;
 }
