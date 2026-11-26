@@ -17,6 +17,7 @@
 //   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
 //   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
+//   /context     -> a session's PRs, Slack threads and Jira issues for the context strip (web-context.js)
 //   /browser     -> the built-in browser (web-browser.js, only with ./claude-box --browser): viewer page, noVNC, WS /browser/websockify
 //   /artifact    -> the artifact panel's files (web-artifact.js): GET /artifact/f/<abs path>, /artifact/stat?p=
 //   /code        -> VS Code (code-server) for the Code tab, only with ./claude-box --vscode (web-code.js); POST /codetheme {theme}
@@ -34,6 +35,7 @@ const webGuard = require('./web-guard.js');
 const code = require('./web-code.js');
 const artifact = require('./web-artifact.js');
 const browser = require('./web-browser.js');
+const context = require('./web-context.js');
 const guard = webGuard.makeGuard();
 
 // The address the listeners bind to inside the container. WEB_LISTEN_ADDR is set only by the
@@ -213,6 +215,23 @@ const handler = (req, res) => {
     }
     const path = req.url.split('?')[0];
     if (path === '/browser/status') { browser.status().then((st) => json(res, 200, st)); return; }
+    if (path === '/browser/open' && req.method === 'POST') {             // a link from the context strip or the chat
+      if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
+      readJson(req, 8192, (o) => { browser.openUrl(o && o.url).then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message })); });
+      return;
+    }
+    if (path === '/context') {                                             // the session's PRs, Slack threads, Jira issues
+      const id = new URL(req.url, 'http://x').searchParams.get('id') || '';
+      const r = registry.get(id);
+      const file = r && r.claudeSessionId && chat && chat.transcriptPath ? chat.transcriptPath(r.claudeSessionId, r.cwd) : null;
+      let items = [];
+      // a new chat has no token yet, only its folder: that is enough for a task folder's issue and PRs
+      let cwd = (r && r.cwd) || require('path').resolve('/', new URL(req.url, 'http://x').searchParams.get('cwd') || '/');
+      if (!/^\/workspace(\/|$)/.test(cwd)) cwd = '';
+      try { items = context.forSession(file, cwd); } catch (e) { console.error('context:', e.message); }
+      json(res, 200, { items });
+      return;
+    }
     if (path === '/browser/clipboard') {                                // Cmd+C / Cmd+V in the Browser tab
       if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
       if (req.method !== 'POST') { browser.clipboardGet().then((r) => json(res, 200, r), (e) => json(res, 409, { error: e.message })); return; }

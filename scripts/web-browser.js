@@ -232,6 +232,36 @@ async function clipboardPaste(text) {
   return { ok: true };
 }
 
+// ---------- open a link from claude-box (the context strip, links in the chat) ----------
+// A PR or Jira issue already open comes to the front; Slack keeps one tab, moved to the thread
+// (its web app is heavy); anything else opens in a new tab. Only https links.
+async function openUrl(url) {
+  let u; try { u = new URL(String(url || '')); } catch (_) { throw new Error('not a link'); }
+  if (u.protocol !== 'https:') throw new Error('only https links');
+  await ensure();
+  for (let i = 0; i < 30 && !bsend; i++) await sleep(100);
+  if (!bsend) throw new Error('the browser is not connected');
+  const href = u.href;
+  const pr = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.exec(href);
+  const jira = /\/browse\/([A-Z][A-Z0-9]+-\d+)/.exec(u.pathname);
+  const slack = /\.slack\.com$/.test(u.hostname);
+  const t = await bsend('Target.getTargets', {});
+  const pages = (t.targetInfos || []).filter((i) => i.type === 'page');
+  let hit = null;
+  if (pr) hit = pages.find((p) => p.url.startsWith(pr[0]) && /^(\/|$|#|\?)/.test(p.url.slice(pr[0].length)));
+  else if (jira) hit = pages.find((p) => p.url.includes('/browse/' + jira[1]));
+  else if (slack) hit = pages.find((p) => /^https:\/\/(app\.slack\.com|[\w-]+\.slack\.com)\//.test(p.url));
+  else hit = pages.find((p) => p.url === href);
+  if (hit && slack && !hit.url.startsWith(href)) {
+    const sid = pageSessions.get(hit.targetId);
+    if (sid) await bsend('Page.navigate', { url: href }, sid);
+  }
+  if (hit) { await bsend('Target.activateTarget', { targetId: hit.targetId }); return { ok: true, reused: true }; }
+  const n = await bsend('Target.createTarget', { url: href });
+  if (n && n.targetId) await bsend('Target.activateTarget', { targetId: n.targetId });
+  return { ok: !!(n && n.targetId), reused: false };
+}
+
 async function status() {
   return { enabled: enabled(), running: enabled() && await cdpAlive() && await sockAlive(VNC_SOCK), cdp: `http://127.0.0.1:${CDP_PORT}` };
 }
@@ -286,4 +316,4 @@ function stop() {
   for (const k of ['vnc', 'chrome', 'xvfb']) { const p = procs[k]; if (p) try { p.kill('SIGTERM'); } catch (_) {} }
 }
 
-module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, clipboardGet, clipboardPaste, _bridge, chromeMeta, CDP_PORT, VNC_SOCK, PROFILE };
+module.exports = { enabled, ensure, status, serve, upgrade, stop, resize, clipboardGet, clipboardPaste, openUrl, _bridge, chromeMeta, CDP_PORT, VNC_SOCK, PROFILE };

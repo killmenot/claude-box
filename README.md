@@ -83,7 +83,17 @@ Google Chrome on Linux: the user-agent string already says Chrome, and the clien
 Chrome" next to "Chromium" (`CB_BROWSER_BRAND=0` turns that off; Google ships no Chrome for Linux on
 ARM, so the real one cannot be installed on an Apple Silicon Mac). Its DevTools port is on 127.0.0.1 inside the container: in the Linux host
 network mode that is the host's loopback, so other local users of that host could reach it. Like
-`--vscode`, the flag is not remembered.
+`--vscode`, the flag is not remembered. On a Mac, Cmd works as Ctrl there (Cmd+C / V / A / L…), Cmd and
+Option with the arrows and Backspace move and delete like on the Mac, held keys repeat, and the
+clipboard goes both ways.
+
+**Context strip**: under the session's header, the pull requests, Slack threads and Jira issues the
+session deals with: links anywhere in its transcript, plus a task folder's issue and the PRs of its
+branches. A PR shows `repo#number`, open / draft / merged, CI, review and comments; a Slack thread its
+channel and author; a Jira issue its status (Slack and Jira details come from the Today panel). One
+line while there is at most one of each, a line per kind once there are more. A click, or a click on
+such a link in the chat, opens it in the Browser tab (a PR or issue in its own tab, Slack in one tab),
+or in a new tab of your browser without `--browser`.
 The login and password can be changed later in **Settings → Access**; they are kept as a scrypt hash
 in `home/.claude/web-auth.json`. An older `WEB_TERMINAL_PASSWORD` in `.env` still works until one is
 set in the UI. `--tunnel` refuses to start until a login exists.

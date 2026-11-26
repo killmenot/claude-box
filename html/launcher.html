@@ -243,6 +243,25 @@
   /* ---------- main ---------- */
   #main{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel)}
   #topbar{display:flex;align-items:center;gap:10px;height:48px;padding:0 10px 0 16px;border-bottom:1px solid var(--line);font-size:14px}
+  /* the context strip: the session's PRs, Slack threads and Jira issues (web-context.js) */
+  #ctxbar{display:flex;flex-direction:column;border-bottom:1px solid var(--line);background:var(--paper)}
+  #ctxbar.hidden{display:none}
+  #ctxbar .crow{display:flex;align-items:center;gap:6px;padding:5px 14px;overflow-x:auto;scrollbar-width:none}
+  #ctxbar .crow+.crow{border-top:1px solid var(--line)}
+  #ctxbar .cl{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);min-width:40px;white-space:nowrap}
+  .cchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:2px 4px 2px 8px;font:12.5px var(--sans);color:var(--ink);cursor:pointer;white-space:nowrap;flex:none}
+  .cchip:hover{border-color:var(--slate)}
+  .cchip .ci{width:16px;height:16px;border-radius:4px;display:inline-grid;place-items:center;font-size:10px;font-weight:700;flex:none}
+  .cchip .ci.pr{background:var(--tint);color:var(--iris)} .cchip .ci.slack{background:var(--tint-3);color:var(--iris-d)} .cchip .ci.jira{background:var(--next-bg);color:var(--mic)}
+  .cchip .k{font:600 12px var(--mono)} .cchip .m{color:var(--mute);font-size:11.5px}
+  .cchip .t{font-size:11px;font-weight:600;border-radius:999px;padding:0 7px;line-height:18px}
+  .cchip .t.open{color:var(--ok);background:var(--add)} .cchip .t.draft{color:var(--slate);background:var(--hover)}
+  .cchip .t.merged{color:#8250df;background:var(--tint-2)} .cchip .t.closed{color:var(--bad);background:var(--bad-bg)}
+  .cchip .t.ok{color:var(--ok)} .cchip .t.fail{color:var(--bad)} .cchip .t.pend{color:var(--wait)}
+  .cchip .t.approved{color:var(--ok)} .cchip .t.changes{color:var(--bad)} .cchip .t.review{color:var(--slate)}
+  .cchip .t.lab{color:var(--slate);background:var(--hover);font-weight:500}
+  .cchip .x{color:var(--mute);border:0;background:none;font-size:13px;line-height:1;padding:2px 5px;border-radius:50%;cursor:pointer}
+  .cchip .x:hover{color:var(--ink);background:var(--hover)}
   #ttl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
   #ttl .cwd{color:var(--mute);font:400 12px var(--mono);margin-left:10px}
   .seg{display:inline-flex;background:var(--hover);border-radius:9px;padding:3px;gap:2px;flex:0 0 auto}
@@ -1110,6 +1129,7 @@
     <a id="popout" class="iconbtn hidden" target="_blank" rel="noopener" title="Open the console in a new browser tab" aria-label="Open the console in a new browser tab">↗</a>
     <button id="rpbtn" class="iconbtn" type="button" title="Today: meetings, tasks, PRs, Slack" aria-label="Today panel">◧</button>
   </div>
+  <div id="ctxbar" class="hidden" aria-label="This session's pull requests, Slack threads and Jira issues"></div>
   <div id="views">
     <div id="inboxv"><div class="iin" id="ibody"></div></div>
     <div id="blank"><div class="inner">
@@ -1711,6 +1731,7 @@ function activate(key){
   $('blank').classList.add('hidden');
   if(p.fview) fmShowFor(p); else $('fmhost').classList.remove('on');
   evict(); syncUrl(); renderList(true); renderTop(); artRender();
+  ctxRender(); ctxLoad(p);
   $('app').classList.remove('drawer');
   setTimeout(focusActive, 0);
 }
@@ -1783,6 +1804,74 @@ function browserPill(){
   BPILL.classList.toggle('hidden', !on);
 }
 setInterval(browserPill, 1500);
+// ---------- the context strip: the session's PRs, Slack threads and Jira issues ----------
+// One line while each kind has at most one; a line per kind once any has two. A click opens the
+// link in the Browser tab (a PR or issue in its own browser tab, Slack in one tab), or in a new tab
+// of this browser without --browser. x hides one for this session (kept in this browser).
+var CTX_KIND={pr:{l:'PRs', i:'⎇'}, slack:{l:'Slack', i:'#'}, jira:{l:'Jira', i:'◆'}};
+function ctxHidden(p){ try{ return JSON.parse(ls('cb.ctxhide.'+(p.token||p.key))||'{}')||{}; }catch(e){ return {}; } }
+function ctxLoad(p){
+  if(!p || (!p.token && !p.cwd) || p.ctxBusy) return;
+  p.ctxBusy=true;
+  fetch('context?'+(p.token?'id='+encodeURIComponent(p.token):'cwd='+encodeURIComponent(p.cwd))).then(function(r){ return r.ok?r.json():null; })
+    .then(function(o){ p.ctxBusy=false; if(!o) return; p.ctx=o.items||[]; if(PANES[ACTIVE]===p) ctxRender(); }, function(){ p.ctxBusy=false; });
+}
+function ctxAgo(sec){ var d=Date.now()/1000-sec; return d<3600?Math.max(1,Math.round(d/60))+'m':d<86400?Math.round(d/3600)+'h':Math.round(d/86400)+'d'; }
+function ctxChip(it){
+  var h='<span class="ci '+it.kind+'">'+CTX_KIND[it.kind].i+'</span>', tip=it.url;
+  if(it.kind==='pr'){
+    h+='<span class="k">'+esc(it.repo+'#'+it.number)+'</span>';
+    if(it.state) h+='<span class="t '+it.state+'">'+{open:'Open',draft:'Draft',merged:'Merged',closed:'Closed'}[it.state]+'</span>';
+    if(it.ci) h+='<span class="t '+it.ci+'">'+{ok:'✓ CI',fail:'✕ CI',pend:'● CI'}[it.ci]+'</span>';
+    if(it.review && it.state!=='merged') h+='<span class="t '+it.review+'">'+{approved:'Approved',changes:'Changes requested',review:'Review needed'}[it.review]+'</span>';
+    if(it.comments) h+='<span class="m">💬 '+it.comments+'</span>';
+    (it.labels||[]).forEach(function(l){ h+='<span class="t lab">'+esc(l)+'</span>'; });
+  } else if(it.kind==='slack'){
+    h+='<span class="k">'+esc(it.channelName ? (it.channelName.charAt(0)==='#'?it.channelName:'#'+it.channelName) : '#'+String(it.channel||'').slice(0,7)+'…')+'</span>';
+    if(it.from) h+='<span class="m">'+esc(it.from)+'</span>';
+    if(it.ts) h+='<span class="m">'+ctxAgo(it.ts)+'</span>';
+  } else {
+    h+='<span class="k">'+esc(it.key)+'</span>';
+    if(it.status) h+='<span class="t lab">'+esc(it.status)+'</span>';
+    if(it.title) tip=it.key+': '+it.title;
+  }
+  return '<span class="cchip" role="button" tabindex="0" data-curl="'+esc(it.url)+'" title="'+esc(tip)+'">'+h+'<button type="button" class="x" data-chide="'+esc(it.key)+'" title="Hide from this session" aria-label="Hide">×</button></span>';
+}
+function ctxRender(){
+  var bar=$('ctxbar'), p=PANES[ACTIVE];
+  var items=(p && p.mode==='chat'||p && p.token) ? (p.ctx||[]) : [];
+  var hid=p?ctxHidden(p):{};
+  items=items.filter(function(it){ return !hid[it.key] && it.url; });
+  if(!p || !items.length || INBOX.open){ bar.classList.add('hidden'); bar.innerHTML=''; bar.dataset.sig=''; return; }
+  var by={pr:[], slack:[], jira:[]}; items.forEach(function(it){ if(by[it.kind]) by[it.kind].push(it); });
+  var many=Object.keys(by).some(function(k){ return by[k].length>1; });
+  var h='';
+  if(!many) h='<div class="crow">'+['pr','slack','jira'].map(function(k){ return by[k].map(ctxChip).join(''); }).join('')+'</div>';
+  else ['pr','slack','jira'].forEach(function(k){ if(by[k].length) h+='<div class="crow"><span class="cl">'+CTX_KIND[k].l+'</span>'+by[k].map(ctxChip).join('')+'</div>'; });
+  if(bar.dataset.sig!==h){ bar.dataset.sig=h; bar.innerHTML=h; }
+  bar.classList.remove('hidden');
+}
+function ctxOpen(url){
+  var p=PANES[ACTIVE];
+  if(!BROWSER_ON || !p){ window.open(url, '_blank', 'noopener'); return; }
+  fetch('browser/open',{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({url:url})})
+    .then(function(r){ if(!r.ok) throw new Error(); }).catch(function(){ window.open(url, '_blank', 'noopener'); });
+  p.wview=true; p.fview=false; p.tview=false; p.cview=false; activate(p.key);
+}
+var CTX_URL=/^https:\/\/(github\.com\/[^/]+\/[^/]+\/pull\/\d+|[\w-]+\.slack\.com\/archives\/|[\w-]+\.atlassian\.net\/browse\/)/;
+$('ctxbar').addEventListener('click', function(e){
+  var x=e.target.closest('[data-chide]'), p=PANES[ACTIVE];
+  if(x && p){ e.stopPropagation(); var h=ctxHidden(p); h[x.dataset.chide]=1; ls('cb.ctxhide.'+(p.token||p.key), JSON.stringify(h)); ctxRender(); return; }
+  var c=e.target.closest('[data-curl]'); if(c) ctxOpen(c.dataset.curl);
+});
+$('ctxbar').addEventListener('keydown', function(e){ var c=e.target.closest('[data-curl]'); if(c && (e.key==='Enter'||e.key===' ')){ e.preventDefault(); ctxOpen(c.dataset.curl); } });
+// links to a PR, a Slack message or a Jira issue in the chat open in the box browser too
+document.addEventListener('click', function(e){
+  if(!BROWSER_ON || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  var a=e.target.closest && e.target.closest('#views a[href]'); if(!a || !CTX_URL.test(a.href)) return;
+  e.preventDefault(); ctxOpen(a.href);
+}, true);
+setInterval(function(){ if(!document.hidden && PANES[ACTIVE]) ctxLoad(PANES[ACTIVE]); }, 20000);
 function evict(){
   var cons=Object.keys(PANES).filter(function(k){ return PANES[k].iframe && k!==ACTIVE; });
   if(cons.length<MAXCONSOLES) return;
@@ -3340,7 +3429,7 @@ function onEvent(p, o){
     case 'forked': if(o.token) openSession(o.token); break;
     case 'run_result': runResult(p,o); break;
     case 'draft': draftRemote(p,o); break;
-    case 'state': setState(p, o.state); if(o.state==='stopped'||o.state==='idle') finishLive(p); break;
+    case 'state': setState(p, o.state); if(o.state==='stopped'||o.state==='idle'){ finishLive(p); ctxLoad(p); } break;
     case 'info': p.info=o.info||{}; renderStatus(p); if(p.cmdEl && !p.cmdEl.classList.contains('hidden')) cmdUpdate(p); break;
     case 'token': rekey(p, o.token); break;
     case 'perm': renderPerm(p,o); before(p); scrollEnd(p); break;
@@ -3359,6 +3448,7 @@ function onEvent(p, o){
 // ======================= top bar =======================
 function renderTop(){
   var p=PANES[ACTIVE], ttl=$('ttl'), pop=$('popout'), seg=$('modeseg');
+  ctxRender();
   if(INBOX.open){ ttl.textContent='Inbox'; pop.classList.add('hidden'); seg.classList.add('hidden'); document.title='Inbox · claude-box'; return; }
   if(!p){ ttl.textContent='Workspace'; pop.classList.add('hidden'); seg.classList.add('hidden'); document.title='claude-box'; return; }
   if(p.shell){
