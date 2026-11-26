@@ -92,6 +92,18 @@ RUN node /opt/claude-web-src/build-index.js \
       /opt/claude-web-src/launcher.html /usr/local/share/claude-web/launcher.html
 
 # The web server (Node): entrypoint, sidecar, chat, session registry, metrics, search, preview.
+# VS Code in the browser (code-server) for the Code tab — only when built by `./claude-box --vscode`
+# (VSCODE=1); the default image stays without it. Pinned like ttyd above. Placed before the
+# script copies, so editing the scripts does not download it again.
+ARG VSCODE=0
+ARG CODE_SERVER_VERSION=4.96.4
+RUN if [ "$VSCODE" = 1 ]; then \
+      a="$(dpkg --print-architecture)" \
+      && curl -fsSL --retry 5 --retry-all-errors -o /tmp/code-server.deb \
+         "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server_${CODE_SERVER_VERSION}_${a}.deb" \
+      && dpkg -i /tmp/code-server.deb && rm -f /tmp/code-server.deb; \
+    fi
+
 # All modules live side by side in /usr/local/lib/claude-web; the commands that other
 # processes call (the entrypoint, the registry CLI, cb-session) are symlinked onto PATH.
 COPY scripts/*.js /usr/local/lib/claude-web/

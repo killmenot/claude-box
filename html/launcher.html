@@ -1017,7 +1017,7 @@
   <div id="topbar">
     <button id="menubtn" class="iconbtn" type="button" title="Sessions" aria-label="Sessions">☰</button>
     <span id="ttl"></span>
-    <div class="seg hidden" id="modeseg"><button type="button" data-m="chat">Chat</button><button type="button" data-m="console">Console</button><button type="button" data-m="term" title="A shell (bash) in this session's folder">Terminal</button><button type="button" data-m="files" title="Files in this session's folder">Files</button></div>
+    <div class="seg hidden" id="modeseg"><button type="button" data-m="chat">Chat</button><button type="button" data-m="console">Console</button><button type="button" data-m="term" title="A shell (bash) in this session's folder">Terminal</button><button type="button" data-m="files" title="Files in this session's folder">Files</button><button type="button" data-m="code" class="hidden" title="VS Code in this session's folder">Code</button></div>
     <a id="popout" class="iconbtn hidden" target="_blank" rel="noopener" title="Open the console in a new browser tab" aria-label="Open the console in a new browser tab">↗</a>
     <button id="rpbtn" class="iconbtn" type="button" title="Today: meetings, tasks, PRs, Slack" aria-label="Today panel">◧</button>
   </div>
@@ -1189,6 +1189,8 @@ var PANES={};          // key (token, or "new-N" until Claude reports the sessio
 var INBOX={open:false, data:null, by:{}, filter:'all', reply:{}, busy:{}, err:{}, timer:null, sig:''};   // Inbox view state (see the Inbox section)
 var ACTIVE=null;       // active pane key; null -> the "new session" page
 var CHAT_ON=false;     // web chat available on the server
+var CODE_ON=false;     // VS Code (code-server) available: ./claude-box --vscode
+var MAXCODE=3;        // Code tabs kept loaded (each is a VS Code window with its own extension host)
 var MAXCONSOLES=8;     // console iframes kept warm (each holds a websocket + a tmux client)
 var newSeq=0;
 var CLOSED=JSON.parse(ls('cb.closed')||'{}');
@@ -1542,11 +1544,14 @@ function activate(key){
   if(VOICE.active && VOICE.active!==p) VOICE.stop(true);
   ACTIVE=key; p.used=Date.now();
   if(p.mode==='console') ensureIframe(p); else { if(!p.el) openChat(p); }
+  if(p.cview && !CODE_ON) p.cview=false;
   if(p.tview) ensureTerm(p);
-  Object.keys(PANES).forEach(function(k){ var q=PANES[k], vis=k===key && !p.fview && !p.tview;
+  if(p.cview) ensureCode(p);
+  Object.keys(PANES).forEach(function(k){ var q=PANES[k], vis=k===key && !p.fview && !p.tview && !p.cview;
+    if(q.cframe) q.cframe.classList.toggle('on', k===key && !!p.cview && !p.fview && !p.tview);
     if(q.el) q.el.classList.toggle('on', vis && q.mode==='chat');
     if(q.iframe) q.iframe.classList.toggle('on', vis && q.mode==='console');
-    if(q.tframe) q.tframe.classList.toggle('on', k===key && !!p.tview); });
+    if(q.tframe) q.tframe.classList.toggle('on', k===key && !!p.tview && !p.cview); });
   $('blank').classList.add('hidden');
   if(p.fview) fmShowFor(p); else $('fmhost').classList.remove('on');
   evict(); syncUrl(); renderList(true); renderTop();
@@ -1556,6 +1561,7 @@ function activate(key){
 function focusActive(){
   var p=PANES[ACTIVE]; if(!p) return;
   if(p.fview) return;
+  if(p.cview){ try{ p.cframe.contentWindow.focus(); }catch(e){} return; }
   if(p.tview){ try{ var tw=p.tframe.contentWindow; tw.focus(); var tt=tw.document.querySelector('.xterm-helper-textarea'); if(tt) tt.focus(); }catch(e){} return; }
   if(p.mode==='chat'){ if(p.ta && innerWidth>760) p.ta.focus(); return; }
   try{ var w=p.iframe.contentWindow; w.focus(); var ta=w.document.querySelector('.xterm-helper-textarea'); if(ta) ta.focus(); }catch(e){}
@@ -1585,6 +1591,20 @@ function ensureTerm(p){
   if(open.length>=MAXCONSOLES) open.sort(function(a,b){ return PANES[a].used-PANES[b].used; }).slice(0, open.length-MAXCONSOLES+1)
     .forEach(function(k){ var q=PANES[k]; q.tframe.remove(); q.tframe=null; q.tview=false; });
 }
+// The session's Code tab: VS Code (code-server, web-code.js) opened on the session's folder. One
+// server serves every window; the last few stay loaded so switching sessions is instant.
+function ensureCode(p){
+  if(p.cframe) return;
+  var dir=paneCwd(p); if(!dir){ p.cview=false; return; }
+  var f=document.createElement('iframe');
+  f.setAttribute('allow','clipboard-read; clipboard-write');
+  f.src='code/?folder='+encodeURIComponent(dir);
+  f.addEventListener('load', function(){ if(PANES[ACTIVE]===p && p.cview) focusActive(); });
+  views.appendChild(f); p.cframe=f;
+  var open=Object.keys(PANES).filter(function(k){ return PANES[k].cframe && PANES[k]!==p; });
+  if(open.length>=MAXCODE) open.sort(function(a,b){ return PANES[a].used-PANES[b].used; }).slice(0, open.length-MAXCODE+1)
+    .forEach(function(k){ var q=PANES[k]; q.cframe.remove(); q.cframe=null; q.cview=false; });
+}
 function evict(){
   var cons=Object.keys(PANES).filter(function(k){ return PANES[k].iframe && k!==ACTIVE; });
   if(cons.length<MAXCONSOLES) return;
@@ -1593,6 +1613,7 @@ function evict(){
 }
 function dropPane(p){
   dropIframe(p); if(p.el){ p.el.remove(); } if(p.tframe){ p.tframe.remove(); p.tframe=null; }
+  if(p.cframe){ p.cframe.remove(); p.cframe=null; }
   if(p.mode==='chat') wsSend({op:'close', key:p.wire});
   delete WIRE[p.wire]; delete PANES[p.key]; if(ACTIVE===p.key) ACTIVE=null;
 }
@@ -1786,7 +1807,7 @@ document.addEventListener('click', function(e){
 function blockCmd(pre){ return pre.textContent.replace(/^\$ /gm,'').replace(/\s+$/,''); }
 function termRun(p, cmd){
   if(!paneCwd(p)){ note(p,'This session has no folder yet, so it has no terminal.'); return; }
-  p.tview=true; p.fview=false; activate(p.key);
+  p.tview=true; p.fview=false; p.cview=false; activate(p.key);
   var t0=Date.now();
   (function wait(){
     var w=null; try{ w=p.tframe && p.tframe.contentWindow; }catch(e){}
@@ -2933,21 +2954,24 @@ function renderTop(){
   ttl.innerHTML=esc(name)+((s&&s.cwd)||p.cwd ? '<span class="cwd">'+esc((s&&s.cwd)||p.cwd)+'</span>' : '');
   seg.classList.remove('hidden');
   [].forEach.call(seg.querySelectorAll('button'), function(b){
-    b.classList.toggle('on', p.fview ? b.dataset.m==='files' : p.tview ? b.dataset.m==='term' : b.dataset.m===p.mode);
-    b.disabled = (b.dataset.m==='files'||b.dataset.m==='term') ? !((s&&s.cwd)||p.cwd) : !!p.switching || (b.dataset.m==='console' ? !p.token : !CHAT_ON);
+    b.classList.toggle('on', p.fview ? b.dataset.m==='files' : p.tview ? b.dataset.m==='term' : p.cview ? b.dataset.m==='code' : b.dataset.m===p.mode);
+    if(b.dataset.m==='code') b.classList.toggle('hidden', !CODE_ON);
+    b.disabled = (b.dataset.m==='files'||b.dataset.m==='term'||b.dataset.m==='code') ? !((s&&s.cwd)||p.cwd) : !!p.switching || (b.dataset.m==='console' ? !p.token : !CHAT_ON);
   });
   var t=name;
   if(p.mode==='console' && p.iframe){ try{ t=p.iframe.contentDocument.title||name; }catch(e){} }
   else { var mk={running:'⏳ ',starting:'⏳ ',requires_action:'🟡 '}[p.state]||''; t=mk+name; }
   document.title=t;
-  if(p.tview && paneCwd(p)){ pop.href='term/?shell='+encodeURIComponent(paneCwd(p)); pop.classList.remove('hidden'); }
+  if(p.cview && paneCwd(p)){ pop.href='code/?folder='+encodeURIComponent(paneCwd(p)); pop.classList.remove('hidden'); }
+  else if(p.tview && paneCwd(p)){ pop.href='term/?shell='+encodeURIComponent(paneCwd(p)); pop.classList.remove('hidden'); }
   else if(p.token){ pop.href='term/?id='+encodeURIComponent(p.token); pop.classList.remove('hidden'); } else pop.classList.add('hidden');
 }
 $('modeseg').addEventListener('click', function(e){
   var b=e.target.closest('button'); var p=PANES[ACTIVE]; if(!b||!p||b.disabled) return;
-  if(b.dataset.m==='files'){ p.fview=true; p.tview=false; activate(p.key); return; }
-  if(b.dataset.m==='term'){ p.tview=true; p.fview=false; activate(p.key); return; }
-  var was=p.fview||p.tview; p.fview=false; p.tview=false;
+  if(b.dataset.m==='files'){ p.fview=true; p.tview=false; p.cview=false; activate(p.key); return; }
+  if(b.dataset.m==='term'){ p.tview=true; p.fview=false; p.cview=false; activate(p.key); return; }
+  if(b.dataset.m==='code'){ p.cview=true; p.fview=false; p.tview=false; activate(p.key); return; }
+  var was=p.fview||p.tview||p.cview; p.fview=false; p.tview=false; p.cview=false;
   if(b.dataset.m==='console'){ if(p.mode==='console') activate(p.key); else { if(was) activate(p.key); toConsole(p); } }
   else if(p.mode==='chat') activate(p.key); else toChat(p);
 });
@@ -4277,7 +4301,7 @@ $('menubtn').addEventListener('click', function(){ $('app').classList.toggle('dr
 $('scrim').addEventListener('click', function(){ $('app').classList.remove('drawer'); });
 
 fetch('chat/info').then(function(r){ return r.ok?r.json():{}; }).catch(function(){ return {}; }).then(function(i){
-  CHAT_ON=!!(i&&i.enabled);
+  CHAT_ON=!!(i&&i.enabled); CODE_ON=!!(i&&i.code);
   wsConnect();
   var s=new URLSearchParams(location.search).get('s');
   fetch('sessions').then(function(r){ return r.ok?r.json():[]; }).catch(function(){ return []; }).then(function(rows){

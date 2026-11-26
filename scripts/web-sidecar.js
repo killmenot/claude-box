@@ -17,6 +17,7 @@
 //   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
 //   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
+//   /code        -> VS Code (code-server) for the Code tab, only with ./claude-box --vscode (web-code.js)
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
 const http = require('http');
 const https = require('https');
@@ -28,6 +29,7 @@ const { preview } = require('./web-preview.js');
 const { search } = require('./web-search.js');
 // CSRF / cross-site WebSocket / DNS-rebinding guard + the login check (see web-guard.js)
 const webGuard = require('./web-guard.js');
+const code = require('./web-code.js');
 const guard = webGuard.makeGuard();
 
 const IFACE = process.env.WEB_TERMINAL_INTERFACE || '127.0.0.1';
@@ -199,6 +201,10 @@ const handler = (req, res) => {
       res.end(); return;
     }
     const path = req.url.split('?')[0];
+    if (path === '/code' || path.startsWith('/code/')) {
+      if (!code.enabled()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('VS Code is off: start claude-box with --vscode'); return; }
+      code.proxy(req, res); return;
+    }
     // model provider + integrations: written into ~/.claude/settings.json / ~/.claude.json, which
     // every fresh claude process reads — so changes apply to new messages without a restart.
     const homeDir = process.env.HOME || '/home/node';
@@ -420,7 +426,7 @@ const handler = (req, res) => {
     }
     if (path === '/chat/info') {
       if (!chat) { json(res, 200, { enabled: false, error: 'chat module not loaded' }); return; }
-      chat.info().then((i) => json(res, 200, i), () => json(res, 200, { enabled: false }));
+      chat.info().then((i) => json(res, 200, Object.assign({}, i, { code: code.enabled() })), () => json(res, 200, { enabled: false, code: code.enabled() }));
       return;
     }
     if (path === '/dirs') { json(res, 200, chat ? chat.dirs() : []); return; }
@@ -688,6 +694,10 @@ function onUpgrade(req, socket, head) {
     if (denied) { socket.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
     const a = auth(req);
     if (!a.ok) { socket.end(a.status === 429 ? 'HTTP/1.1 429 Too Many Requests\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
+    if (/^\/code(\/|$)/.test(req.url.split('?')[0])) {
+      if (!code.enabled()) { socket.end('HTTP/1.1 404 Not Found\r\n\r\n'); return; }
+      code.upgrade(req, socket, head); return;
+    }
     if (req.url.split('?')[0] === '/chat/ws') {
       if (!chat) { socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n'); return; }
       chat.handleUpgrade(req, socket, head); return;

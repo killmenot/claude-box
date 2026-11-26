@@ -1,0 +1,11 @@
+# Overlay for `./claude-box --vscode` (per start, not remembered): the image is built with
+# code-server and the web UI shows the Code tab (VS Code on the session's folder, served at /code/
+# behind the claude-box login; code-server itself listens on a private unix socket, see web-code.js).
+# A start without --vscode builds the image without it again (both variants stay in the build cache).
+services:
+  web:
+    build:
+      args:
+        VSCODE: "1"
+    environment:
+      - WEB_VSCODE=1

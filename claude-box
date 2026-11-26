@@ -9,6 +9,7 @@
 #   claude-box --setup     — re-run the first-run setup (the workspace folder, Docker access)
 #   claude-box --docker    — let the box run containers on this host (test stacks: redis, postgres…)
 #   claude-box --no-docker — take that away again (both restart the web UI)
+#   claude-box --vscode    — this start with VS Code: a bigger image, a Code tab in each session
 #   claude-box --install   — print how to add claude-box to PATH (changes nothing)
 # The first start creates .env and asks where projects live. The web login and password are set
 # in the browser: open the one-time link printed at the end, and the UI asks for them.
@@ -20,10 +21,10 @@ REPO="$(cd "$(dirname "$SELF")" && pwd -P)"
 ENV_FILE="$REPO/.env"
 PLACEHOLDER='/path/to/your/project'
 
-usage() { sed -n '2,12p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,13p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ---------------------------------------------------------------- arguments
-action=start; want_tunnel=0; no_proxy=0; force_setup=0; docker_set=''
+action=start; want_tunnel=0; no_proxy=0; force_setup=0; docker_set=''; vscode=0
 for a in "$@"; do
   case "$a" in
     --tunnel)                 want_tunnel=1 ;;
@@ -33,6 +34,7 @@ for a in "$@"; do
     --setup)                  force_setup=1 ;;
     --docker)                 docker_set=1 ;;
     --no-docker)              docker_set=0 ;;
+    --vscode)                 vscode=1 ;;
     --login)                  action=login ;;
     --install)                action=install ;;
     -h|--help)                action=help ;;
@@ -199,6 +201,8 @@ compose_files=(-f docker-compose.yml)
 # --docker / --no-docker apply to this very start (first_run writes them to .env later)
 docker_on="${docker_set:-$(env_get DOCKER_ACCESS)}"
 [ "$docker_on" = 1 ] && compose_files+=(-f docker-compose.docker.yml)
+# --vscode: only for this start (code-server in the image + the Code tab); without it, neither
+[ "$vscode" = 1 ] && compose_files+=(-f docker-compose.vscode.yml)
 # Network mode: on Linux (incl. WSL2) the container shares the host network directly (Tailscale,
 # DBs). Docker Desktop on macOS does NOT map host-mode ports to the real machine, so there we
 # swap to bridge + explicit ports (docker-compose.ports.yml). WEB_BIND overrides the auto choice.

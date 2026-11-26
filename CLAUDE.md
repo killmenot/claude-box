@@ -25,6 +25,7 @@ Guidance for Claude Code (and other agents) working in this repository.
   `scripts/web-git.js` — GitHub sign-in from the UI via `gh auth login --web` device codes (`/git`).
   `scripts/web-models.js` — model providers (Claude, GLM, Abliteration, custom) and each chat's model; keys in `~/.claude/web-providers.json` (`/models`).
   `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with a git worktree per repo of `/workspace/repos`, kept fresh by a fetch timer), served at `/tasks`.
+  `scripts/web-code.js` — the session's Code tab: code-server (only with `./claude-box --vscode`) on a private unix socket, proxied at `/code/`.
   `scripts/claude-default.sh` — starts console `claude` with the default model and, in a task folder, its repos as `--add-dir`.
 - `claude-defaults/` — seeded into `~/.claude` at startup: `settings.json` (once), `mcp.json` (merged every start),
   `skills/<name>/` (copied every start unless the user deleted the `.claude-box-managed` marker), e.g. `skills/pr-review`.
