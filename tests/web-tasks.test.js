@@ -8,10 +8,15 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
+// the test repos are throwaway: never sign their commits (a global commit.gpgsign with a hardware
+// key would ask for a PIN and fail here)
+Object.assign(process.env, { GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'commit.gpgsign', GIT_CONFIG_VALUE_0: 'false',
+  GIT_CONFIG_KEY_1: 'tag.gpgsign', GIT_CONFIG_VALUE_1: 'false' });
 const W = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-tasks-'));
 process.env.WORKSPACE_DIR = path.join(W, 'ws');
 fs.mkdirSync(process.env.WORKSPACE_DIR);
-const G = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8',
+// no commit signing in the throwaway repos (a host config may sign with a hardware key)
+const G = (args, cwd) => execFileSync('git', ['-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', ...args], { cwd, encoding: 'utf8',
   env: Object.assign({}, process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }) }).trim();
 
 // remote with one commit on main
@@ -28,7 +33,7 @@ const tasks = require('../scripts/web-tasks.js');
 const until = async (f) => { for (let i = 0; i < 100; i++) { if (await f()) return; await new Promise((r) => setTimeout(r, 50)); } throw new Error('timeout'); };
 
 test('slugify: key + title, unicode, no leading dots', () => {
-  assert.strictEqual(tasks.slugify('PROJ-123', 'Paging for /v1/deposits!'), 'PROJ-123-paging-for-v1-deposits');
+  assert.strictEqual(tasks.slugify('PROJ-123', 'Paging for /v1/items!'), 'PROJ-123-paging-for-v1-items');
   assert.strictEqual(tasks.slugify('', 'Починить алерты Grafana'), 'починить-алерты-grafana');
   assert.strictEqual(tasks.slugify('', '...'), 'task');
 });
@@ -50,6 +55,13 @@ test('lifecycle: base repo, open, commit, archive, reopen, forget', async () => 
   assert.strictEqual(G(['rev-parse', '--abbrev-ref', 'HEAD'], clone), 'PROJ-123-paging');
   assert.strictEqual(G(['remote', 'get-url', 'origin'], clone), remote);
   assert.strictEqual(t.state, 'clean');                                  // nothing new yet
+  assert.ok(tasks.isWorktree(clone), 'a worktree of the base repo, not a copy');
+  assert.match(G(['worktree', 'list'], base), /PROJ-123-paging/);
+  const guide = fs.readFileSync(path.join(t.path, 'CLAUDE.md'), 'utf8');
+  assert.match(guide, /`api\/`: repository api, branch `PROJ-123-paging`/);
+  assert.match(guide, /never edit, commit or check out branches there/);
+  assert.deepStrictEqual(tasks.taskRepoDirs(t.path), [clone]);           // the session's extra directories
+  assert.deepStrictEqual(tasks.taskRepoDirs(path.join(t.path, 'api')), []);
 
   const again = await tasks.open({ key: 'PROJ-123', title: 'whatever' });     // same id -> same task
   assert.strictEqual(again.created, false); assert.strictEqual(again.slug, t.slug);
@@ -59,6 +71,7 @@ test('lifecycle: base repo, open, commit, archive, reopen, forget', async () => 
   assert.strictEqual(d.state, 'dirty');
   await assert.rejects(tasks.archive(t.slug), /uncommitted/);
   G(['add', '.'], clone); G(['commit', '-q', '-m', 'work'], clone);
+  assert.strictEqual(G(['log', '-1', '--format=%s', 'PROJ-123-paging'], base), 'work');   // shared history: in the base at once
   d = (await tasks.list()).tasks[0];
   assert.strictEqual(d.state, 'unpushed'); assert.strictEqual(d.repos[0].unpushed, 1);
 
@@ -99,4 +112,17 @@ test('a repo picked by URL: remotes compare by host/owner/name, a bad URL is rep
   assert.strictEqual(t.errors.length, 1);
   assert.match(t.errors[0], /unsupported git URL/);
   assert.strictEqual((t.repos || []).length, 0);
+});
+
+test('repos/ stays fresh: fetch + fast-forward of the default branch; a guide someone rewrote is kept', async () => {
+  const base = path.join(tasks.REPOS, 'api');
+  fs.writeFileSync(path.join(seed, 'NEW.md'), 'new\n');
+  G(['add', '.'], seed); G(['commit', '-q', '-m', 'upstream change'], seed); G(['push', '-q', 'origin', 'HEAD:main'], seed);
+  await tasks.syncBases();
+  assert.strictEqual(G(['log', '-1', '--format=%s'], base), 'upstream change');
+  const t = await tasks.open({ title: 'Second task', repos: ['api'] });
+  assert.ok(fs.existsSync(path.join(t.path, 'api', 'NEW.md')), 'new tasks start from the fresh default branch');
+  fs.writeFileSync(path.join(t.path, 'CLAUDE.md'), '# my own notes\n');
+  await tasks.addRepos(t.slug, ['api']);
+  assert.strictEqual(fs.readFileSync(path.join(t.path, 'CLAUDE.md'), 'utf8'), '# my own notes\n');
 });

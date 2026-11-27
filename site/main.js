@@ -84,4 +84,23 @@
   } else {
     document.querySelectorAll('.reveal').forEach(function(el){ el.classList.add('in'); });
   }
+  // 7) screenshots: click a capture -> full-size popup (Esc / click closes)
+  document.addEventListener('click', function (e) {
+    var img = e.target.closest('#screens .card img');
+    if (!img) return;
+    var fig = img.closest('figure');
+    var cap = fig && fig.querySelector('figcaption') ? fig.querySelector('figcaption').textContent : '';
+    var box = document.createElement('div');
+    box.className = 'lightbox';
+    var im = document.createElement('img'); im.src = img.getAttribute('src'); im.alt = img.alt || '';
+    var x = document.createElement('span'); x.className = 'x'; x.textContent = '×';
+    var fc = document.createElement('figcaption'); fc.textContent = cap;
+    box.appendChild(im); box.appendChild(x); box.appendChild(fc);
+    document.body.appendChild(box);
+    document.body.style.overflow = 'hidden';
+    function close(){ box.remove(); document.body.style.overflow = ''; document.removeEventListener('keydown', onKey); }
+    function onKey(ev){ if (ev.key === 'Escape') close(); }
+    box.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+  });
 })();

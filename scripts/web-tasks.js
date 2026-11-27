@@ -1,17 +1,22 @@
 'use strict';
 // Task workspaces for the launcher: one folder per task, so many parallel tasks never share files.
 //
-//   WORKSPACE_DIR/repos/<repo>/            base clones — the source every task is cut from
+//   WORKSPACE_DIR/repos/<repo>/            base repos: mirrors kept fresh (fetch every few minutes),
+//                                           nobody works in them
 //   WORKSPACE_DIR/tasks/<slug>/.task.json  what the task is (id, title, link, repos, branch, state)
-//   WORKSPACE_DIR/tasks/<slug>/<repo>/     the task's own clone of <repo> on branch <slug>
+//   WORKSPACE_DIR/tasks/<slug>/CLAUDE.md   generated: the task's repos, branches and working rules
+//   WORKSPACE_DIR/tasks/<slug>/<repo>/     a git worktree of repos/<repo> on branch <slug>
 //
-// A task clone is a plain local `git clone` of the base repo (objects are copied locally, no
-// network), with origin re-pointed at the real remote. Plain clones (not worktrees) keep working
-// when the same folder is opened from the host, where /workspace has a different absolute path.
+// A worktree is one more working folder of the base repo: its own files and branch, the history
+// shared. So a fetch in repos/<repo> is seen by every task at once, and the task's commits are in
+// the base repo right away. Worktree paths are absolute (/workspace/...), so they only work inside
+// the box. Tasks made by older versions hold plain local clones instead; those keep working.
+// Chat sessions of a task run in tasks/<slug>/ with every repo added as an extra directory, so
+// each repo's CLAUDE.md and skills load (web-chat.js; claude-default.sh for console sessions).
 //
-// Lifecycle: create -> work -> archive (branch is saved into the base repo, the clone is removed,
-// .task.json stays) -> reopen (clone again, check the branch out) -> forget (remove the folder).
-// Archiving refuses uncommitted changes, so nothing is lost by removing a clone.
+// Lifecycle: create -> work -> archive (the worktree is removed, the branch stays in the base repo,
+// .task.json stays) -> reopen (a worktree on the branch again) -> forget (remove the folder).
+// Archiving refuses uncommitted changes, so nothing is lost by removing a worktree.
 
 const fs = require('fs');
 const path = require('path');
@@ -72,6 +77,8 @@ function bySlug(slug) {
 // ---------- base repos ----------
 async function originUrl(dir) { return gitOut(['-C', dir, 'remote', 'get-url', 'origin']); }
 function isRepo(dir) { return fs.existsSync(path.join(dir, '.git')); }
+// a worktree has a .git FILE pointing at the base repo; an older task clone has a .git folder
+function isWorktree(dir) { try { return fs.statSync(path.join(dir, '.git')).isFile(); } catch (_) { return false; } }
 async function repos() {
   let ents = [];
   try { ents = fs.readdirSync(REPOS, { withFileTypes: true }); } catch (_) {}
@@ -127,25 +134,45 @@ async function defaultBranch(base) {
   return (await gitOut(['-C', base, 'rev-parse', '--abbrev-ref', 'HEAD'])) || 'main';
 }
 
-// clone base -> dir and check out `branch`: the saved branch if the base has it (reopen),
-// otherwise a new branch from the base's freshest origin/<default>.
+// a worktree of repos/<repo> at dir on `branch`: the branch if the base has it (reopen, or a
+// branch pushed by someone), otherwise a new one from the base's freshest origin/<default>.
 async function cutClone(repo, dir, branch) {
   const base = path.join(REPOS, safeName(repo));
   if (!isRepo(base)) throw new Error('base repo not found: repos/' + repo);
-  const saved = await gitOk(['-C', base, 'rev-parse', '--verify', '-q', 'refs/heads/' + branch]);
-  let from = '';
-  if (!saved) {
-    await gitOk(['-C', base, 'fetch', '-q', 'origin'], { timeout: 120000 });       // best effort (needs creds)
-    const def = await defaultBranch(base);
-    from = (await gitOut(['-C', base, 'rev-parse', '--verify', '-q', 'origin/' + def])) ||
-           (await git(['-C', base, 'rev-parse', 'HEAD']));
+  await gitOk(['-C', base, 'worktree', 'prune']);                                   // forget removed folders
+  await gitOk(['-C', base, 'fetch', '-q', '--prune', 'origin'], { timeout: 120000 }); // best effort (needs creds)
+  if (await gitOk(['-C', base, 'rev-parse', '--verify', '-q', 'refs/heads/' + branch])) {
+    await git(['-C', base, 'worktree', 'add', '-q', dir, branch]);
+    return { name: repo, branch, base: 'saved' };
   }
-  await git(['clone', '-q', '--no-checkout', '--', base, dir], { timeout: 30 * 60000 });
-  if (saved) await git(['-C', dir, 'checkout', '-q', '-b', branch, 'origin/' + branch]);
-  else await git(['-C', dir, 'checkout', '-q', '-b', branch, from]);
-  const url = await originUrl(base);
-  if (url) await git(['-C', dir, 'remote', 'set-url', 'origin', url]);
-  return { name: repo, branch, base: from || 'saved' };
+  if (await gitOk(['-C', base, 'rev-parse', '--verify', '-q', 'refs/remotes/origin/' + branch])) {
+    await git(['-C', base, 'worktree', 'add', '-q', '--track', '-b', branch, dir, 'origin/' + branch]);
+    return { name: repo, branch, base: 'origin/' + branch };
+  }
+  const def = await defaultBranch(base);
+  const from = (await gitOut(['-C', base, 'rev-parse', '--verify', '-q', 'origin/' + def])) || (await git(['-C', base, 'rev-parse', 'HEAD']));
+  await git(['-C', base, 'worktree', 'add', '-q', '--no-track', '-b', branch, dir, from]);
+  return { name: repo, branch, base: 'origin/' + def };
+}
+
+// tasks/<slug>/CLAUDE.md: what the folder is and how to work in it. Rewritten when the repos change,
+// unless someone replaced it (no marker line).
+const GUIDE_MARK = '<!-- claude-box: generated for this task, rewritten when its repos change -->';
+function writeGuide(dir, meta) {
+  const f = path.join(dir, 'CLAUDE.md');
+  try { if (!fs.readFileSync(f, 'utf8').startsWith(GUIDE_MARK)) return; } catch (_) {}
+  const rs = (meta.repos || []).map((r) => '- `' + r.name + '/`: repository ' + r.name + ', branch `' + (r.branch || meta.branch) + '`');
+  const lines = [GUIDE_MARK, '', '# Task: ' + (meta.key ? meta.key + ' ' : '') + (meta.title || ''), ''];
+  if (meta.url) lines.push('Link: ' + meta.url, '');
+  lines.push('This folder is the workspace of one task. ' + (rs.length ? 'Each subfolder is a git worktree of a repository, on this task\'s branch:' : 'No repositories yet.'), '');
+  if (rs.length) lines.push(...rs, '');
+  lines.push('Rules:',
+    '- Change code only inside these subfolders. /workspace/repos holds the shared base copies: never edit, commit or check out branches there.',
+    '- Every repository has its own CLAUDE.md, .claude/ settings and skills. Inside a repository follow its rules, not another repository\'s.',
+    '- Commit, push and open the pull request in each repository separately, on the task\'s branch.',
+    '- Other tasks may work on the same repositories at the same time in their own folders; do not touch them.',
+    '- To work on another repository, ask the user to add it to the task (task menu > Add repo); it appears here as a new folder.', '');
+  try { fs.writeFileSync(f, lines.join('\n')); } catch (_) {}
 }
 
 // "https://github.com/Org/Repo.git", "git@github.com:org/repo" -> "github.com/org/repo" (to compare remotes)
@@ -205,7 +232,7 @@ async function open(o) {
       meta.repos.push(await cutClone(r, path.join(dir, safeName(r)), slug));
     } catch (e) { errors.push(label + ': ' + e.message); }
   }
-  writeMeta(dir, meta);
+  writeMeta(dir, meta); writeGuide(dir, meta);
   return Object.assign({ created: true, errors }, await describe(dir, meta));
 }
 
@@ -255,7 +282,12 @@ async function archive(slug, force) {
   }
   for (const r of meta.repos || []) {
     const rd = path.join(dir, r.name); if (!isRepo(rd)) continue;
-    const base = path.join(REPOS, r.name), br = (await gitOut(['-C', rd, 'rev-parse', '--abbrev-ref', 'HEAD'])) || meta.branch;
+    const base = path.join(REPOS, r.name);
+    if (isWorktree(rd)) {                       // the branch already lives in the base repo
+      await git(['-C', base, 'worktree', 'remove'].concat(force ? ['--force'] : []).concat([rd]));
+      continue;
+    }
+    const br = (await gitOut(['-C', rd, 'rev-parse', '--abbrev-ref', 'HEAD'])) || meta.branch;
     if (isRepo(base)) await git(['-C', base, 'fetch', '-q', rd, '+refs/heads/' + br + ':refs/heads/' + meta.branch]);
     else throw new Error('base repo missing: repos/' + r.name + ' — cannot save the branch');
     fs.rmSync(rd, { recursive: true, force: true });
@@ -269,16 +301,19 @@ async function reopen(slug) {
     const rd = path.join(dir, r.name); if (isRepo(rd)) continue;
     await cutClone(r.name, rd, meta.branch);
   }
-  meta.archived = false; delete meta.archivedAt; writeMeta(dir, meta);
+  meta.archived = false; delete meta.archivedAt; writeMeta(dir, meta); writeGuide(dir, meta);
   return describe(dir, meta);
 }
+// names, or {url} of a GitHub repo (cloned into repos/ first when it is not there)
 async function addRepos(slug, names) {
   const { dir, meta } = bySlug(slug);
-  for (const n of (names || []).map(String)) {
+  for (const w of (names || []).slice(0, 10)) {
+    const n = typeof w === 'object' && w ? await ensureBase(w.url) : String(w);
     if ((meta.repos || []).some((r) => r.name === n)) continue;
     meta.repos.push(await cutClone(n, path.join(dir, safeName(n)), meta.branch));
+    writeMeta(dir, meta);
   }
-  writeMeta(dir, meta); return describe(dir, meta);
+  writeMeta(dir, meta); writeGuide(dir, meta); return describe(dir, meta);
 }
 // fetch every clone of the task from the real remote (updates the merged / unpushed state)
 async function refresh(slug) {
@@ -291,7 +326,39 @@ function forget(slug) {
   const { dir, meta } = bySlug(slug);
   if (!meta.archived) throw new Error('archive the task first');
   fs.rmSync(dir, { recursive: true, force: true });
+  for (const r of meta.repos || []) { const base = path.join(REPOS, r.name); if (isRepo(base)) gitOk(['-C', base, 'worktree', 'prune']); }
   return { ok: true };
 }
 
-module.exports = { list, open, archive, reopen, addRepos, refresh, forget, addRepo, slugify, remoteId, ensureBase, TASKS, REPOS };
+// Keep repos/ fresh: fetch every base repo, and fast-forward its checked-out default branch when
+// nothing is changed there (nobody should work in repos/, but do not clobber it if someone did).
+const SYNC_MIN = Math.max(1, parseInt(process.env.WEB_REPOS_SYNC_MIN || '15', 10) || 15);
+let syncing = false;
+async function syncBases() {
+  if (syncing) return; syncing = true;
+  try {
+    for (const r of await repos()) {
+      if (!(await gitOk(['-C', r.path, 'fetch', '-q', '--prune', 'origin'], { timeout: 180000 }))) continue;
+      const def = await defaultBranch(r.path);
+      const cur = await gitOut(['-C', r.path, 'rev-parse', '--abbrev-ref', 'HEAD']);
+      if (cur === def && !(await gitOut(['-C', r.path, 'status', '--porcelain', '--untracked-files=no'])))
+        await gitOk(['-C', r.path, 'merge', '-q', '--ff-only', 'origin/' + def]);
+    }
+  } finally { syncing = false; }
+}
+let syncTimer = null;
+function startSync() {
+  if (syncTimer) return;
+  const first = setTimeout(() => syncBases().catch(() => {}), 60000);
+  if (first.unref) first.unref();
+  syncTimer = setInterval(() => syncBases().catch(() => {}), SYNC_MIN * 60000);
+  if (syncTimer.unref) syncTimer.unref();
+}
+// the repo folders of the task a session runs in (tasks/<slug>/), for the session's extra directories
+function taskRepoDirs(cwd) {
+  const meta = readMeta(cwd || '');
+  if (!meta) return [];
+  return (meta.repos || []).map((r) => path.join(cwd, r.name)).filter((d) => isRepo(d));
+}
+
+module.exports = { syncBases, startSync, taskRepoDirs, isWorktree, list, open, archive, reopen, addRepos, refresh, forget, addRepo, slugify, remoteId, ensureBase, TASKS, REPOS };

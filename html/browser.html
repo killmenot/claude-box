@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browser · claude-box</title>
+<style>
+  /* The built-in browser's screen (scripts/web-browser.js): noVNC draws the box's Chromium here,
+     scaled to fit; mouse, keyboard and the clipboard go back to it. */
+  :root{ --bg:#0e1116; --fg:#cdd2dc; --mute:#8a93a2; --iris:#8080f0; }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
+  #screen{position:absolute;inset:0}
+  #msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:var(--mute);pointer-events:none}
+  #msg b{color:var(--fg);font-weight:600}
+  #msg.hidden{display:none}
+</style>
+</head>
+<body>
+<div id="screen"></div>
+<div id="msg"><b>Starting the browser…</b><span>Chromium in the box, shared by every session</span></div>
+<script type="module">
+import RFB from './core/rfb.js';
+const screen = document.getElementById('screen'), msg = document.getElementById('msg');
+const url = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + location.pathname.replace(/[^/]*$/, '') + 'websockify';
+let rfb = null, retry = 0;
+function say(title, sub) { msg.classList.toggle('hidden', !title); msg.innerHTML = title ? '<b>' + title + '</b><span>' + (sub || '') + '</span>' : ''; }
+function connect() {
+  rfb = new RFB(screen, url, { wsProtocols: ['binary'] });
+  rfb.scaleViewport = true; rfb.resizeSession = false; rfb.focusOnClick = true; rfb.background = '#0e1116';
+  rfb.addEventListener('connect', () => { retry = 0; say(''); lastSize = ''; sendSize(); });
+  rfb.addEventListener('disconnect', () => {
+    rfb = null;
+    say('Reconnecting to the browser…', 'If it does not come back, the box may have been started without --browser');
+    setTimeout(connect, Math.min(5000, 500 * (++retry)));
+  });
+  // the browser's clipboard -> this computer's (needs https; the page must have focus)
+  rfb.addEventListener('clipboard', (e) => { lastClip = e.detail.text; try { navigator.clipboard.writeText(e.detail.text).catch(() => {}); } catch (_) {} });
+  // On a Mac, Cmd is the shortcut key; the browser in the box is Linux, where that is Ctrl. So Cmd
+  // goes in as Ctrl: Cmd+C / V / A / L / T / F work the way they do on the Mac.
+  // noVNC itself already turns Cmd into Alt and Option into Mode_switch, so the physical key (code)
+  // decides here. Text editing keeps its Mac habits: Cmd+arrows to line/text ends, Option+arrows by
+  // word, Option/Cmd+Backspace delete a word / to the line start.
+  if (MAC && rfb._keyboard) {
+    const send = rfb._keyboard.onkeyevent;
+    const tap = (k, c) => { send(k, c, true); send(k, c, false); };
+    rfb._keyboard.onkeyevent = (keysym, code, down) => {
+      if (code === 'MetaLeft' || code === 'MetaRight') { metaDown = down; return send(XK.Control_L, 'ControlLeft', down); }
+      if (code === 'AltLeft' || code === 'AltRight') { altDown = down; return send(XK.Alt_L, 'AltLeft', down); }
+      const arrow = { ArrowLeft: 1, ArrowRight: 1, ArrowUp: 1, ArrowDown: 1 }[code];
+      if (metaDown && (arrow || code === 'Backspace')) {
+        if (!down) return;
+        if (code === 'ArrowUp' || code === 'ArrowDown') return tap(code === 'ArrowUp' ? XK.Home : XK.End, code === 'ArrowUp' ? 'Home' : 'End');   // Ctrl+Home/End
+        send(XK.Control_L, 'ControlLeft', false);
+        if (code === 'Backspace') { send(XK.Shift_L, 'ShiftLeft', true); tap(XK.Home, 'Home'); send(XK.Shift_L, 'ShiftLeft', false); tap(XK.BackSpace, 'Backspace'); }
+        else tap(code === 'ArrowLeft' ? XK.Home : XK.End, code === 'ArrowLeft' ? 'Home' : 'End');
+        return send(XK.Control_L, 'ControlLeft', true);
+      }
+      if (altDown && (code === 'ArrowLeft' || code === 'ArrowRight' || code === 'Backspace')) {
+        if (!down) return;
+        send(XK.Alt_L, 'AltLeft', false); send(XK.Control_L, 'ControlLeft', true);
+        tap(keysym, code);
+        send(XK.Control_L, 'ControlLeft', false); return send(XK.Alt_L, 'AltLeft', true);
+      }
+      // the Mac's key repeat: a held key arrives as more presses; X only counts a press after a release
+      if (down && held.has(code)) send(keysym, code, false);
+      if (down) held.add(code); else held.delete(code);
+      return send(keysym, code, down);
+    };
+  }
+}
+const held = new Set();
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const XK = { Control_L: 0xffe3, Control_R: 0xffe4, Shift_L: 0xffe1, Alt_L: 0xffe9, Home: 0xff50, End: 0xff57, BackSpace: 0xff08, v: 0x76 };
+let metaDown = false, altDown = false, lastClip = '';
+// The clipboard goes through the server (DevTools in the box), not through VNC:
+//  Cmd+V: this computer's clipboard is typed into the focused field of the page in the box;
+//         if it cannot be read here, Ctrl+V pastes the box's own clipboard instead.
+//  Cmd+C / Cmd+X: the box gets Ctrl+C / Ctrl+X, then what it copied lands on this computer's clipboard.
+const pressCtrl = (keysym, code) => {
+  rfb.sendKey(XK.Control_L, 'ControlLeft', true);
+  rfb.sendKey(keysym, code, true); rfb.sendKey(keysym, code, false);
+  if (!metaDown) rfb.sendKey(XK.Control_L, 'ControlLeft', false);
+};
+window.addEventListener('keydown', (e) => {
+  if (!rfb || !MAC || !e.metaKey || e.altKey || e.ctrlKey) return;
+  if (e.code === 'KeyV') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    let read; try { read = navigator.clipboard.readText(); } catch (_) { read = Promise.reject(); }
+    read.then((t) => fetch('clipboard', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t }) })
+      .then((r) => { if (!r.ok) throw new Error(); }))
+      .catch(() => pressCtrl(XK.v, 'KeyV'));
+  } else if (e.code === 'KeyC' || e.code === 'KeyX') {
+    // noVNC sends the keys (Cmd is Ctrl in the box); then ask what was copied
+    setTimeout(() => fetch('clipboard').then((r) => r.json()).then((o) => {
+      if (o && o.text) { lastClip = o.text; navigator.clipboard.writeText(o.text).catch(() => {}); }
+    }).catch(() => {}), 250);
+  }
+}, true);
+window.addEventListener('keyup', (e) => { if (MAC && rfb && e.code === 'KeyV' && e.metaKey) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+// this computer's clipboard -> the browser: on paste, and when the tab gets focus
+document.addEventListener('paste', (e) => { const t = e.clipboardData && e.clipboardData.getData('text'); if (t && rfb) rfb.clipboardPasteFrom(t); });
+window.addEventListener('focus', () => { try { navigator.clipboard.readText().then((t) => { if (t && rfb) rfb.clipboardPasteFrom(t); }, () => {}); } catch (_) {} });
+// The screen follows this tab's size (the server resizes the VNC picture and the Chromium windows),
+// so the browser fills the tab 1:1. Scaling stays on only for the moment until the new size arrives.
+let sizeT = null, lastSize = '';
+function sendSize() {
+  const w = screen.clientWidth, h = screen.clientHeight, k = w + 'x' + h;
+  if (!w || !h || k === lastSize) return;
+  lastSize = k;
+  fetch('size', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ w, h }) }).catch(() => { lastSize = ''; });
+}
+new ResizeObserver(() => { clearTimeout(sizeT); sizeT = setTimeout(sendSize, 250); }).observe(screen);
+// the launcher calls this when the tab is shown, so typing goes to the browser at once
+window.cbBrowser = { focus() { if (rfb) rfb.focus(); }, lastClipboard: () => lastClip };
+connect();
+</script>
+</body>
+</html>

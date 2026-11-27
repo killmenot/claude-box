@@ -12,6 +12,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
+// The Agent SDK calls process.report.getReport() on every query() to tell musl from glibc. The
+// report's network section lists every open socket and resolves its peer names, which takes 15+ s
+// with many connections open and blocks this whole process (terminals, chats, every endpoint).
+// Nothing here needs that section, so leave it out of every report.
+try { process.report.excludeNetwork = true; } catch (_) {}
+
 const HOME = process.env.HOME || '/home/node';
 const CLAUDE_DIR = path.join(HOME, '.claude');
 const env = process.env;
@@ -64,16 +70,16 @@ function writeApiToken() {
   return tok;
 }
 
-// ---------- 1. defaults ----------
 // Claude Code takes a user-scope MCP server's url literally (no ${VAR} expansion there), so a url
-// built from the env file (OUTLINE_URL) is filled in here: ${VAR} / ${VAR:-default}, an empty VAR
-// counts as unset; a trailing slash on the base does not double up. Only urls: secrets stay out of
+// built from the env file is filled in here: ${VAR} / ${VAR:-default}, an empty VAR counts as
+// unset; a trailing slash on the base does not double up. Only urls: secrets stay out of
 // ~/.claude.json (a server's key comes from a headersHelper that reads the env at connect time).
 function expandUrl(u) {
   return String(u)
     .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_, k, def) => env[k] || def || '')
     .replace(/([^:\/])\/{2,}/g, '$1/');
 }
+// ---------- 1. defaults ----------
 // settings.json is copied once (the user may change it later); MCP servers are re-synced from the
 // image on every start; the claude-notify hooks are (re)installed unless CLAUDE_NOTIFY_DISABLE is set.
 function seedDefaults() {
@@ -84,16 +90,36 @@ function seedDefaults() {
   if (!fs.existsSync(settingsFile) && fs.existsSync(path.join(DEF, 'settings.json'))) {
     fs.copyFileSync(path.join(DEF, 'settings.json'), settingsFile);
   }
+  // Claude Code deletes conversations older than cleanupPeriodDays (30 by default) on its own; the box
+  // keeps them a year, so an archived or old session can still be resumed. A value the user set stays.
+  const st = readJson(settingsFile);
+  if (st && typeof st === 'object' && st.cleanupPeriodDays === undefined) {
+    st.cleanupPeriodDays = 365;
+    try { const tmp = settingsFile + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(st, null, 2) + '\n'); fs.renameSync(tmp, settingsFile); } catch (_) {}
+  }
   const config = readJson(configFile) || {};
   const mcp = readJson(path.join(DEF, 'mcp.json'));
   if (mcp && mcp.mcpServers) {
     const servers = {};
     for (const [k, v] of Object.entries(mcp.mcpServers)) servers[k] = v && v.url ? Object.assign({}, v, { url: expandUrl(v.url) }) : v;
+    // --browser: Claude's playwright tools drive the box's own Chromium (the Browser tab), not a browser of
+    // their own, and see only their session's window there (web-browser.js): the endpoint names the
+    // session from CB_SESSION, which a chat (web-chat.js) or a console (claude-default.sh) sets. A shell
+    // reads it when the server starts, so one config serves every session.
+    if (env.WEB_BROWSER === '1' && servers.playwright && Array.isArray(servers.playwright.args) && servers.playwright.command) {
+      const own = servers.playwright.args.filter((a, i, l) => a !== '--cdp-endpoint' && l[i - 1] !== '--cdp-endpoint');
+      servers.playwright = Object.assign({}, servers.playwright, { command: 'sh', args: ['-c',
+        'exec "$0" "$@" --cdp-endpoint "http://127.0.0.1:' + (env.CB_BROWSER_SESSION_PORT || '9334') + '/s/${CB_SESSION:-console}"',
+        servers.playwright.command].concat(own) });
+    }
     config.mcpServers = Object.assign({}, config.mcpServers, servers);
   }
+  // MCP_ATLASSIAN=0 in .env (the wizard asks) keeps the Atlassian server out of this box
+  if (env.MCP_ATLASSIAN === '0') delete config.mcpServers.atlassian;
   // an OAuth token in .env: skip the first-run login wizard (Claude Code ignores it during onboarding)
   if (env.CLAUDE_CODE_OAUTH_TOKEN) config.hasCompletedOnboarding = true;
   writeJson(configFile, config);
+  syncSkills(path.join(DEF, 'skills'), path.join(CLAUDE_DIR, 'skills'));
   if (!env.CLAUDE_NOTIFY_DISABLE) {
     const s = readJson(settingsFile) || {};
     const hook = (state) => [{ hooks: [{ type: 'command', command: `claude-notify ${state}` }] }];
@@ -102,21 +128,48 @@ function seedDefaults() {
   }
 }
 
-// ---------- 1b. git identity ----------
-// Who the box commits as. GIT_USER_NAME / GIT_USER_EMAIL from the env file (./claude-box asks for
-// them when the box is set up) are written to ~/.gitconfig on every start, so the env file is the
-// one place to change them. Without them the box keeps what ~/.gitconfig has, and fills a missing
-// one from the GitHub account once gh is signed in. Claude never guesses one: see
-// claude-defaults/managed-CLAUDE.md (/etc/claude-code/CLAUDE.md in the image).
-function setupGitIdentity(e = env) {
-  const set = [];
-  for (const [k, key] of [['GIT_USER_NAME', 'user.name'], ['GIT_USER_EMAIL', 'user.email']]) {
-    const v = String(e[k] || '').trim();
-    if (!v) continue;
-    try { execFileSync('git', ['config', '--global', key, v], { stdio: 'ignore', env: e }); set.push(key); }
-    catch (err) { warn(`git config ${key} failed:`, err.message); }
+// Skills shipped with the box (claude-defaults/skills/<name>) are copied to ~/.claude/skills/<name>
+// on every start, so an image update brings the new version. A copy holds a marker file; delete the
+// marker to keep your own edits (the box then leaves that folder alone). A folder of the same name
+// without the marker is the user's own skill and is never touched — unless it is a broken copy left by
+// an interrupted sync (no SKILL.md, or an empty one), which is replaced.
+//
+// Files are copied with plain read/write, not fs.copyFile/cpSync: on the Colima/virtiofs bind mount
+// copyFile can fail halfway and leave an empty, write-only file behind. The copy is built in a temp
+// folder and renamed into place, so a failure never leaves a half-copied skill.
+const SKILL_MARK = '.claude-box-managed';
+function copyTree(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, e.name), d = path.join(dst, e.name);
+    if (e.isDirectory()) copyTree(s, d);
+    else if (e.isFile()) fs.writeFileSync(d, fs.readFileSync(s), { mode: (fs.statSync(s).mode & 0o777) | 0o600 });
   }
-  if (set.length) log('git identity from the env file:', set.join(', '));
+}
+function brokenCopy(dir) {
+  try { return fs.statSync(path.join(dir, 'SKILL.md')).size === 0; } catch (_) { return true; }
+}
+function syncSkills(from, to) {
+  let names;
+  try { names = fs.readdirSync(from, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name); } catch (_) { return []; }
+  const done = [];
+  for (const name of names) {
+    const dst = path.join(to, name);
+    if (fs.existsSync(dst) && !fs.existsSync(path.join(dst, SKILL_MARK)) && !brokenCopy(dst)) continue;
+    const tmp = path.join(to, `.${name}.tmp-${process.pid}`);
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      copyTree(path.join(from, name), tmp);
+      fs.writeFileSync(path.join(tmp, SKILL_MARK), 'Installed by claude-box and replaced on every start. Delete this file to keep your own changes.\n');
+      fs.rmSync(dst, { recursive: true, force: true });
+      fs.renameSync(tmp, dst);
+      done.push(name);
+    } catch (e) {
+      warn(`skill ${name}: ${e.message}`);
+      try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+    }
+  }
+  return done;
 }
 
 // ---------- 2. TLS ----------
@@ -204,6 +257,14 @@ async function run() {
     warn(`WARNING: listening on ${IFACE} WITHOUT a password — an open writable shell exposed to the outside!`);
     warn('         Set WEB_TERMINAL_PASSWORD in .env.');
   }
+  // who the box commits as: the env file's (the host's) identity where none is set yet, then the
+  // GitHub account's once gh is signed in; changed later in Settings > GitHub
+  try {
+    const git = require('./web-git.js');
+    const set = await git.seedIdentity(env);
+    if (set.length) log('git identity from the env file:', set.join(', '));
+    git.fillIdentity().catch(() => {});
+  } catch (e) { warn('git identity:', e.message); }
   // pick the ttyd port BEFORE the sidecar loads: the sidecar reads TTYD_PORT from the env at
   // require time (it proxies /term there)
   env.TTYD_PORT = await pickTtydPort();
@@ -215,8 +276,6 @@ async function run() {
   let apiToken = '';
   try { apiToken = writeApiToken(); } catch (e) { warn('api token:', e.message); }
   try { seedDefaults(); } catch (e) { warn('seeding defaults failed:', e.message); }
-  setupGitIdentity();
-  require('./web-git.js').fillIdentity().catch(() => {});   // only what is still unset; needs gh signed in
   setupTls();
   const tunnel = startTunnel();
 
@@ -248,6 +307,7 @@ async function run() {
     // final snapshot BEFORE killing tmux — otherwise it would record "nothing is running"
     if (RESTORE) { try { registry.snapshot(); } catch (_) {} }
     try { execFileSync('tmux', ['kill-server'], { stdio: 'ignore' }); } catch (_) {}   // SIGHUP -> Claude flushes state
+    try { require('./web-browser.js').stop(); } catch (_) {}                         // Chromium writes its cookies on SIGTERM
     setTimeout(() => {
       for (const p of [ttyd, tunnel]) if (p) try { p.kill(); } catch (_) {}
       try { fs.writeFileSync(TUNNEL_URL_FILE, ''); } catch (_) {}
@@ -264,5 +324,5 @@ async function run() {
   }
 }
 
-module.exports = { seedDefaults, setupGitIdentity, expandUrl, pickTtydPort, dropSecrets, SECRET_ENV };
+module.exports = { seedDefaults, syncSkills, expandUrl, pickTtydPort, dropSecrets, SECRET_ENV };
 if (require.main === module) main();

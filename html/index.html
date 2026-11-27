@@ -246,6 +246,12 @@
 
   // --- input / resize ---
   term.onData(function (d) { wakeAudio(); send(enc.encode(CLI.INPUT + d)); });
+  // The launcher (same origin, this page in its iframe) types into the terminal: "▶ Terminal" on a
+  // chat code block runs the block here, as if typed.
+  window.cbTerm = {
+    ready: function () { return !!(socket && socket.readyState === 1); },
+    input: function (text) { wakeAudio(); send(enc.encode(CLI.INPUT + text)); term.focus(); }
+  };
 
   function syncSize() {
     fit.fit();

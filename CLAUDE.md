@@ -23,7 +23,17 @@ Guidance for Claude Code (and other agents) working in this repository.
   `scripts/web-wire.js` — records what the background agents (Inbox, Today) send to the model and get back: a per-run local HTTPS proxy, served at `/wire`.
   `scripts/web-auth.js` — the web login: one-time sign-in key from `./claude-box`, session cookies, login/password set in the UI (`/auth`).
   `scripts/web-git.js` — GitHub sign-in from the UI via `gh auth login --web` device codes (`/git`).
-  `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with per-task repo clones from `/workspace/repos`), served at `/tasks`.
+  `scripts/web-models.js` — model providers (Claude, GLM, Abliteration, custom) and each chat's model; keys in `~/.claude/web-providers.json` (`/models`).
+  `scripts/web-tasks.js` — task workspaces (`/workspace/tasks/<slug>` with a git worktree per repo of `/workspace/repos`, kept fresh by a fetch timer), served at `/tasks`.
+  `scripts/cb-mcp.js` — the box's own MCP server (`claude-box`): `show_artifact` for the artifact panel; `scripts/web-artifact.js` serves those files sandboxed at `/artifact/`.
+  `scripts/web-browser.js` — the session's Browser tab: one Chromium for the box (only with `./claude-box --browser`) on Xvfb, shown via x11vnc on a unix socket + noVNC at `/browser/`; Claude's playwright MCP drives it over CDP.
+  `scripts/web-archive.js` — archive / restore / delete a session with its own folder (tasks/ or tmp/ only, losses confirmed first) and the Storage list (`/sessions/*`).
+  `scripts/web-cdp-filter.js` — one session's DevTools view of the box browser: only its own window's tabs (web-browser.js serves it at `127.0.0.1:9334/s/<session>`).
+  `scripts/web-context.js` — the session's context strip: PRs, Slack threads and Jira issues found in its transcript and task folder, with facts from gh and the Today snapshot (`/context`).
+  `scripts/web-code.js` — the session's Code tab: code-server (only with `./claude-box --vscode`) on a private unix socket, proxied at `/code/`.
+  `scripts/claude-default.sh` — starts console `claude` with the default model and, in a task folder, its repos as `--add-dir`.
+- `claude-defaults/` — seeded into `~/.claude` at startup: `settings.json` (once), `mcp.json` (merged every start),
+  `skills/<name>/` (copied every start unless the user deleted the `.claude-box-managed` marker), e.g. `skills/pr-review`.
 - `site/` — the static marketing landing for **claude-box.dev** (Tailwind, self-hosted
   fonts, no CDN; deploy with `./site/deploy.sh`).
 - `html/` — the in-product web terminal / session launcher pages.
@@ -44,6 +54,11 @@ Guidance for Claude Code (and other agents) working in this repository.
   tool the host lacks (tmux, `/proc`) skips on the host instead of failing.
 
 ## Secrets & safety
+
+- **This repo is public: no real work data in it** — no employer or company names, real issue keys,
+  Slack or Jira links and ids, colleagues' names or work e-mail addresses, in code, tests, docs or
+  commit messages. Examples use placeholders (`acme`, `PROJ-123`, `example.com`).
+  `tests/private-words.test.js` checks this against a local list (`~/.config/claude-box/private-words`).
 
 - Never read, print, or commit `.env` or `certs/*.crt` (they are gitignored and
   permission-denied). `.env.example` is the public template — keep it English and secret-free.

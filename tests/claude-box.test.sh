@@ -39,22 +39,18 @@ fi
 mode(){ stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 val(){ grep -E "^$1=" "$repo/.env" | tail -n1 | cut -d= -f2-; }
 
-# --- 1. first run: the projects folder and the git identity are asked; the web login is set later in the browser ---
-# the host's own git identity is the default the setup offers
-printf '[user]\n\tname = Host User\n\temail = host@example.com\n' > "$HOME/.gitconfig"
+# --- 1. first run: projects folder, model (default Claude), integrations; login comes via the browser ---
 out="$(tty_run '\n\n\n')"
 key_file="$repo/home/.claude/web-login-key"
 check "first run: .env created"                    yes "$([ -f "$repo/.env" ] && echo yes)"
 check "first run: .env is private"                 600 "$(mode "$repo/.env")"
 check "first run: projects default to ./workspace" "$repo/workspace" "$(val PROJECT_DIR)"
 check "first run: projects folder created"         yes "$([ -d "$repo/workspace" ] && echo yes)"
-check "first run: no password asked"               0 "$(printf '%s' "$out" | grep -c 'Password (Enter\|Repeat password')"
-check "first run: no password in .env"             "" "$(val WEB_TERMINAL_PASSWORD)"
+check "first run: layout dirs created"             yes "$([ -d "$repo/workspace/tasks" ] && [ -d "$repo/workspace/tmp" ] && [ -d "$repo/workspace/repos" ] && [ -d "$repo/workspace/sessions" ] && echo yes)"
+check "first run: model asked in wizard"           0 "$(printf '%s' "$out" | grep -c 'Choose \[1/2/3\]')"
+check "first run: jira asked in wizard"            0 "$(printf '%s' "$out" | grep -c 'Enable the Jira')"
 check "first run: other settings kept"             7681 "$(val WEB_TERMINAL_PORT)"
 check "first run: container uid saved (BOX_UID)"    "$(id -u)" "$(val BOX_UID)"
-check "first run: auth hint shown (none configured)" 1 "$(printf '%s' "$out" | grep -c 'auth is not configured')"
-check "first run: git name defaults to the host's" "Host User" "$(val GIT_USER_NAME)"
-check "first run: git email defaults to the host's" "host@example.com" "$(val GIT_USER_EMAIL)"
 check "first run: container gid saved (BOX_GID)"    "$(id -g)" "$(val BOX_GID)"
 check "first run: image built"                     1 "$(dlog | grep 'compose -f docker-compose.yml build' | grep -vc -- '--print')"
 check "first run: web started"                     1 "$(dlog | grep -c 'compose -f docker-compose.yml up -d web')"
@@ -68,7 +64,7 @@ check "first run: says the login is picked in the UI" 1 "$(printf '%s' "$out" | 
 # --- 2. second run: nothing to ask, a fresh key every start ---
 : > "$tmp/docker.log"
 out="$(tty_run '')"
-check "second run: no questions"                   0 "$(printf '%s' "$out" | grep -c 'Press Enter\|Password\|Commit name')"
+check "second run: no questions"                   0 "$(printf '%s' "$out" | grep -c 'Press Enter\|Password')"
 check "second run: no auth hint"                   0 "$(printf '%s' "$out" | grep -c 'auth is not configured')"
 check "second run: web started"                    1 "$(dlog | grep -c 'up -d web')"
 check "second run: a new key"                      no "$([ "$(cat "$key_file")" = "$key" ] && echo yes || echo no)"
@@ -93,14 +89,33 @@ out="$(tty_run '' --tunnel)"
 check "--tunnel with a UI login: allowed"          0 "$(printf '%s' "$out" | grep -c 'Tunnel not started')"
 
 # --- 3. --setup: a custom projects folder ---
-out="$(tty_run "~/code/projects\nBox Bot\nnot-an-email\nbot@example.com\n" --setup)"
+out="$(tty_run "~/code/projects\n" --setup)"
 check "setup: tilde path expanded and created"     "$HOME/code/projects" "$(val PROJECT_DIR)"
 check "setup: still a single PROJECT_DIR line"     1 "$(grep -c '^PROJECT_DIR=' "$repo/.env")"
-check "setup: git name changed"                    "Box Bot" "$(val GIT_USER_NAME)"
-check "setup: a non-email is asked again"          1 "$(printf '%s' "$out" | grep -c 'is not an email address')"
-check "setup: git email changed"                   "bot@example.com" "$(val GIT_USER_EMAIL)"
-check "setup: one GIT_USER_EMAIL line"             1 "$(grep -c '^GIT_USER_EMAIL=' "$repo/.env")"
 rm -f "$HOME/.gitconfig"
+
+# --- 3c. certificate trust (sudo stubbed; CERT_TRUST preset in .env) ---
+rm "$repo/.env"; mkdir -p "$repo/home/web-certs"; echo dummy-cert > "$repo/home/web-certs/web.crt"
+export DOCKER_SOCK_FILE="$tmp/dockersock"; touch "$tmp/dockersock"
+export CA_CERT_DST="$tmp/ca-store/claude-box.crt"; mkdir -p "$tmp/ca-store"
+printf "#!/bin/sh
+if [ \"\$1\" = install ]; then cp \"\$4\" \"\$5\"; fi
+echo \"sudo \$*\" >> \"%s/sudo.log\"
+exit 0
+" "$tmp" > "$bin/sudo"; chmod +x "$bin/sudo"
+printf 'PROJECT_DIR=%s\nCERT_TRUST=1\n' "$repo/workspace" > "$repo/.env"
+: > "$tmp/sudo.log"
+out="$(tty_run '')"
+check "cert: preset 1 installs into the host store"   1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
+check "cert: dst holds the certificate"              yes "$([ -f "$tmp/ca-store/claude-box.crt" ] && echo yes)"
+check "cert: unchanged cert skips reinstall"          1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
+echo dummy2 > "$repo/home/web-certs/web.crt"
+printf 'PROJECT_DIR=%s\nCERT_TRUST=no\n' "$repo/workspace" > "$repo/.env"
+out="$(tty_run '')"
+check "cert: preset no skips install"                1 "$(grep -c update-ca-certificates "$tmp/sudo.log" | tr -d ' ')"
+unset DOCKER_SOCK_FILE CA_CERT_DST
+rm -f "$bin/sudo"
+rm -f "$bin/sudo"
 
 # --- 4. non-interactive without .env: fail with a hint, no docker ---
 rm "$repo/.env"; : > "$tmp/docker.log"
@@ -170,6 +185,15 @@ check "start: no forced recreate"                  0 "$(dlog | grep -c -- '--for
 bash "$repo/claude-box" --restart </dev/null >/dev/null 2>&1
 check "--restart: builds through bake"             1 "$(dlog | grep -c 'buildx bake')"
 check "--restart: recreates the container"         1 "$(dlog | grep -c 'up -d --force-recreate web')"
+
+check "no --browser: no browser overlay"           0 "$(dlog | grep -c 'docker-compose.browser.yml')"
+check "no --browser: no weekly refresh"            0 "$(dlog | grep -c 'BROWSER_REFRESH')"
+: > "$tmp/docker.log"
+bash "$repo/claude-box" --browser </dev/null >/dev/null 2>&1
+check "--browser: overlay on build and up"         1 "$(dlog | grep -c 'docker-compose.browser.yml.* up -d web')"
+check "--browser: Chromium refreshed weekly"        1 "$(dlog | grep -c "BROWSER_REFRESH=$(date +%G-%V)")"
+out="$(bash "$repo/claude-box" --browser --tunnel </dev/null 2>&1)"
+check "--tunnel with --browser: warns"             1 "$(printf '%s' "$out" | grep -c 'tunnel with --browser')"
 
 # --- EXTRA_HOSTS: a throwaway compose overlay with extra_hosts; the stub copies it while it exists ---
 printf '#!/bin/sh

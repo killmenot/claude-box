@@ -1,5 +1,10 @@
 {
   "mcpServers": {
+    "claude-box": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/usr/local/lib/claude-web/cb-mcp.js"]
+    },
     "atlassian": {
       "type": "http",
       "url": "https://mcp.atlassian.com/v1/mcp"

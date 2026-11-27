@@ -49,10 +49,17 @@ function isPrompt(e) {
   if (typeof c === 'string') return !/^<(local-command|command-name|system-reminder)/.test(c.trim());
   return Array.isArray(c) && c.some((b) => b && b.type === 'text') && !c.some((b) => b && b.type === 'tool_result');
 }
+// The tick runs every 15 s and tails EVERY session; without this cache that means re-reading
+// up to TAIL_BYTES per transcript (~30 MB of sync reads + JSON parsing) per tick, which stalls
+// the whole server for seconds. Unchanged files reuse the cached last uuid instead.
+const TAIL_CACHE = new Map();      // token-independent: file -> {size, uuid, result}
 function tail(file) {
+  let st; try { st = fs.statSync(file); } catch (_) { return null; }
+  const cached = TAIL_CACHE.get(file);
+  if (cached && cached.size === st.size) return cached.uuid ? cached : null;
   let buf = '';
   try {
-    const st = fs.statSync(file), fd = fs.openSync(file, 'r'), n = Math.min(st.size, TAIL_BYTES), b = Buffer.alloc(n);
+    const fd = fs.openSync(file, 'r'), n = Math.min(st.size, TAIL_BYTES), b = Buffer.alloc(n);
     fs.readSync(fd, b, 0, n, st.size - n); fs.closeSync(fd); buf = b.toString('utf8');
   } catch (_) { return null; }
   const ents = [];
@@ -83,7 +90,9 @@ function tail(file) {
   let text = lines.join('\n\n');
   if (text.length > 12000) text = text.slice(0, 2500) + '\n\n[…]\n\n' + text.slice(-9000);
   const toolLine = Object.keys(tools).map((k) => k + '×' + tools[k]).join(', ');
-  return { uuid: ents[ents.length - 1].uuid, text, tools: toolLine, errors };
+  const res = { uuid: ents[ents.length - 1].uuid, text, tools: toolLine, errors };
+  TAIL_CACHE.set(file, { size: st.size, uuid: res.uuid, result: res });
+  return res;
 }
 
 // ---------- the model run: no tools, JSON out ----------

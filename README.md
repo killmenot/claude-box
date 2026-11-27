@@ -39,14 +39,93 @@ The old `--web` / `--build` flags are still accepted and do the same as a plain 
 3. prints a **one-time sign-in link** (`https://localhost:8443/?key=…`, valid 15 minutes, works once),
    plus the same key on plain http (`http://localhost:7681/?key=…`): the https one uses a self-signed
    certificate the browser warns about until you trust it, the http one has no warning (localhost is a
-   secure context either way). Open either: the browser is signed in, and the first visit asks for a **login and password** (for your
-   phone, other computers and the public tunnel), then offers to **connect GitHub** (the same device
-   code as `gh auth login --web`; optional, also in Settings).
+   secure context either way, so clipboard and notifications work on both). Open either: the browser is signed in, and a setup wizard walks through four steps:
+   - **Login** (required): a login and password for your phone, other computers and the public tunnel;
+   - **Model**: **Sign in with Claude** runs `claude auth login` in the box: open claude.ai, sign in,
+     paste back the code it shows. Or pick GLM / Abliteration and paste an API key;
+   - **GitHub**: the same device code as `gh auth login --web`;
+   - **Jira**: the Atlassian sign-in for New session.
+   Everything but the login can be skipped and done later in Settings.
 
 Every start prints a fresh link; `./claude-box --login` prints one without restarting anything.
+
+**Docker on the host** (test stacks: redis, postgres, `docker compose up`): `./claude-box --docker` lets the
+box use the host's Docker (`--no-docker` takes it away; the first run asks). The box gets the `docker`
+and `docker compose` CLIs and the host's socket — root-equivalent on that machine, so only where
+everyone using the box is trusted. Containers started from the box run next to it, not inside: their
+published ports are at `host.docker.internal:<port>` from the box, and bind mounts need host paths.
+On macOS with Colima, set `docker: {ip: 127.0.0.1}` in `~/.colima/default/colima.yaml`
+(then `colima restart`) so `-p 6379:6379` publishes on the Mac's 127.0.0.1 only, not on every network.
+
+**VS Code** (`./claude-box --vscode`): that start builds the image with code-server (about 560 MB
+more) and every session gets a **VS Code** tab next to Chat / Console / Terminal / Files: VS Code opened
+on the session's folder (for a task, all its repo worktrees). Switching sessions switches the editor;
+the last three stay loaded, and VS Code follows the light/dark theme. code-server starts on the first click, listens on a private unix socket
+(no port) and is served at `/code/` behind the claude-box login. Claude Code and GitLens extensions
+are installed on its first start. The flag is not remembered: a start without it has no VS Code.
+
+**Artifacts**: ask for a design, mockup, chart or report and Claude writes one HTML file in the
+session's `.artifacts/` and calls `show_artifact` (the box's own MCP server, `scripts/cb-mcp.js`). The
+chat gets a card, and the page opens in a panel on the right: every call is a version (v1, v2, …), the
+latest reloads when the file changes, ⤢ widens it, ↗ opens it in a tab. Everything stays in the box
+(nothing goes to claude.ai) and works with any model. The page is served from `/artifact/f/…` in a CSP
+sandbox: it runs its scripts but cannot read the box's cookies or call its API. Drag the panel's left
+edge to resize it (kept per browser; double-click resets).
+
+**Browser** (`./claude-box --browser`): that start builds the image with Chromium (a virtual display,
+x11vnc and noVNC; a few hundred MB more) and every session gets a **Browser** tab: one Chromium for the
+whole box, shown live, where you click, type and sign in like in any browser. The profile (logins,
+cookies) is kept in `home/.config/claude-box-browser`, so a login survives restarts and serves every
+session. **Each session has a window of its own** in that one Chromium: its PRs, issues and the pages
+Claude opens; Slack lives in one **Shared** window for every session (one Slack, not one per session).
+The Browser tab shows the session's window, the switch at its bottom left shows the shared one, and a
+session's windows close when it is archived or deleted. Claude drives the same browser with its
+`playwright` tools, but through a filtered DevTools view (`127.0.0.1:9334/s/<session>`, set by
+`CB_SESSION`): it sees, opens and closes only its own session's tabs, never another session's or the
+shared window; a new page it opens lands in its session's window. While it works, the tab shows a pill
+with **Stop Claude**. In a chat session the first browser action asks
+once (**Allow for this session**), in any permission mode: what Claude does there, it does as you,
+in every site you signed in to. Chromium is reinstalled once a week on start (security updates; the
+logins stay), and `--tunnel` with `--browser` warns that the public address leads to that browser. The screen goes through
+`/browser/` behind the claude-box login (VNC on a private unix socket, no port). Chromium keeps its own
+sandbox: `docker-compose.browser.yml` runs the box with `seccomp-browser.json`, Docker's default profile
+plus one rule for the namespaces it needs. Hardware keys (YubiKey, passkeys) do not reach it; sign in
+with a password and a code. The screen follows the tab's size (no black bars, 1:1), and sites see
+Google Chrome on Linux: the user-agent string already says Chrome, and the client hints list "Google
+Chrome" next to "Chromium" (`CB_BROWSER_BRAND=0` turns that off; Google ships no Chrome for Linux on
+ARM, so the real one cannot be installed on an Apple Silicon Mac). Its DevTools port is on 127.0.0.1 inside the container: in the Linux host
+network mode that is the host's loopback, so other local users of that host could reach it. Like
+`--vscode`, the flag is not remembered. On a Mac, Cmd works as Ctrl there (Cmd+C / V / A / L…), Cmd and
+Option with the arrows and Backspace move and delete like on the Mac, held keys repeat, and the
+clipboard goes both ways.
+
+**Context strip**: under the session's header, the pull requests, Slack threads and Jira issues the
+session deals with: links anywhere in its transcript, plus a task folder's issue and the PRs of its
+branches. A PR shows `#number`, its state as one letter (O open, D draft, M merged, C closed), CI, review and comments (repo and title on hover); a Slack thread its
+channel and author; a Jira issue its status (Slack and Jira details come from the Today panel). One
+line while there is at most one of each, a line per kind once there are more. A click, or a click on
+such a link in the chat, opens it in the Browser tab (a PR or issue in its own tab of the session's
+window, Slack in the one tab of the shared window),
+or in a new tab of your browser without `--browser`.
+
+**Archive, restore, delete**: a session's menu has **Archive…**: it stops the session, removes the
+session's own folder (a task's worktrees go through the task archive, so the branches stay in
+`/workspace/repos`; a temp folder is deleted) and gzips the conversation into
+`home/.claude/web-archive/`. Archived sessions sit in the closed **Archived** group at the bottom of the
+sidebar; a click or **Restore…** brings the conversation back and makes the folder again. **Delete…**
+removes the session, its conversation and checkpoints, and its own folder. Only a folder under
+`/workspace/tasks/` or `/workspace/tmp/` that no other session uses is ever removed, never a project
+folder; when work would be lost (uncommitted changes, commits on no remote, files of a temp folder) the
+dialog lists it and asks first. Nothing is archived or deleted automatically. **Settings → Storage**
+lists the sessions by folder size, with Archive / Restore / Delete on each row. The box sets Claude
+Code's `cleanupPeriodDays` to 365 (unless you set it), so old conversations stay resumable for a year.
+The **Active (24 h)** group shows only once there are more than 15 sessions.
 The login and password can be changed later in **Settings → Access**; they are kept as a scrypt hash
 in `home/.claude/web-auth.json`. An older `WEB_TERMINAL_PASSWORD` in `.env` still works until one is
 set in the UI. `--tunnel` refuses to start until a login exists.
+
+Later starts ask nothing; `./claude-box --setup` asks for the folder again. Without a terminal (a script,
+CI) it does not ask: a missing `.env` or projects folder is an error with a hint.
 
 Later starts ask nothing; `./claude-box --setup` asks for the folder again. Without a terminal (a script,
 CI) it does not ask: a missing `.env` or projects folder is an error with a hint.
@@ -55,17 +134,18 @@ To call `claude-box` from anywhere, add it to PATH (`./claude-box --install` sho
 
 ## What's already set up inside
 
-- **Claude authentication** — `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (obtained via `claude setup-token`), or a GLM / Anthropic-compatible provider (see [Using GLM](#using-glm-zai-instead-of-anthropic)).
+- **Claude authentication** — **Sign in with Claude** in the setup wizard or Settings (credentials stay in `./home/.claude`), or `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (obtained via `claude setup-token`; used first when set), or a GLM / Anthropic-compatible provider (see [Several model providers](#several-model-providers-claude-glm-abliteration)).
 - **Settings** — the host's `settings.json` is copied (auto mode, theme, etc.).
 - **superpowers plugin** — lives in `home/.claude/plugins/`, active right away.
-- **MCP servers** — user-scope, seeded from `claude-defaults/mcp.json` into `~/.claude.json` at startup: `atlassian`, `github`, `sentry`, `context7`, `kubernetes`, `figma`, `playwright`, `grafana`, `outline`. Remote ones (`atlassian`/`sentry`/`figma`) are authorized once via `/mcp`; `github` takes `GH_TOKEN`, `context7` takes `CONTEXT7_API_KEY`, `grafana` takes `GRAFANA_URL`+`GRAFANA_SERVICE_ACCOUNT_TOKEN`, `outline` (the Outline wiki) takes `OUTLINE_URL`+`OUTLINE_API_KEY` from `.env` (an API key, not `/mcp`: the OAuth sign-in redirects to the container's localhost, which the browser cannot reach in bridge mode; MCP must be on in Outline's Settings → Workspace → AI).
-- **git** — who the box commits as: `GIT_USER_NAME` / `GIT_USER_EMAIL` in the env file, asked when the box is set up (default: this computer's `git config --global` identity; `./claude-box --setup` asks again) and written to the box's `~/.gitconfig` on every start. Without them the box keeps what `home/.gitconfig` has and fills a missing name/email from the GitHub account once `gh` is signed in. A box-wide rule (`claude-defaults/managed-CLAUDE.md` → `/etc/claude-code/CLAUDE.md`) tells Claude to ask who to commit as when there is no identity, never to borrow an author from a repository's history.
+- **MCP servers** — user-scope, seeded from `claude-defaults/mcp.json` into `~/.claude.json` at startup: `atlassian`, `github`, `sentry`, `context7`, `kubernetes`, `figma`, `playwright`, `grafana`. Remote ones (`atlassian`/`sentry`/`figma`) are authorized once via `/mcp`; `github` takes `GH_TOKEN`, `context7` takes `CONTEXT7_API_KEY`, `grafana` takes `GRAFANA_URL`+`GRAFANA_SERVICE_ACCOUNT_TOKEN` from `.env`. A server `url` in `mcp.json` may use `${VAR}` / `${VAR:-default}` from `.env` (filled in at startup).
+- **git** — identity set in `home/.gitconfig`.
+- **Skills** — skills shipped with the box live in `claude-defaults/skills/<name>/` and are copied into `~/.claude/skills/` on every start, so every box gets them and an image update brings new versions. Each copy holds a `.claude-box-managed` marker; delete it to keep your own edits (the box then leaves that folder alone). A skill of the same name that you made yourself (no marker) is never touched. Included: **`/pr-review <PR url | number> [--level high|xhigh|max] [--no-run] [--refresh-habits]`** — a full pull request review: it reads every project rule (`CLAUDE.md` files, `.claude/`, `AGENTS.md`, contributing, lint and CI config), checks PR hygiene (AI co-author trailers, history, behind base / conflicts, draft state, issue key in the title), runs the project's own typecheck / lint / tests for the changed files (comparing failures against the base), runs `code-review` plus three agents — project-rules compliance, "does it do what the issue asks and what does the rollout need" (env vars, flags, migrations, deployment config PRs, release order), and the team reviewers' recurring remarks (learned from ~90 days of their reviews, cached in `~/.claude/review-habits/` for 14 days) — re-verifies every finding with independent agents, and reports in your language. It publishes review comments or approves only when you say so. **`/pr-feedback <PR> [--ready]`** — the other side: works through the remarks on your own PR (unresolved threads, review summaries, bot comments, failing CI), verifies each against the code, proposes fix / reply / decline with a short reply, then fixes, runs the checks and self-reviews the fixes; it pushes, replies in the threads and re-requests review only on your command, and with `--ready` gets the PR ready to merge (rebase, clean history, description, draft off). **`/pr-release-plan <PRs | issue key> [status]`** — a release checklist from merge to verified on production: env vars and flags per environment, migrations and backfills, deployment config PRs, services that must ship first, sync/restart steps, code freeze; each step with an owner, a concrete verification and a rollback, plus drafts for the people who must act. It saves `RELEASE-PLAN.md` in the task folder and on later calls re-checks the real state (merged, deployed version, flag values) and says what is next. It never merges, deploys or runs SQL itself. **`/jira-check <ISSUE-KEY> [--repo …] [--quick]`** — takes an issue apart before work starts: the issue in full (comments, epic, sub-tasks, linked issues, attachments, linked specs), the related PRs and discussion, a map of the code involved and its history, a harmless reproduction (tests, dev requests, read-only queries); then a verdict (real and needed / works as designed / duplicate / obsolete / unclear) with evidence and a plan — approach, files, tests, API/docs, data/config, split, risks, size, open questions, how to verify. Saves `ANALYSIS.md` in the task folder; posts to Jira or starts coding only on your command. **`/pr-watch`** — an automatic reviewer for other people's PRs. Run it in its own session in a folder that holds clones of the repos to watch (e.g. `/workspace/reviews/api`, `/workspace/reviews/web`): it loops every few minutes, and for each new PR or new commits it starts a separate session running `/pr-review --auto`, then posts the confirmed critical/high findings as a COMMENT review (never twice, never on a commit it did not review) and lists the PRs that are ready to approve. It approves only when you tell it to in that session (`approve api#2261`). PRs open at the start are a baseline and are not reviewed unless they get new commits; `.pr-watch/config.json` sets the limits (parallel reviews, reviews per day, only PRs where your review is requested, which severities to post, report-only). State and the per-PR clones live in `.pr-watch/`; the Today panel shows each PR's review status when the folder is `/workspace/reviews`.
 - **Completion signals** — when Claude finishes a response (or is waiting for input/permission), a bell rings and the tab title changes to `✅/❓/⏳ <session>`; from another tab you can see which Claude has become free. To disable — `CLAUDE_NOTIFY_DISABLE=1` in `.env` (hooks already seeded remain until you manually clear `home/.claude/settings.json`).
 - **Web terminal (Console)** — the in-browser terminal is ttyd on `127.0.0.1:7682`, behind the same port and login as the rest of the UI; it opens a picker of tmux sessions (different tabs = different claude sessions, which survive closing the tab; a new one asks for its folder). Port / login / password — `WEB_TERMINAL_PORT` / `WEB_TERMINAL_USER` / `WEB_TERMINAL_PASSWORD` in `.env`. Several concurrent sessions share `~/.claude.json` (a shared `./home`); simultaneous active work in the same folder/session from different tabs is not recommended.
 - **Several boxes on one machine** — each env file is one box: `.env` by default, or `.env.NAME` with `./claude-box --env NAME` (`--env .env.NAME`, `--env path/to/file` and `CLAUDE_BOX_ENV=NAME` work too; every other flag combines with it, e.g. `./claude-box --env work --restart`). Each box has its own home — `home/` for `.env`, `home-NAME/` for `.env.NAME` (`BOX_HOME` in the env file overrides) — so its own sessions, history and login. Boxes share a docker daemon (several env files, two checkouts, two users of one Mac) only with their own names and ports: set `CLAUDE_BOX_NAME` (container `<name>-web`, image `<name>`, compose project `<name>`), `WEB_TERMINAL_PORT`, `WEB_TLS_PORT` and `TTYD_PORT` in each box's env file. When `claude-box` creates `.env.NAME` from the template it asks for them (`.env` only when another box is already there), and it refuses to start or stop a same-named container that another checkout or another env file owns. All `.env*` files but `.env.example` are git-ignored.
 - **Web chat (HTML mode)** — the launcher shows a Claude Code-style sidebar of sessions grouped by folder. Each session opens as a native web chat by default: messages stream in over a WebSocket (`/chat/ws`), Markdown/code render as real HTML (select and copy normally), tool calls show as collapsible rows with their results and diffs, and permission requests / Claude's questions appear as buttons. Under the hood the sidecar drives Claude through the **Claude Agent SDK** (`scripts/web-chat.js`), on the same session files as the CLI. The **Chat / Console** switch in the top bar hands the same session over to the classic terminal (`claude --resume` in tmux, for slash commands and anything TUI-only) and back — one owner at a time, so switching to the console stops the chat process and switching back closes the console. New sessions start from a folder picker; the classic console menu is still one click away. Idle chat processes stop after `WEB_CHAT_IDLE_MINUTES` (default 60) and resume on the next message. Files can be attached with the paperclip, by pasting (e.g. a screenshot) or by dropping them on the chat (up to 20 files / 30 MB per message): they are saved under `~/.claude/web-uploads/` (override with `WEB_CHAT_UPLOADS`), images are also sent inline, and every file is listed by path so Claude can read it. Typing `/` in the composer lists the slash commands and skills of that folder with their descriptions and argument hints (↑/↓, Enter or Tab to pick); the list comes from Claude itself and is cached in `~/.claude/web-commands.json`. The **Tools:** button in the composer folds tool calls into one line per run (compact), shows them all, or hides them. Self-paced loops survive restarts: on startup the sidecar finds chat sessions whose last `ScheduleWakeup` was not a stop and re-sends its prompt when the wakeup is due (`WEB_RESUME_LOOPS=0` disables, `WEB_RESUME_LOOPS_MAX_HOURS` — default 12 — limits how old a loop may be).
-- **Workspace — a file manager** — the Workspace page browses `/workspace`: click a folder to go in (breadcrumbs and the browser's Back button go up), click a file to open it in a tab (text, images, PDF; anything else downloads). **Start session** (on hover, or **Start session in this dir** for the open folder) starts Claude in that folder. Each folder row lists the sessions started in it (the newest three, then **+N**); click one to open it. The **Size** column shows folder sizes as well, counted with `du` in the background (each folder has a time limit, results are cached for a few minutes). **Clone from Git** lists the repos your GitHub account can reach (own, shared, your organizations'), searchable as you type; a pasted URL works too. Drop files — or whole folders — from your computer onto the list or onto a folder to upload them (no size limit by default, `WEB_UPLOAD_MAX_MB` sets one; existing names are asked about), or use **Upload**. Drag rows onto a folder or a breadcrumb to move them (⌥/Alt copies); select several with the checkboxes, ⌘/Ctrl-click or Shift-click, then Copy / Cut and **Paste here** in another folder, Rename, Download or Delete (⌫ with ⌘/Ctrl, or Delete). Delete moves things to `/workspace/.trash/<time>/`, so they can be restored. Dotfiles are listed too. Every path is confined to the workspace (no `..`, no symlinks out of it).
-- **Tasks — one folder per task** — **New task** in the sidebar opens a picker: your Jira issues in work (from the Today panel, filtered as you type), **Search all of Jira** (a short read-only run through the Jira connector), **Create a Jira issue** with just a title (the task's session creates it first thing), or a plain task with no Jira. Tasks are listed as folders under `tasks/` in Workspace, each row with its title, key, branch and state. **New temp session** starts a throwaway chat in a fresh `/workspace/tmp/<date-time>/`. The task's repos are picked in the same dialog from your GitHub repos; each one is cloned once into `/workspace/repos/` (the base repos, never edited directly) and reused by later tasks; every task gets `/workspace/tasks/<KEY-title>/` with a `.task.json` (id, title, link, branch) and its own clone of each repo it needs, on a branch named after the task. Its Claude session runs in that folder; opening the task again opens the newest session there. Status dots show what is safe to clean up: uncommitted changes, commits not pushed, or nothing unsaved. **Archive** saves the branch into the base repo and removes the clones (the folder keeps `.task.json`, sessions stay), **Reopen** clones again and checks the branch out, **Forget** removes an archived task's folder. A link opens or creates a task from anywhere (a task tracker, a bookmarklet, Slack): `/?task=PROJ-123&title=…&url=…&repos=api,specs` — a Jira-style key becomes the id and branch prefix; any other id (e.g. `tracker:<id>`) works too. A link to a task that does not exist yet and has no `repos=` opens the prefilled **New task** form, so the repos are picked on the server itself. Plain clones rather than git worktrees, so a task folder works the same from the host, where `/workspace` has a different path.
+- **Workspace — a file manager** — **Workspace** in the sidebar browses `/workspace`: click a folder to go in (breadcrumbs and the browser's Back button go up), click a file to open it in a tab (text, images, PDF; anything else downloads). **Start session** (on hover, or **Start session in this dir** for the open folder) starts Claude in that folder. A folder with sessions shows a sessions button (count, and a dot for the one that needs you most); it opens the list of them and **New session here**. The **Size** column shows folder sizes as well, counted with `du` in the background (each folder has a time limit, results are cached for a few minutes). **Clone from Git** lists the repos your GitHub account can reach (own, shared, your organizations'), searchable as you type; a pasted URL works too. Drop files — or whole folders — from your computer onto the list or onto a folder to upload them (no size limit by default, `WEB_UPLOAD_MAX_MB` sets one; existing names are asked about), or use **Upload**. Drag rows onto a folder or a breadcrumb to move them (⌥/Alt copies); select several with the checkboxes, ⌘/Ctrl-click or Shift-click, then Copy / Cut and **Paste here** in another folder, Rename, Download or Delete (⌫ with ⌘/Ctrl, or Delete). Delete moves things to `/workspace/.trash/<time>/`, so they can be restored. Dotfiles are listed too. Every path is confined to the workspace (no `..`, no symlinks out of it).
+- **New session — one folder per task** — **New session** in the sidebar opens a dialog with three fields. *Session name*: how the session is called in the sidebar (it is also the task's title and folder name, and is written into the session like a rename, so Claude's generated title does not replace it). *Jira issue* (optional): your issues in work (from the Today panel), recent issues of your projects, and all of Jira as you type (a short read-only run through the Jira connector); ↑↓ and Enter pick; picking one fills an empty name with its title; or **Create a new Jira issue** (the session creates it first thing). *Repositories*: a field that opens a searchable list with checkboxes — the selected ones first, then the repos already in the workspace, then everything your GitHub account can reach; the list scrolls inside the dialog and its group headers stay on top. **Start session** creates `/workspace/tasks/<KEY-title>/` with a `.task.json` (id, title, link, branch), a generated `CLAUDE.md` (the task's repos, branches and rules) and a **git worktree** of each repository on a branch named after the task. Repositories are cloned once into `/workspace/repos/` — mirrors that nobody works in, fetched every 15 minutes (`WEB_REPOS_SYNC_MIN`; the default branch is fast-forwarded when nothing is changed there) — and every task works in its own worktree, so several tasks can change the same repository at once on different branches and pull requests. The session runs in the task folder with each repository added as an extra directory, so every repository's `CLAUDE.md` and `.claude/skills` load; a repository added later (task menu → **Add repo**) joins with the next message. For a Jira issue the message box gets `/jira-check <KEY> --repo …` (you send it); otherwise a short brief. Status dots show what is safe to clean up: uncommitted changes, commits not pushed, or nothing unsaved. **Archive** removes the worktrees (the branches stay in the base repos, the folder keeps `.task.json`, sessions stay), **Reopen** makes the worktrees again, **Forget** removes an archived task's folder. Worktrees hold absolute paths, so task folders are meant to be used inside the box; tasks made by older versions keep their plain clones. **New temp session** starts a throwaway chat in a fresh `/workspace/tmp/<date-time>/`. A link opens or creates a task from anywhere (a task tracker, a bookmarklet, Slack): `/?task=PROJ-123&title=…&url=…&repos=api,specs` — a Jira-style key becomes the id and branch prefix; any other id (e.g. `tracker:<id>`) works too. A link to a task that does not exist yet and has no `repos=` opens a prefilled form, so the repos are picked on the server itself.
 - **Today panel (right)** — the ◧ button in the top bar opens a panel that gathers the day in one place. **Needs me** on top: 3–5 items where you have to act (a question in Slack, a review requested from you, your PR with failing CI or changes requested, a meeting about to start, a blocking Jira issue), plus live ones — sessions waiting for your answer and meetings starting within 15 minutes. Below, collapsible: **Calendar** (the rest of today), **GitHub** (review requests addressed to you, those that came through a team, and your open PRs with CI state, review decision and a dot for new activity; PRs checked by the PR reviewer show its status), **Jira** (your issues that are not done — a click opens or creates the task workspace), **Slack** (mentions, thread replies and DMs of the last 24 hours) and **Gmail** (unread mail from people, no notifications). Each block shows only when its source is connected (the MCP connector exists; GitHub: `gh` is logged in). **✕** on an item hides it until something about it changes — a draft PR comes back when it is ready for review or its CI / review state changes, a Jira issue when its status changes, a meeting when it moves; "N hidden · show" lists them to bring one back. Hidden items are kept on the server (`~/.claude/web-panel-hidden.json`), so every browser sees the same. GitHub comes straight from `gh` (refreshed every minute). Calendar, Jira, Slack and Gmail come through Claude's MCP connectors: a short **read-only** run on a cheap model (`WEB_PANEL_MODEL`, default `claude-haiku-5-5`; any MCP call that is not a read is refused) collects them and picks the "Needs me" items, on ↻ and on the interval picked at the bottom of the panel (5 min … 1 h, or only on ↻; `WEB_PANEL_MINUTES`, default 15, is the initial value) while the panel has been opened in the last two hours. A run takes about a minute and costs a few cents of usage. `WEB_PANEL=0` turns the agent part off. The snapshot is kept in `~/.claude/web-panel.json`.
 - **Sessions started by an agent (`cb-session`)** — inside the box, `cb-session new --cwd DIR --prompt TEXT [--title T] [--mode auto] [--category NAME]` starts a chat session that works on its own and prints its token; `cb-session status TOKEN` reports its state (`running`, `requires_action`, `idle`, …), cost and last answer. They are ordinary chat sessions — listed in the sidebar (filed under `--category` if given), open and continue like any other. This is how one agent can hand work out to many sessions, e.g. a reviewer that starts one session per pull request. Backed by `POST /chat/api/new` and `GET /chat/api/status?token=` (same login as the UI).
 - **Sessions survive a container restart** — the web container keeps the list of running sessions on disk (`home/.claude/web-live-sessions.json`, refreshed every 15s and on shutdown). On the next start every one of them is brought back automatically (`claude --resume` in its original folder, same tmux name), so the launcher shows them live again. The web service also has `restart: unless-stopped`, so it comes back by itself after a Docker/host restart. A session is remembered once Claude has fired its first hook in it (i.e. after the first prompt). Set `WEB_RESTORE_SESSIONS=0` in `.env` to turn this off.
@@ -81,6 +161,10 @@ bash tests/run.sh --linux       # every suite on Linux, inside the test box's im
 
 The Linux run is where the web server really lives (tmux, `/proc`); the host run checks `./claude-box`
 against the host's own tools (BSD userland on macOS). Suites that need a tool the host lacks (tmux) skip.
+`tests/private-words.test.js` keeps private words (an employer's name, issue keys, Slack ids) out of
+the repo: it fails when a tracked file, or a commit not pushed yet, matches a regex from a list that
+stays on your machine (`~/.config/claude-box/private-words`, or a gitignored `.private-words`); without
+the list it skips.
 The suites on their own:
 
 ```bash
@@ -119,10 +203,25 @@ e.g. `NAME=127.0.0.1` under host networking when the service listens on loopback
 
 ---
 
-## Using GLM (z.ai) instead of Anthropic
+## Several model providers: Claude, GLM, Abliteration
 
-claude-box works with any Anthropic-compatible provider. To run on **GLM**, put this block in `.env`
-— Claude Code picks it up in the web chat and in the console alike:
+claude-box can keep several Anthropic-compatible providers connected at once and let every chat pick
+its own model. **Settings → Models**:
+
+- **Claude** — **Sign in with Claude** (`claude auth login` in the box) or `CLAUDE_CODE_OAUTH_TOKEN` in `.env`;
+- **GLM via z.ai**, **Abliteration** — paste the API key;
+- **Custom endpoint** — any Anthropic-compatible base URL, model name and key;
+- **Default for new sessions** — also used by console (tmux) sessions.
+
+Keys stay inside the box in `home/.claude/web-providers.json` (mode 600); the UI only shows their
+last four characters. In a chat, the model button next to the status (e.g. `Opus 5.5 ▾`) switches the
+model: within Claude it changes right away; another provider restarts the session's process with that
+provider's key and resumes the same conversation (not while an answer is running). Other providers do
+not support everything Claude does, so a long Claude conversation may not carry over cleanly.
+Inbox, Today and the Jira search always run on Claude.
+
+The older way still works: a provider block in `.env` applies to the whole box and shows up in
+Settings as connected "from .env":
 
 ```env
 ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
@@ -132,10 +231,8 @@ ANTHROPIC_DEFAULT_OPUS_MODEL=GLM-5.3-Flash
 ANTHROPIC_DEFAULT_HAIKU_MODEL=GLM-5.3-Flash
 ```
 
-`CLAUDE_CODE_OAUTH_TOKEN` must stay **empty** in this mode. Model names are whatever your z.ai plan
-exposes (e.g. `GLM-5.3`, `GLM-5.3-Flash`). Restart with `./claude-box --restart`.
-The same block can instead live in `home/.claude/settings.json` as `"env": { ... }` — the `.env`
-variant is preferred, keeping secrets in one place.
+A provider kept in `home/.claude/settings.json` `"env"` by an older version is moved into
+Settings → Models on the first start.
 
 ---
 
@@ -145,6 +242,10 @@ variant is preferred, keeping secrets in one place.
 `GH_TOKEN` variable in `.env` (it's picked up automatically, so `gh auth login` isn't needed).
 The easier way is **Connect GitHub** in the UI (first visit or Settings → GitHub): it runs `gh auth login --web`
 for you, shows the code to enter at github.com/login/device, and fills in the commit name and email.
+Who the box commits as is filled in by itself: the host's git name and email (`./claude-box` copies
+them into `.env` as `GIT_USER_NAME` / `GIT_USER_EMAIL` once), else the GitHub account's; change it in
+**Settings → GitHub**. A rule in `/etc/claude-code/CLAUDE.md` makes Claude ask when there is none,
+never borrow an author from a repository's history.
 
 ### Classic token
 

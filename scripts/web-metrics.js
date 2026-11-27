@@ -53,19 +53,35 @@ function contextOf(file) {
   return null;
 }
 
-// session spend: billed tokens across the WHOLE transcript. Reading it all is the expensive part,
-// so it is cached for 10s per file (the footer polls every few seconds).
+// session spend: billed tokens across the WHOLE transcript. Re-reading it on every footer poll
+// churned megabytes of garbage on an actively growing session (GC stalls = UI hiccups), so the
+// scan is incremental: each file keeps its consumed size, only new lines are parsed. The map is
+// capped — LRU by insertion, one entry per polled session, at most a few hundred bytes each.
 const SPEND = new Map();
+const SPEND_MAX = 32;
 function spendOf(file) {
-  const c = SPEND.get(file);
-  if (c && Date.now() - c.at < 10000) return c.v;
-  let sum = 0;
-  for (const l of readText(file).split('\n')) {
-    if (!l.includes('"usage"')) continue;
-    try { const o = JSON.parse(l); if (o.message && o.message.usage) sum += usageTotal(o.message.usage, true); } catch (_) {}
+  let st; try { st = fs.statSync(file); } catch (_) { return null; }
+  let c = SPEND.get(file);
+  if (!c || st.size < (c.size || 0)) { c = { size: 0, sum: 0, at: 0 }; SPEND.set(file, c); }
+  SPEND.delete(file); SPEND.set(file, c);                                    // refresh LRU order
+  while (SPEND.size > SPEND_MAX) SPEND.delete(SPEND.keys().next().value);
+  if (st.size > c.size || !c.at || Date.now() - c.at > 60000) {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(st.size - c.size); fs.readSync(fd, buf, 0, buf.length, c.size);
+      const text = buf.toString('utf8');
+      const cut = text.lastIndexOf('\n');                                     // only complete lines
+      if (cut >= 0) {
+        for (const l of text.slice(0, cut).split('\n')) {
+          if (!l.includes('"usage"')) continue;
+          try { const o = JSON.parse(l); if (o.message && o.message.usage) c.sum += usageTotal(o.message.usage, true); } catch (_) {}
+        }
+        c.size += cut + 1;
+      }
+    } finally { fs.closeSync(fd); }
   }
-  SPEND.set(file, { at: Date.now(), v: sum });
-  return sum;
+  c.at = Date.now();
+  return c.sum;
 }
 
 async function gitOf(cwd) {

@@ -18,6 +18,9 @@
 //     {op:'interrupt', key}            stop the current turn
 //     {op:'perm', key, id, allow, always?, answers?}   answer a permission / question request
 //     {op:'mode', key, mode}           permission mode (default|acceptEdits|plan|auto)
+//     {op:'open', key, cwd, title}     a new session; title = its name (kept like /rename)
+//     {op:'model', key, model}         "provider/model id" (web-models.js): same provider switches
+//                                      live; another provider restarts the process and resumes
 //     {op:'release', key}              stop the chat process (before switching to console)
 //     {op:'takeover', key}             kill the console tmux session (before switching to chat)
 //     {op:'draft', key, text, voice}   the unsent composer text (kept per session, sent to other viewers);
@@ -33,7 +36,7 @@
 //     {ev:'token', key, token}         the session now has a registry token (new or after /clear)
 //     {ev:'perm', key, id, tool, input, reason, suggestions}
 //     {ev:'perm_done', key, id}
-//     {ev:'info', key, info}           model, permissionMode, cwd, slash commands, last cost
+//     {ev:'info', key, info}           model, modelRef, permissionMode, cwd, slash commands, last cost
 //     {ev:'stats', key, kind, req, live, data, baseline?, error?}   data null: not available, send the command instead
 //     {ev:'stats', key, kind:'usage', req, part:'behaviors', behaviors}   the slower second half of /usage
 //     {ev:'released', key} / {ev:'console', key, active}
@@ -41,6 +44,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 // The environment for Claude sessions: never the web login or the tunnel token (web-serve.js
 // already drops them; this keeps a standalone sidecar safe too). CLAUDE_WEB_CHAT tells the
@@ -84,11 +88,16 @@ function sh(cmd, args) {
   return new Promise((res) => execFile(cmd, args, { maxBuffer: 4 << 20 }, (e, out) => res(e ? null : String(out))));
 }
 const reg = require('./web-registry.js');
+let tasksMod = null; // task folders: their repos join the session as extra directories (web-tasks.js)
+try { tasksMod = require(process.env.WEB_TASKS_MODULE || './web-tasks.js'); } catch (e) { console.error('task repos disabled:', e.message); }
+function taskDirs(cwd) { try { return tasksMod ? tasksMod.taskRepoDirs(cwd) : []; } catch (_) { return []; } }
+let models = null;   // providers and per-session models (web-models.js)
+try { models = require(process.env.WEB_MODELS_MODULE || './web-models.js'); } catch (e) { console.error('models disabled:', e.message); }
 const registry = {
   async get(token) { try { return reg.get(token); } catch (_) { return null; } },
   async upsert(f) {
     try {
-      return reg.upsert({ cid: f.cid, cwd: f.cwd, name: f.name, tmux: f.name, state: f.state, title: f.title, mode: 'chat' });
+      return reg.upsert({ cid: f.cid, cwd: f.cwd, name: f.name, tmux: f.name, state: f.state, title: f.title, mode: 'chat', model: f.model });
     } catch (e) { log('registry upsert failed:', e.message); return ''; }
   },
 };
@@ -227,14 +236,22 @@ function assertDir(cwd) {
 // Ask a claude process for the lists without sending it anything: it starts, answers
 // supportedCommands() / supportedModels() (~1 s) and is closed again.
 const WARMING = new Set();
+// Warmups run ONE at a time: each spawns a full `claude` process (all MCP servers start with it),
+// and a burst of those on parallel session opens stole CPU from the whole server (UI-wide stalls).
+const WARM_QUEUE = [];
 async function warmCommands(cwd) {
-  if (!cwd || WARMING.has(cwd) || (CMD.byCwd[cwd] && modelsFresh)) return;
+  if (!cwd || WARMING.has(cwd) || (CMD.byCwd[cwd] && modelsFresh) || WARM_QUEUE.includes(cwd)) return;
+  if (WARMING.size > 0) { WARM_QUEUE.push(cwd); return; }   // wait for the current warmup + 3 s spacing
   WARMING.add(cwd);
   try {
     await sdkReady; if (!sdk) return;
     await withProbe(cwd, (q) => warmFrom(q, cwd));
   } catch (e) { log('warm commands', cwd, e.message); }
-  finally { WARMING.delete(cwd); }
+  finally {
+    WARMING.delete(cwd);
+    const next = WARM_QUEUE.shift();
+    if (next) setTimeout(() => warmCommands(next).catch(() => {}), 3000);   // spacing between claude spawns
+  }
 }
 async function warmFrom(q, cwd) {
   if (q.supportedModels && !modelsFresh) rememberModels(await q.supportedModels());
@@ -269,13 +286,15 @@ function agentUsage(text) {
 }
 
 class Chat {
-  constructor({ cid, cwd, name, token }) {
+  constructor({ cid, cwd, name, token, model }) {
     this.cid = cid || null; this.cwd = cwd; this.name = name; this.token = token || null;
+    this.modelRef = model || '';      // the picked "provider/model"; '' = the default (web-models.js)
     this.subs = new Set();            // {ws, key}
     this.state = 'stopped'; this.q = null; this.input = null;
     this.perms = new Map();           // id -> {resolve, tool, input, reason, suggestions}
     this.turn = [];                   // SDK messages of the current turn (for late subscribers)
-    this.info = { cwd, model: '', effort: defaultEffort, permissionMode: '', commands: [], cost: null, commandList: cachedCommands(cwd), models: MODELS };
+    this.info = { cwd, model: '', modelRef: '', effort: defaultEffort, permissionMode: '', commands: [], cost: null, commandList: cachedCommands(cwd), models: MODELS };
+    this.info.modelRef = this.pickModel() ? this.pickModel().ref : '';
     this.agents = new Map();          // Agent tool_use_id -> {state, model, tokens, tools, ms, at}: what this process saw
     if (!CMD.byCwd[cwd] || !modelsFresh) warmCommands(cwd);
     this.titled = !!token; this.idleTimer = null; this.closing = null;
@@ -299,33 +318,46 @@ class Chat {
     if (reg && this.cid) this.syncRegistry(reg);
   }
   async syncRegistry(state, title) {
-    const tok = await registry.upsert({ cid: this.cid, cwd: this.cwd, name: this.name, state, title });
+    const tok = await registry.upsert({ cid: this.cid, cwd: this.cwd, name: this.name, state, title, model: this.modelRef });
     if (tok && tok !== this.token) { this.token = tok; this.emit({ ev: 'token', token: tok }); }
     if (this.wire) this.wire.update({ token: this.token, cid: this.cid });
   }
+  pickModel() { return models ? models.resolve(this.modelRef) : null; }
   async start() {
     assertDir(this.cwd);
     await sdkReady;
     if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
     if (this.cid && await tmuxAlive(this.name)) throw new Error('This session is open in the console. Switch to chat first (it closes the console).');
     this.input = new InputQueue();
-    this.wire = wire ? await wire.begin('chat', this.name, sessionEnv(), { token: this.token, cid: this.cid, cwd: this.cwd })
-      : { id: null, env: sessionEnv(), update() {}, finish() {} };
+    // the provider's env (key, base URL) for the model this session runs; see web-models.js
+    const sel = this.pickModel(), env = models ? models.envFor(sel, sessionEnv()) : sessionEnv();
+    this.running = sel; this.info.modelRef = sel ? sel.ref : '';
+    // a task folder: each of its repos is an extra directory, so their CLAUDE.md and skills load
+    const repoDirs = taskDirs(this.cwd); this.repoDirs = repoDirs.join('\n');
+    if (repoDirs.length) env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1';
+    // which window of the box browser Claude's playwright tools get (web-browser.js resolves the name)
+    env.CB_SESSION = this.token || this.name;
+    this.wire = wire ? await wire.begin('chat', this.name, env, { token: this.token, cid: this.cid, cwd: this.cwd })
+      : { id: null, env, update() {}, finish() {} };
     const options = {
       cwd: this.cwd,
       includePartialMessages: true,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       canUseTool: (tool, input, o) => this.askPermission(tool, input, o),
+      // the box's browser (playwright tools on the Browser tab's Chromium) holds the user's logins:
+      // the first use in a session asks, in any permission mode (auto included); see browserGate
+      // timeout: the hook waits for the user's answer; onFailure block: an error or a timeout means no
+      hooks: { PreToolUse: [{ matcher: 'mcp__playwright__.*', timeout: 86400, onFailure: 'block', hooks: [(input, id, o) => this.browserGate(input, o)] }] },
       // claude-notify (the tmux hook) must not touch the registry for chat-owned sessions —
       // this module keeps those records itself (see scripts/notify.sh).
       env: this.wire.env,
-      additionalDirectories: [UPLOADS],
+      additionalDirectories: [UPLOADS].concat(repoDirs),
       stderr: (d) => log(this.name, String(d).trim()),
     };
     try { fs.mkdirSync(UPLOADS, { recursive: true }); } catch (_) {}
     if (this.cid) options.resume = this.cid;
     if (this.desiredMode) options.permissionMode = this.desiredMode;   // picked before the first message
-    if (this.desiredModel) options.model = this.desiredModel;          // picked in the composer's model menu
+    if (sel) options.model = sel.model;
     if (this.desiredEffort) options.effort = this.desiredEffort;
     this.agents.clear();              // sub-agents die with the claude process
     this.setState('starting');
@@ -377,6 +409,9 @@ class Chat {
     }
     this.trackAgent(m);
     if (m.type === 'result') {
+      // a name picked when the session was opened (New session dialog): written like /rename once
+      // the transcript exists, so Claude's own generated title does not replace it
+      if (this.customTitle && this.cid) { const t = this.customTitle; this.customTitle = null; setTitle(this.cid, this.cwd, t).catch((e) => log(this.name, 'title', e.message)); }
       this.info.cost = m.total_cost_usd; this.emit({ ev: 'info', info: this.info });
       measureCtx(this); this.refreshApplied();
       this.turn = [];
@@ -432,18 +467,9 @@ class Chat {
     for (const [k, a] of this.agents) out[k] = Object.assign({}, a, a.state === 'run' && !this.q ? { state: 'stopped' } : null);
     return out;
   }
-  async setModel(model, effort) {
-    if (model !== undefined) {
-      let v = String(model || '').trim().slice(0, 120);
-      if (v === 'default') v = '';                                     // the picker's "Default" row: back to the default model
-      if (v && !/^[\w.:\[\]\/@-]+$/.test(v)) throw new Error('bad model id: ' + v);
-      this.desiredModel = v || null;
-      if (this.q) await this.q.setModel(v || undefined);
-      const row = MODELS.find((r) => r.value === (v || 'default'));
-      this.info.model = (row && row.resolvedModel) || v || this.info.model || '';
-      this.info.modelPick = v;
-    }
-    if (effort !== undefined) {
+  // Reasoning effort, live (applyFlagSettings) or from the next start; null = the model's default
+  async setEffort(effort) {
+    {
       const e = EFFORTS.includes(effort) ? effort : null;
       this.desiredEffort = e;
       if (this.q && this.q.applyFlagSettings) await this.q.applyFlagSettings({ effortLevel: e });
@@ -465,6 +491,21 @@ class Chat {
       this.info.effort = effort; this.info.model = model;
       this.emit({ ev: 'info', info: this.info });
     } catch (e) { log(this.name, 'settings', e.message); }
+  }
+  // One question per session before Claude uses the box's browser: what it does there, it does as the
+  // user, in every site the user signed in to. Allowed once, the rest of the session goes on its own.
+  async browserGate(input, o) {
+    const name = String((input && input.tool_name) || '');
+    if (!/^mcp__playwright__/.test(name) || this.browserAllowed) return {};
+    if (!this.browserAsking) {
+      this.browserAsking = this.askPermission('Browser', Object.assign({ action: name.replace(/^mcp__playwright__browser_|^mcp__playwright__/, '') }, (input && input.tool_input) || {}),
+        { decisionReason: 'Claude wants to use the box\'s browser, where you are signed in (GitHub, Slack, Jira…). Allowing lets it browse, click and type there for the rest of this session.', signal: o && o.signal })
+        .then((r) => { this.browserAsking = null; if (r && r.behavior === 'allow') this.browserAllowed = true; return r; });
+    }
+    const r = await this.browserAsking;
+    return r && r.behavior === 'allow'
+      ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'browser allowed for this session' } }
+      : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'The user did not allow the browser in this session. Ask them before trying again.' } };
   }
   // The data behind /context and /usage for the launcher's dialogs; data null = not available
   // here (the launcher then sends the command as before). A running session answers itself. A
@@ -495,12 +536,14 @@ class Chat {
       const data = q ? await ask(q) : await withProbe(this.cwd, ask);
       // a fresh process has no totals of this session: the transcript keeps the ones of its last run
       const empty = (x) => !x || (!x.cost && !Object.keys(x.models || {}).length);
-      if (data && (!q || empty(data.session))) data.session = savedSession(this.cid ? transcriptExtras(this).cost : null) || (q ? data.session : null);
+      if (data && (!q || empty(data.session))) data.session = savedSession(this.cid ? savedCostState(this) : null) || (q ? data.session : null);
       return { live: !!q, data };
     }
     throw new Error('unknown stats: ' + kind);
   }
   askPermission(tool, input, o) {
+    // the box's own artifact panel only shows a file Claude already wrote: no question for that
+    if (tool === 'mcp__claude-box__show_artifact') return Promise.resolve({ behavior: 'allow', updatedInput: input });
     return new Promise((resolve) => {
       const id = 'p' + (++permSeq);
       const p = { resolve, tool, input, reason: o && o.decisionReason, suggestions: (o && o.suggestions) || [] };
@@ -544,6 +587,8 @@ class Chat {
       const list = '[Attached files]\n' + saved.map((f) => `- ${f.path} (${f.name}, ${fmtSize(f.size)})`).join('\n');
       content.push({ type: 'text', text: (text.trim() ? text.replace(/\s+$/, '') + '\n\n' : '') + list });
     }
+    // a repo was added to the task since the process started: restart it so the new folder joins
+    if (this.q && this.repoDirs !== undefined && taskDirs(this.cwd).join('\n') !== this.repoDirs && this.state !== 'running' && this.state !== 'requires_action') await this.stop();
     if (!this.q) await this.start();
     clearTimeout(this.idleTimer);
     this.input.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
@@ -554,6 +599,22 @@ class Chat {
     this.desiredMode = mode;
     if (this.q) await this.q.setPermissionMode(mode);
     this.info.permissionMode = mode; this.emit({ ev: 'info', info: this.info });
+  }
+  // Pick the model. Within the running provider the SDK switches it live; another provider needs
+  // other credentials, so the process is closed and the next message resumes the session with them.
+  async setModel(ref) {
+    if (!models) throw new Error('Models are not available.');
+    const sel = models.resolve(ref);
+    if (!sel || sel.ref !== ref) throw new Error('That model is not connected. Add it in Settings > Models.');
+    if (this.q && this.running && this.running.provider !== sel.provider && (this.state === 'running' || this.state === 'requires_action'))
+      throw new Error('Wait until the answer finishes, then switch the provider.');
+    this.modelRef = ref; this.info.modelRef = ref;
+    if (this.q && this.running && this.running.provider === sel.provider) {
+      try { await this.q.setModel(sel.model); this.running = sel; this.info.model = sel.model; }
+      catch (e) { log(this.name, 'setModel', e.message); await this.stop(); }
+    } else if (this.q) await this.stop();
+    if (this.cid) this.syncRegistry(this.state === 'stopped' ? 'stopped' : 'done');
+    this.emit({ ev: 'info', info: this.info });
   }
   stop() {
     if (!this.q) return Promise.resolve();
@@ -642,6 +703,35 @@ function savedSession(cs) {
   return { cost: cs.totalCostUSD, apiMs: cs.totalAPIDuration, wallMs: cs.totalDuration, added: cs.totalLinesAdded,
     removed: cs.totalLinesRemoved, models, unknownCost: !!cs.hasUnknownModelCost, saved: true };
 }
+// The last non-zero cost-state of a session's transcript (Claude Code writes one when its process
+// ends; a resume that sends nothing writes a zeroed one, which is skipped). Read incrementally: each
+// transcript keeps its consumed size, so a repeated /usage only scans what was appended (LRU).
+const COSTS = new Map();           // cid -> {file, size, cost}
+function savedCostState(chat) {
+  const f = chat.cid && transcriptPath(chat.cid, chat.cwd);
+  let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
+  if (!st) return null;
+  let c = COSTS.get(chat.cid);
+  if (!c || c.file !== f || st.size < c.size) { c = { file: f, size: 0, cost: null }; COSTS.delete(chat.cid); }
+  cacheTouch(COSTS, chat.cid, () => c);
+  if (st.size > c.size) {
+    const fd = fs.openSync(f, 'r');
+    try {
+      const buf = Buffer.alloc(st.size - c.size);
+      fs.readSync(fd, buf, 0, buf.length, c.size);
+      const cut = buf.lastIndexOf(0x0a);                    // only complete lines
+      if (cut >= 0) {
+        for (const l of buf.toString('utf8', 0, cut).split('\n')) {
+          if (!l.startsWith('{"type":"cost-state"')) continue;
+          let e; try { e = JSON.parse(l); } catch (_) { continue; }
+          if (e && (e.totalCostUSD > 0 || Object.keys(e.modelUsage || {}).length)) c.cost = e;
+        }
+        c.size += cut + 1;
+      }
+    } finally { fs.closeSync(fd); }
+  }
+  return c.cost;
+}
 // Where the requests go when it is not Anthropic's API (ANTHROPIC_BASE_URL): the host only.
 function apiEndpoint() {
   const u = process.env.ANTHROPIC_BASE_URL;
@@ -687,55 +777,23 @@ function estimateCtx(items) {
 }
 
 // ---------- history ----------
-// History is cached per session: the SDK's getSessionMessages re-parses the whole transcript
-// (tens of MB on long sessions) on EVERY open and on every "loading earlier messages" page, which
-// is what made paging crawl. First load parses via the SDK; later, grown files are appended by
-// parsing only the new lines. A moved/rewritten file invalidates the cache.
-const HCACHE = new Map();          // cid -> {file, size, raw}
-async function history(chat) {
-  if (!chat.cid) return [];
-  await sdkReady;
-  const f = transcriptPath(chat.cid, chat.cwd);
-  let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
-  let c = HCACHE.get(chat.cid);
-  if (!c || c.file !== f || (st && st.size < c.size)) { c = { file: f, size: 0, raw: [] }; HCACHE.set(chat.cid, c); }
-  if (!c.raw.length) {
-    try { c.raw = sdk ? await sdk.getSessionMessages(chat.cid, { dir: chat.cwd }) : []; }
-    catch (e) { log('history', e.message); }
-    c.size = st ? st.size : 0;
-  } else if (st && st.size > c.size) {
-    const fd = fs.openSync(f, 'r');
-    try {
-      const start = Math.max(0, c.size - 1024);                                 // overlap: a line cut last time
-      const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start);
-      const seen = new Set(c.raw.map((i) => i.uuid));
-      for (const l of buf.toString('utf8').split('\n')) {
-        if (!l.startsWith('{')) continue;
-        let e; try { e = JSON.parse(l); } catch (_) { continue; }
-        if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain || e.isMeta) continue;
-        if (!e.uuid || !e.message || seen.has(e.uuid)) continue;
-        seen.add(e.uuid);
-        c.raw.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null });
-      }
-      c.size = st.size;
-    } finally { fs.closeSync(fd); }
-  }
-  // add what the SDK has streamed this turn but the transcript doesn't have yet
-  const items = c.raw.slice();
-  const seen = new Set(items.map((i) => i.uuid));
-  for (const m of chat.turn) if (!seen.has(m.uuid)) items.push(m);
-  const out = [], { extra, times } = transcriptExtras(chat);
-  for (const i of items) {
-    if (i.type !== 'user' && i.type !== 'assistant') continue;
-    const ts = i.ts || times.get(i.uuid) || 0;
-    out.push({ type: i.type, uuid: i.uuid, message: i.message, parent_tool_use_id: i.parent_tool_use_id || null, ts: ts || undefined });
-    for (const x of extra.get(i.uuid) || []) out.push(x);
-  }
-  return out;
+// History is cut from the TAIL of the transcript instead of parsing it whole. Opening a session
+// needs the LAST few messages; the old path made the SDK re-parse the whole file (tens of MB) on
+// every open and every "loading earlier messages" page — seconds of CPU that left panes stuck in
+// "Loading" and starved everything else the server serves. A per-session backward reader consumes
+// the file in 512 KB windows from the end and grows toward the start only when the user asks for
+// earlier pages. Parsed windows are kept per session in a small LRU (a parsed long transcript is
+// hundreds of MB of JS objects; keeping all of them grew the heap until GC stalls).
+const CACHE_MAX = 6;
+function cacheTouch(map, cid, make) {
+  let v = map.get(cid);
+  if (!v) { v = make(); map.set(cid, v); }
+  else { map.delete(cid); map.set(cid, v); }          // refresh LRU order
+  while (map.size > CACHE_MAX) map.delete(map.keys().next().value);
+  return v;
 }
-// History is sent in pages so a long conversation doesn't flood the browser: the last
-// PAGE_PROMPTS user prompts with everything after them, then older pages on request.
 const PAGE_PROMPTS = 5;
+const WINDOW = 512 * 1024;
 function isPrompt(i) {
   if (i.type !== 'user' || i.parent_tool_use_id) return false;
   const c = i.message && i.message.content;
@@ -750,17 +808,9 @@ function pageStart(items, end) {
   return 0;
 }
 // Output of slash commands and skills (/code-review, /cost, …) is saved in the transcript as
-// {type:'system', subtype:'local_command', parentUuid, content:'<local-command-stdout>…'}, which
-// getSessionMessages leaves out. Returns { extra: parentUuid -> [local_command_output messages],
-// times: uuid -> when the message was written (ms) }; getSessionMessages has no timestamps either.
-// A transcript line starts with its own fields, so the first "uuid":…,"timestamp":… pair is the message's.
+// {type:'system', subtype:'local_command', parentUuid, content:'<local-command-stdout>…'}.
+// Times: uuid -> written-at ms; transcript lines carry their own "uuid","timestamp" pair.
 const UUID_TS = /"uuid":"([^"]+)","timestamp":"([^"]+)"/;
-// Read incrementally: a long session's transcript is tens of MB, and re-reading it whole on
-// every history request stalled the server. Per-chat state remembers how much was consumed;
-// a moved, rewritten or shrunk file starts over. The 1 KB overlap re-parses the line that was
-// cut at the previous read boundary; map entries are overwritten, so duplicates are harmless.
-const EXTRAS = new Map();          // cid -> {file, size, map, times}
-const EMPTY_EXTRAS = () => ({ extra: new Map(), times: new Map(), agents: new Map(), cost: null });
 // Sub-agent facts the transcript keeps outside the messages getSessionMessages returns: the model
 // (toolUseResult.resolvedModel), whether it was launched in the background, and how it ended with
 // its totals (the result's <usage>, or the <task-notification> of a background agent).
@@ -788,56 +838,211 @@ function scanAgentLine(l, agents) {
     }
   }
 }
-function transcriptExtras(chat) {
-  const f = chat.cid && transcriptPath(chat.cid, chat.cwd);
-  let st; try { st = f ? fs.statSync(f) : null; } catch (_) { st = null; }
-  if (!st) return EMPTY_EXTRAS();
-  let c = EXTRAS.get(chat.cid);
-  if (!c || c.file !== f || st.size < c.size) { c = { file: f, size: 0, map: new Map(), times: new Map(), agents: new Map(), cost: null }; EXTRAS.set(chat.cid, c); }
-  if (st.size > c.size) {
-    const fd = fs.openSync(f, 'r');
-    try {
-      const start = Math.max(0, c.size - 1024);                                 // overlap: a line cut last time
-      const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start);
-      const text = buf.toString('utf8');
-      let i = 0;
-      for (const l of text.split('\n')) {
-        const t = UUID_TS.exec(l);
-        if (t) { const ms = Date.parse(t[2]); if (ms) c.times.set(t[1], ms); }
-        if (!l.includes('"isSidechain":true')) scanAgentLine(l, c.agents);
-        if (l.startsWith('{"type":"cost-state"')) {
-          // the session's totals, written when its process ends; a resume that sends nothing writes a zeroed one
-          let e; try { e = JSON.parse(l); } catch (_) { e = null; }
-          if (e && (e.totalCostUSD > 0 || Object.keys(e.modelUsage || {}).length)) c.cost = e;
-        }
-        if (!l.includes('"local_command"')) continue;
-        let e; try { e = JSON.parse(l); } catch (_) { continue; }
-        if (e.type !== 'system' || e.subtype !== 'local_command' || e.isSidechain) continue;
-        const cOut = String(e.content || '').replace(/<\/?local-command-std(out|err)>/g, '').trim();
-        if (!cOut) continue;
-        const k = e.parentUuid || '';
-        if (!c.map.has(k)) c.map.set(k, []);
-        c.map.get(k).push({ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: cOut });
-      }
-    } finally { fs.closeSync(fd); }
-    c.size = st.size;
-  }
-  return { extra: c.map, times: c.times, agents: c.agents, cost: c.cost };
+const READERS = new Map();         // cid -> backward reader state (LRU, see cacheTouch)
+function readerFor(chat) {
+  return cacheTouch(READERS, chat.cid, () =>
+    ({ file: null, front: 0, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false, capped: false }));
 }
-
-// Every sub-agent of a session the page may show: the transcript's facts, overlaid with what the
-// running process saw (live state, model, totals so far). An agent left "running" in the transcript
-// whose process is gone is "stopped": background agents die with the claude process.
-function agentFacts(chat) {
-  const out = {};
-  for (const [k, a] of transcriptExtras(chat).agents) out[k] = Object.assign({}, a);
-  const live = chat.agentsView();
-  for (const k of Object.keys(live)) out[k] = Object.assign(out[k] || {}, live[k]);
-  for (const k of Object.keys(out)) {
-    if (out[k].state === 'run' && !live[k]) out[k].state = 'stopped';     // launched by an earlier process
-    for (const f of Object.keys(out[k])) if (out[k][f] === undefined) delete out[k][f];
+// One transcript line -> times/agents/extras and, for a real turn, an item in acc.win. Shared by
+// the reader and the seek walker. acc.win is filled newest-first (the walk goes backward); the
+// callers reverse it once at the end.
+function consumeLine(l, acc) {
+  const t = UUID_TS.exec(l);
+  if (t) { const ms = Date.parse(t[2]); if (ms) acc.times.set(t[1], ms); }
+  if (acc.agents && !l.includes('"isSidechain":true')) scanAgentLine(l, acc.agents);
+  if (!l.startsWith('{')) return;
+  let e; try { e = JSON.parse(l); } catch (_) { return; }
+  if (e.type === 'system' && e.subtype === 'local_command' && !e.isSidechain) {
+    const c = String(e.content || '').replace(/<\/?local-command-std(out|err)>/g, '').trim();
+    if (c) {
+      const k = e.parentUuid || '';
+      acc.extras.set(k, [{ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: c }].concat(acc.extras.get(k) || []));
+    }
   }
-  return out;
+  if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain) return;
+  if (!e.uuid || !e.message) return;
+  acc.win.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null, meta: !!e.isMeta,
+    from: (e.origin && e.origin.name) || undefined });
+}
+// Start offset of the transcript line that ends right before byte offset `pos` (`pos` is itself a
+// line start). Probes backward in growing chunks, so a line of any length costs one small probe —
+// window-cut parsing never dropped whole (huge) tool-result lines this way.
+function prevLineStart(f, pos) {
+  let probe = 16384;
+  while (true) {
+    const to = pos - 1;                                  // the '\n' that ends the previous line
+    if (to <= 0) return 0;
+    const from = Math.max(0, to - probe);
+    const fd = fs.openSync(f, 'r');
+    let buf;
+    try { buf = Buffer.alloc(to - from); fs.readSync(fd, buf, 0, buf.length, from); }
+    finally { fs.closeSync(fd); }
+    const idx = buf.lastIndexOf('\n');
+    if (idx >= 0) return from + idx + 1;
+    if (from === 0) return 0;
+    probe *= 8;
+    if (probe > 32 * 1024 * 1024) return 0;              // hopeless gap: treat as the file start
+  }
+}
+function readLineText(f, s, e) {
+  if (e <= s) return '';
+  if (e - s > 8 * 1024 * 1024) return null;              // a single message over 8 MB: not worth a page
+  const fd = fs.openSync(f, 'r');
+  let buf;
+  try { buf = Buffer.alloc(e - s); fs.readSync(fd, buf, 0, buf.length, s); }
+  finally { fs.closeSync(fd); }
+  return buf.toString('utf8');
+}
+// Consume more lines moving toward the file start, until the collected tail holds at least
+// minPrompts user prompts (or the file start is reached).
+// Agent-heavy sessions go megabytes without a single user prompt, so counting prompts alone made
+// the reader consume whole transcripts (hundreds of MB of JS objects -> OOM-ish heap). Reading is
+// bounded by bytes and items as well: a page may carry fewer prompts than requested.
+const READER_MAX_BYTES = 4 * 1024 * 1024;
+const READER_MAX_ITEMS = 1200;
+function extendBack(entry, chat, minPrompts) {
+  const f = transcriptPath(chat.cid, chat.cwd);
+  if (!f) { entry.atStart = true; return; }
+  let size; try { size = fs.statSync(f).size; } catch (_) { entry.atStart = true; return; }
+  if (entry.file !== f) { Object.assign(entry, { file: f, size, front: size, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false, capped: false, read: 0 }); }
+  const prompts = () => entry.items.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
+  const enough = () => prompts() >= minPrompts || entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES;
+  const win = [];
+  while (!entry.atStart && !enough()) {
+    if (entry.front <= 0) { entry.atStart = true; break; }
+    const prev = prevLineStart(f, entry.front);
+    const l = readLineText(f, prev, entry.front);
+    entry.read += entry.front - prev;
+    consumeLine(l || '', { times: entry.times, agents: entry.agents, extras: entry.extras, win });
+    entry.front = prev;
+    if (prev <= 0) entry.atStart = true;      // isMeta stays: scheduled/cron turns are real user turns and must be visible
+  }
+  // a byte/item cap (not the file start) stopped the walk: deeper history exists, the next
+  // "earlier" request for a boundary behind the cap goes to seekPage
+  if (!entry.atStart && (entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES)) entry.capped = true;
+  if (win.length) { win.reverse(); entry.items = win.concat(entry.items); }
+}
+// The page the browser shows: the last PAGE_PROMPTS prompts counting from the end, or — with
+// `beforeUuid` — the PAGE_PROMPTS prompts right before that message (the "earlier" page).
+function tailPage(chat, beforeUuid) {
+  if (!chat.cid) return { items: [], more: 0 };
+  const entry = readerFor(chat);
+  // the reader only walks backward from where it started; for the latest page, start over once the
+  // transcript has grown, or prompts sent since (which never show up in chat.turn) vanish on reopen
+  if (!beforeUuid && entry.file) {
+    let size = -1; try { size = fs.statSync(entry.file).size; } catch (_) {}
+    if (size !== entry.size) entry.file = null;
+  }
+  extendBack(entry, chat, PAGE_PROMPTS);
+  let end = beforeUuid ? entry.items.findIndex((i) => i.uuid === beforeUuid) : entry.items.length;
+  let guard = 0;
+  while (beforeUuid && end < 0 && !entry.atStart && !entry.capped && guard++ < 8) {   // the boundary page was evicted: read further back
+    extendBack(entry, chat, PAGE_PROMPTS * (guard + 1));
+    end = entry.items.findIndex((i) => i.uuid === beforeUuid);
+  }
+  if (beforeUuid && end < 0) return seekPage(chat, beforeUuid);
+  const stop = end < 0 ? entry.items.length : end;
+  const start = pageStart(entry.items, stop);
+  const page = entry.items.slice(start, stop);
+  // a capped window may have the boundary but not a full page under it; seekPage is independent
+  // of the reader's byte/item caps and fills the page from the file itself
+  if (beforeUuid && entry.capped &&
+      page.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0) < PAGE_PROMPTS) return seekPage(chat, beforeUuid);
+  if (!beforeUuid) {                                                 // streamed this turn, transcript may lag
+    const seen = new Set(page.map((i) => i.uuid));
+    for (const m of chat.turn) if (!seen.has(m.uuid))
+      page.push({ type: m.type, uuid: m.uuid, message: m.message, parent_tool_use_id: m.parent_tool_use_id || null });
+  }
+  const out = [];
+  for (const i of page) {
+    if (i.type !== 'user' && i.type !== 'assistant') continue;
+    const ts = entry.times.get(i.uuid) || 0;
+    out.push({ type: i.type, uuid: i.uuid, message: i.message, parent_tool_use_id: i.parent_tool_use_id || null, ts: ts || undefined });
+    for (const x of entry.extras.get(i.uuid) || []) out.push(x);
+  }
+  return { items: out, more: start > 0 ? start : (!entry.atStart ? 1 : 0) };
+}
+// Long sessions outgrow the reader's bounded window (READER_MAX_*): an "earlier" request whose
+// boundary lies deeper than the cap used to come back empty (lost) and the UI stopped loading
+// history. For that case seek the boundary in the raw file instead: find its line by a plain-text
+// needle (safe: inside JSON strings the quotes are escaped, so the needle only matches a real
+// "uuid" field), then parse just the one page backward from it. Nothing is kept in the LRU — the
+// raw scan costs no JSON parsing, and the parse is bounded by the page itself.
+const SEEK_MAX_BYTES = 64 * 1024 * 1024;
+function seekPage(chat, beforeUuid) {
+  const lost = { items: [], more: 0, lost: true };
+  const f = transcriptPath(chat.cid, chat.cwd);
+  if (!f || !beforeUuid) return lost;
+  let size; try { size = fs.statSync(f).size; } catch (_) { return lost; }
+  // phase 1: locate the boundary line's start offset (backward, window by window, a small carry
+  // covers a needle that straddles a window edge)
+  const NEEDLE = `"uuid":"${beforeUuid}"`;
+  const carryLen = NEEDLE.length - 1;
+  let at = -1, front = size, scanned = 0, carry = '';
+  while (front > 0 && scanned < SEEK_MAX_BYTES) {
+    const start = Math.max(0, front - WINDOW);
+    const fd = fs.openSync(f, 'r');
+    let buf;
+    try { buf = Buffer.alloc(front - start); fs.readSync(fd, buf, 0, buf.length, start); }
+    finally { fs.closeSync(fd); }
+    scanned += buf.length;
+    const text = buf.toString('utf8') + carry;
+    carry = carryLen ? buf.toString('utf8', 0, Math.min(carryLen, buf.length)) : '';
+    const idx = text.indexOf(NEEDLE);
+    if (idx >= 0 && idx < buf.length + carryLen) {
+      const lineStart = text.lastIndexOf('\n', idx) + 1;
+      at = start + lineStart;                    // carry only extends past the window end
+      if (lineStart >= buf.length) at = -1;      // match landed fully in the carry: look deeper
+      else break;
+    }
+    front = start;
+  }
+  if (at < 0) return lost;
+  // phase 2: parse backward from the boundary line until the page holds PAGE_PROMPTS prompts
+  const times = new Map(), extras = new Map(), win = [];
+  let back = at, read = 0, atStart = false;
+  while (!atStart && read < SEEK_MAX_BYTES && win.length < READER_MAX_ITEMS) {
+    const prev = prevLineStart(f, back);
+    read += back - prev;
+    const l = readLineText(f, prev, back);
+    if (l !== null) consumeLine(l, { times, agents: null, extras, win });
+    back = prev;
+    if (prev <= 0) atStart = true;
+    else if (win.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0) >= PAGE_PROMPTS) break;
+  }
+  win.reverse();                                             // the walk went backward: restore file order
+  const start = pageStart(win, win.length);
+  const page = win.slice(start);
+  const out = [];
+  for (const i of page) {
+    if (i.type !== 'user' && i.type !== 'assistant') continue;
+    const ts = times.get(i.uuid) || 0;
+    out.push({ type: i.type, uuid: i.uuid, message: i.message, parent_tool_use_id: i.parent_tool_use_id || null, ts: ts || undefined });
+    for (const x of extras.get(i.uuid) || []) out.push(x);
+  }
+  return { items: out, more: start > 0 || !atStart ? 1 : 0 };
+}
+// ---------- one-shot shell runs (the "Run" button on code blocks) ----------
+// A fresh bash per run: real shell semantics ( pipes, env, builds) with a clean state and no
+// surprises in a live console. Bounded by time and output size; at most a few at a time.
+const RUN_MAX = 2, RUN_TIMEOUT = 120000, RUN_MAXBUF = 1 << 20;
+let runsActive = 0;
+function runInShell(chat, cmd) {
+  return new Promise((res) => {
+    if (runsActive >= RUN_MAX) { res({ code: -1, out: 'too many runs in progress, try again in a moment', ms: 0 }); return; }
+    runsActive++;
+    const t0 = Date.now();
+    execFile('bash', ['-lc', cmd], { cwd: chat.cwd || WS_ROOT, timeout: RUN_TIMEOUT, maxBuffer: RUN_MAXBUF,
+      env: Object.assign({}, process.env, { TERM: 'dumb' }) }, (e, out, err) => {
+      runsActive--;
+      let code = e && e.code != null ? e.code : (e ? -1 : 0);
+      let text = String(out || '');
+      if (err) text += (text ? '\n' : '') + String(err);
+      if (e && e.killed) text += '\n[timeout after ' + Math.round(RUN_TIMEOUT / 1000) + ' s — killed]';
+      if (text.length > RUN_MAXBUF) text = text.slice(0, RUN_MAXBUF) + '\n…[truncated]';
+      res({ code, out: text.trim(), ms: Date.now() - t0 });
+    });
+  });
 }
 
 // ---------- per-socket handling ----------
@@ -862,11 +1067,15 @@ async function chatFor(msg) {
     if (ex) return ex;
     for (const c of CHATS) if (c.token === msg.token) return c;
     return new Chat({ cid: rec.claudeSessionId, cwd: launchDir(rec.claudeSessionId, rec.cwd) || rec.cwd,
-      name: rec.tmuxSession || rec.name || ('chat-' + msg.token), token: msg.token });
+      name: rec.tmuxSession || rec.name || ('chat-' + msg.token), token: msg.token, model: rec.model || '' });
   }
   const cwd = msg.cwd && path.resolve(msg.cwd);
   if (!cwd || !fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('folder not found: ' + msg.cwd);
-  return new Chat({ cwd, name: 'chat-' + sanitizeName(path.basename(cwd)) + '-' + Date.now().toString(36).slice(-4) + (++newSeq) });
+  const chat = new Chat({ cwd, name: 'chat-' + sanitizeName(path.basename(cwd)) + '-' + Date.now().toString(36).slice(-4) + (++newSeq) });
+  // a name picked for the new session: shown right away (registry title) and kept (customTitle)
+  const title = String(msg.title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (title) { chat.pendingTitle = title; chat.customTitle = title; }
+  return chat;
 }
 
 function onConnection(ws) {
@@ -879,25 +1088,47 @@ function onConnection(ws) {
   async function handle(raw) {
     let msg; try { msg = JSON.parse(String(raw)); } catch (_) { return; }
     const key = String(msg.key || '');
+    // liveness check from the launcher; answered in order, so a wedged op chain shows up as silence
+    if (msg.op === 'ping') { reply({ ev: 'pong' }); return; }
     try {
       if (msg.op === 'open') {
         let chat = mine.get(key);
         if (!chat) { chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key }); }
-        const all = await history(chat), start = pageStart(all, all.length), items = all.slice(start);
-        if (!chat.info.context) chat.info.context = (chat.cid && CTX[chat.cid]) || estimateCtx(all);
+        const pg = tailPage(chat, null), items = pg.items, start = pg.more;
+        if (!chat.info.context) chat.info.context = (chat.cid && CTX[chat.cid]) || estimateCtx(items);
         const pend = [...chat.perms].map(([id, p]) => ({ id, tool: p.tool, input: p.input, reason: p.reason, suggestions: p.suggestions.length > 0 }));
         reply({ ev: 'history', key, items, state: chat.state, console: !chat.q && await tmuxAlive(chat.name),
-                info: chat.info, perms: pend, token: chat.token, more: start, agents: agentFacts(chat),
+                info: chat.info, perms: pend, token: chat.token, more: pg.more, agents: agentFacts(chat),
                 draft: (chat.token && DRAFTS[chat.token]) || null });
         return;
       }
       if (msg.op === 'older') {
         const chat = mine.get(key);
         if (!chat) { reply({ ev: 'older', key, items: [], more: 0 }); return; }
-        const all = await history(chat), end = all.findIndex((i) => i.uuid === msg.before);
-        if (end < 0) { reply({ ev: 'older', key, items: [], more: 0, lost: true }); return; }
-        const start = pageStart(all, end);
-        reply({ ev: 'older', key, items: all.slice(start, end), more: start });
+        const pg = tailPage(chat, msg.before);
+        if (pg.lost) { reply({ ev: 'older', key, items: [], more: 0, lost: true }); return; }
+        reply({ ev: 'older', key, items: pg.items, more: pg.more });
+        return;
+      }
+      if (msg.op === 'run') {
+        let chat = mine.get(key);
+        if (!chat && msg.token) { chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key }); }
+        if (!chat) { reply({ ev: 'error', key, text: 'run: session not open' }); return; }
+        const cmd = String(msg.cmd || '').trim().slice(0, 4000);
+        if (!cmd) { reply({ ev: 'error', key, text: 'run: empty command' }); return; }
+        log('shell run:', cmd.slice(0, 120));
+        runInShell(chat, cmd).then((r) => reply({ ev: 'run_result', key, cmd, code: r.code, out: r.out, ms: r.ms }));
+        return;
+      }
+      if (msg.op === 'fork') {
+        let chat = mine.get(key);
+        if (!chat && msg.token) { chat = await chatFor(msg); mine.set(key, chat); chat.subs.add({ ws, key }); }
+        if (!chat || !chat.cid) { reply({ ev: 'error', key, text: 'fork: session not open' }); return; }
+        try {
+          const r = forkFrom(chat, String(msg.uuid || ''));
+          const token = registry.upsert({ cid: r.cid, cwd: chat.cwd, name: r.name, state: 'stopped', mode: 'chat' });
+          reply({ ev: 'forked', key, token, name: r.name });
+        } catch (e) { reply({ ev: 'error', key, text: 'fork failed: ' + e.message }); }
         return;
       }
       let chat = mine.get(key);
@@ -926,7 +1157,10 @@ function onConnection(ws) {
         case 'interrupt': await chat.interrupt(); break;
         case 'perm': chat.answer(msg.id, msg); break;
         case 'mode': await chat.setMode(String(msg.mode)); break;
-        case 'model': await chat.setModel(msg.model, msg.effort); break;
+        case 'model':
+          if (msg.model) await chat.setModel(String(msg.model));
+          if (msg.effort !== undefined) await chat.setEffort(msg.effort);
+          break;
         case 'stats': {
           // not awaited: a fresh process takes a few seconds and the socket's other ops must not wait
           const kind = String(msg.kind || ''), req = msg.req, base = { ev: 'stats', key, kind, req };
@@ -1017,38 +1251,39 @@ function sessionTitles(cid, cwd) {
       const regions = [];
       if (t.size === 0 && st.size > TITLE_COLD_HEAD + TITLE_COLD_TAIL) {        // cold, huge: head + tail
         regions.push([0, TITLE_COLD_HEAD], [st.size - TITLE_COLD_TAIL, st.size]);
+        t.size = st.size; t.partial = '';
       } else {
-        regions.push([Math.max(0, t.size - 1024), st.size]);                     // overlap: a line cut last time
+        const start = Math.max(0, t.size - 1024) - (t.partial ? t.partial.length : 0);  // overlap: a line cut last time
+        regions.push([Math.max(0, start), st.size]);
       }
       for (const [from, to] of regions) {
         const buf = Buffer.alloc(to - from); fs.readSync(fd, buf, 0, buf.length, from);
-        // decode once: a decode in the loop condition re-reads the whole buffer for every match
-        const text = buf.toString('utf8'); let m; TITLE_RE.lastIndex = 0;
-        while ((m = TITLE_RE.exec(text))) {
+        let m; TITLE_RE.lastIndex = 0;
+        while ((m = TITLE_RE.exec(buf.toString('utf8')))) {
           let v; try { v = JSON.parse('"' + m[2] + '"'); } catch (_) { v = m[2]; }
           if (m[1] === 'custom-title') t.custom = v; else t.ai = v;
         }
       }
     } finally { fs.closeSync(fd); }
-    t.size = st.size;                  // the next call reads only what is appended after this
+    t.size = st.size;                       // common for both the cold scan and the incremental delta
     saveTitles();
   }
   return t;
 }
 
+async function setTitle(cid, cwd, title) {
+  await sdkReady;
+  if (sdk && sdk.renameSession) { await sdk.renameSession(cid, title, { dir: cwd }); return; }
+  const f = transcriptPath(cid, cwd);                                           // SDK unavailable: same entry by hand
+  if (!f) throw new Error('transcript not found');
+  fs.appendFileSync(f, JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: cid }) + '\n');
+}
 async function rename(token, title) {
   title = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 120);
   if (!title) throw new Error('empty title');
   const rec = await registry.get(token);
   if (!rec || !rec.claudeSessionId) throw new Error('unknown session');
-  await sdkReady;
-  if (sdk && sdk.renameSession) {
-    await sdk.renameSession(rec.claudeSessionId, title, { dir: rec.cwd });
-  } else {                                                                      // SDK unavailable: same entry by hand
-    const f = transcriptPath(rec.claudeSessionId, rec.cwd);
-    if (!f) throw new Error('transcript not found');
-    fs.appendFileSync(f, JSON.stringify({ type: 'custom-title', customTitle: title, sessionId: rec.claudeSessionId }) + '\n');
-  }
+  await setTitle(rec.claudeSessionId, rec.cwd, title);
   return title;
 }
 
@@ -1237,5 +1472,53 @@ async function sendTo(token, text) {
   return { via: 'chat' };
 }
 
-module.exports = { Chat, ctxView, usageView, savedSession, launchDir, sessionTitles, transcriptExtras, agentUsage, agentFacts, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
+// Every sub-agent of a session the page may show: what the transcript tail says (collected by the
+// reader while it reads the page, so no extra pass over a large file), overlaid with what the
+// running process saw. An agent left "running" whose process is gone is "stopped": background
+// agents die with the claude process.
+function agentFacts(chat) {
+  const out = {};
+  if (chat.cid) {
+    const entry = readerFor(chat);
+    if (!entry.file) extendBack(entry, chat, PAGE_PROMPTS);
+    for (const [k, a] of entry.agents || []) out[k] = Object.assign({}, a);
+  }
+  const live = chat.agentsView ? chat.agentsView() : {};
+  for (const k of Object.keys(live)) out[k] = Object.assign(out[k] || {}, live[k]);
+  for (const k of Object.keys(out)) {
+    if (out[k].state === 'run' && !live[k]) out[k].state = 'stopped';     // launched by an earlier process
+    for (const f of Object.keys(out[k])) if (out[k][f] === undefined) delete out[k][f];
+  }
+  return out;
+}
+
+// ---------- fork: a new session continuing from a chosen message ----------
+// Claude Code transcripts are line-per-message files keyed by filename; a fork is a copy of the
+// prefix (everything up to and including the chosen message) under a NEW session id, with the
+// copied lines' sessionId rewritten. The original session stays untouched; sending a message to
+// the fork resumes the new id and continues exactly from the fork point. A custom-title line is
+// appended so "Fork: …" sticks as the session name.
+function forkFrom(chat, uuid) {
+  const f = transcriptPath(chat.cid, chat.cwd);
+  if (!f) throw new Error('transcript not found');
+  const text = fs.readFileSync(f, 'utf8');
+  const lines = text.split('\n');
+  const cut = lines.findIndex((l) => l.includes('"uuid":"' + uuid + '"'));
+  if (cut < 0) throw new Error('message not found in transcript');
+  // forking from a user prompt branches BEFORE it (re-ask differently); from an answer — after it
+  let userType = false;
+  try { userType = JSON.parse(lines[cut]).type === 'user'; } catch (_) {}
+  const keep = userType ? cut : cut + 1;
+  const newId = crypto.randomUUID();
+  const prefix = lines.slice(0, keep)
+    .map((l) => l.split(`"sessionId":"${chat.cid}"`).join(`"sessionId":"${newId}"`))
+    .join('\n') + '\n';
+  const title = (sessionTitles(chat.cid, chat.cwd) || {});
+  const name = 'Fork: ' + (title.custom || title.ai || chat.name || path.basename(chat.cwd || 'session'));
+  fs.writeFileSync(path.join(path.dirname(f), newId + '.jsonl'),
+    prefix + `{"type":"custom-title","customTitle":${JSON.stringify(name)}}\n`);
+  return { cid: newId, name };
+}
+
+module.exports = { Chat, ctxView, usageView, savedSession, launchDir, sessionTitles, tailPage, forkFrom, runInShell, agentUsage, agentFacts, handleUpgrade, decorate, dirs, stopByToken, info, rename, apiNew, apiStatus, getSdk,
   pendingPerms, answerPerm, sendTo, transcriptPath };

@@ -98,7 +98,7 @@ enter_by_token() {
   # cid comes from the registry file: only a session id shape is accepted, and it is passed as its
   # own argument (tmux runs a multi-word command without a shell), never spliced into a string
   [[ "$cid" =~ ^[A-Za-z0-9-]{1,64}$ ]] || return 1
-  tmux -u new-session -d -s "$nm" -c "$rcwd" claude --resume "$cid" 2>/dev/null || return 1
+  tmux -u new-session -d -s "$nm" -c "$rcwd" claude-default --resume "$cid" 2>/dev/null || return 1
   stamp_token "$nm" "$token"
   # The record still points at the name this session had before the restart; re-point it now so the
   # launcher shows the card as live without waiting for the first hook of the resumed session.
@@ -115,6 +115,11 @@ shell_and_enter() {
   case "$dir" in /workspace|/workspace/*) ;; *) dir=/workspace ;; esac   # stay inside the workspace
   [ -d "$dir" ] || dir=/workspace
   nm="shell"; [ "$dir" != /workspace ] && nm="shell-$(basename "$dir" | tr -c 'A-Za-z0-9_-' '-')"
+  # two folders with the same name (tasks/a/api, repos/api) must not share one shell
+  if [ "$nm" != shell ] && tmux has-session -t "=$nm" 2>/dev/null &&
+     [ "$(tmux display-message -p -t "=$nm:" '#{session_path}' 2>/dev/null)" != "$dir" ]; then
+    nm="$nm-$(printf '%s' "$dir" | cksum | cut -d' ' -f1)"
+  fi
   tmux has-session -t "=$nm" 2>/dev/null || tmux -u new-session -d -s "$nm" -c "$dir" bash -l 2>/dev/null || true
   exec tmux -u attach-session -t "$nm"
 }
@@ -138,7 +143,7 @@ new_and_enter() {
   local name="$1" dir
   dir="$(pick_dir)"
   printf '%s  starting new session: %s (%s)%s\n' "$O" "$name" "$dir" "$R"
-  tmux -u new-session -d -s "$name" -c "$dir" claude 2>/dev/null || true
+  tmux -u new-session -d -s "$name" -c "$dir" claude-default 2>/dev/null || true
   enter "$name"
 }
 

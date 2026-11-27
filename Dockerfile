@@ -23,6 +23,15 @@ RUN apt-get update \
  && mkdir -p /home/node/.claude /workspace \
  && chown -R node:node /home/node /workspace
 
+# Docker CLI + compose (used only when the host's socket is mounted: DOCKER_ACCESS=1)
+RUN install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+ && . /etc/os-release \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+      > /etc/apt/sources.list.d/docker.list \
+ && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin docker-buildx-plugin \
+ && rm -rf /var/lib/apt/lists/*
+
 # Grafana MCP (mcp-grafana) — a Go binary for MCP (Loki/Prometheus/dashboards).
 # Credentials are taken from ENV (GRAFANA_URL + GRAFANA_SERVICE_ACCOUNT_TOKEN), see claude-defaults/mcp.json.
 # The version is pinned (rather than latest via api.github.com) — otherwise rate-limit/504 from the GitHub API breaks the build.
@@ -74,6 +83,23 @@ RUN mkdir -p /opt/claude-web-chat && cd /opt/claude-web-chat \
       "@anthropic-ai/claude-agent-sdk@${CLAUDE_AGENT_SDK_VERSION}" "ws@${WS_VERSION}" \
  && npm cache clean --force
 
+# The built-in browser for the Browser tab — only when built by `./claude-box --browser` (BROWSER=1):
+# Chromium on a virtual display (Xvfb), shown through x11vnc + noVNC (pinned, its ES modules only).
+# Placed before the html and script copies, so editing those does not download it again.
+ARG BROWSER=0
+ARG NOVNC_VERSION=1.5.0
+# the ISO week from ./claude-box: a new week reinstalls Chromium (security updates), see claude-box
+ARG BROWSER_REFRESH=
+RUN echo "browser layer: ${BROWSER_REFRESH:-no refresh}" >/dev/null; if [ "$BROWSER" = 1 ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        chromium xvfb x11vnc fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
+      && rm -rf /var/lib/apt/lists/* \
+      && mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix \
+      && mkdir -p /opt/novnc \
+      && curl -fsSL --retry 5 --retry-all-errors "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+         | tar -xz -C /opt/novnc --strip-components=1 "noVNC-${NOVNC_VERSION}/core" "noVNC-${NOVNC_VERSION}/vendor"; \
+    fi
+
 # Custom ttyd frontend (--index): sound on bell, hidden scroll, deep-link.
 # xterm is vendored locally (html/vendor) and inlined into a self-contained index.html
 # (ttyd serves a SINGLE file; we don't use a CDN — the terminal has shell access).
@@ -81,9 +107,22 @@ COPY html/ /opt/claude-web-src/
 RUN node /opt/claude-web-src/build-index.js \
       /opt/claude-web-src/index.html /usr/local/share/claude-web/index.html \
  && node /opt/claude-web-src/build-launcher.js \
-      /opt/claude-web-src/launcher.html /usr/local/share/claude-web/launcher.html
+      /opt/claude-web-src/launcher.html /usr/local/share/claude-web/launcher.html \
+ && cp /opt/claude-web-src/browser.html /usr/local/share/claude-web/browser.html
 
 # The web server (Node): entrypoint, sidecar, chat, session registry, metrics, search, preview.
+# VS Code in the browser (code-server) for the Code tab — only when built by `./claude-box --vscode`
+# (VSCODE=1); the default image stays without it. Pinned like ttyd above. Placed before the
+# script copies, so editing the scripts does not download it again.
+ARG VSCODE=0
+ARG CODE_SERVER_VERSION=4.96.4
+RUN if [ "$VSCODE" = 1 ]; then \
+      a="$(dpkg --print-architecture)" \
+      && curl -fsSL --retry 5 --retry-all-errors -o /tmp/code-server.deb \
+         "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server_${CODE_SERVER_VERSION}_${a}.deb" \
+      && dpkg -i /tmp/code-server.deb && rm -f /tmp/code-server.deb; \
+    fi
+
 # All modules live side by side in /usr/local/lib/claude-web; the commands that other
 # processes call (the entrypoint, the registry CLI, cb-session) are symlinked onto PATH.
 COPY scripts/*.js /usr/local/lib/claude-web/
@@ -96,8 +135,13 @@ RUN ln -sf /usr/local/lib/claude-web/web-serve.js /usr/local/bin/claude-web-serv
 # registry), plus the tmux config (set-titles -> tab title)
 COPY scripts/web-menu.sh /usr/local/bin/claude-web-menu
 COPY scripts/notify.sh /usr/local/bin/claude-notify
+COPY scripts/claude-default.sh /usr/local/bin/claude-default
 COPY scripts/tmux.conf /etc/tmux.conf
-RUN chmod +x /usr/local/bin/claude-web-menu /usr/local/bin/claude-notify
+RUN chmod +x /usr/local/bin/claude-web-menu /usr/local/bin/claude-notify /usr/local/bin/claude-default
+
+# Entry wrapper: names the run uid in /etc/passwd (see web-entry.sh), then drops to it
+COPY scripts/web-entry.sh /usr/local/bin/claude-web-entry
+RUN chmod +x /usr/local/bin/claude-web-entry
 
 # Entry wrapper: names the run uid in /etc/passwd (see web-entry.sh), then drops to it
 COPY scripts/web-entry.sh /usr/local/bin/claude-web-entry
@@ -105,9 +149,8 @@ RUN chmod +x /usr/local/bin/claude-web-entry
 
 # Shared defaults (settings + MCP) — seeded into ~/.claude at startup (see web-serve.js)
 COPY claude-defaults/ /opt/claude-defaults/
-# Box-wide rules for Claude (git identity, ...): the managed CLAUDE.md, read in every folder by the
-# CLI and by the Agent SDK the web chat runs on
-COPY claude-defaults/managed-CLAUDE.md /etc/claude-code/CLAUDE.md
+# Rules for every Claude session in the box (git identity, ...): the managed CLAUDE.md location
+RUN mkdir -p /etc/claude-code && cp /opt/claude-defaults/managed-CLAUDE.md /etc/claude-code/CLAUDE.md
 
 # A claude installed or updated by the native installer lives in ~/.local/bin (the home dir is
 # a bind mount, so it survives image rebuilds) — prefer it over the image's npm copy.

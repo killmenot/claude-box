@@ -37,3 +37,7 @@ docs/superpowers/
 site/deploy.sh
 # the default projects folder (./claude-box offers it on the first run)
 /workspace/
+
+# words that must never reach the public repo, one regex per line (tests/private-words.test.js)
+.private-words
+.playwright-mcp/

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 // On-disk registry of web sessions (survives a container restart, unlike tmux).
-// One JSON object keyed by token: {token, claudeSessionId, cwd, name, state, tmuxSession, title, mode, lastActivity}.
+// One JSON object keyed by token: {token, claudeSessionId, cwd, name, state, tmuxSession, title, mode, model, lastActivity}. model: a chat's pick, "provider/model id" (web-models.js).
 //
 // Used as a library by the sidecar / web chat, and as a CLI (`claude-web-registry`) by the two
 // remaining shell pieces — the claude-notify hook and the ttyd picker (web-menu.sh):
@@ -69,8 +69,13 @@ function locked(fn) {
 
 // ---------- tmux ----------
 function tmux(args) {
+  const t0 = Date.now();
   try { return execFileSync('tmux', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); }
   catch (_) { return null; }
+  finally {
+    const dt = Date.now() - t0;
+    if (dt > 300) console.error(`[tmux] ${args[0]} took ${dt}ms at ${new Date().toISOString()}`);   // the tmux server briefly stalling blocks the whole node loop
+  }
 }
 // name -> {stamp, title} of every live tmux session, in ONE tmux call.
 function tmuxSessions() {
@@ -120,6 +125,7 @@ function upsert(f) {
       tmuxSession: f.tmux || '',
       title: f.title || prev.title || '',
       mode: f.mode || prev.mode || '',
+      model: f.model || prev.model || '',
       lastActivity: Math.floor(Date.now() / 1000),
     };
     write(reg);
@@ -142,6 +148,17 @@ function list() {
 function owns(token) {
   const reg = read(), rec = reg[token];
   return rec && ownsSession(reg, tmuxSessions(), rec.tmuxSession, token) ? rec.tmuxSession : null;
+}
+
+// set or clear extra fields of a record (archived: see web-archive.js); null removes a field
+function patch(token, fields) {
+  return locked(() => {
+    const reg = read(), rec = reg[token];
+    if (!rec) return null;
+    for (const [k, v] of Object.entries(fields || {})) { if (v === null || v === undefined) delete rec[k]; else rec[k] = v; }
+    write(reg);
+    return rec;
+  });
 }
 
 // Delete from the dashboard: stop the session and move its record to the trash. `extra` is kept
@@ -232,7 +249,7 @@ function restore(log = (s) => console.error(s)) {
     if (!r.claudeSessionId || !r.cwd || !fs.existsSync(r.cwd)) { log(`restore: skip ${sess} (folder ${r.cwd} is gone)`); continue; }
     if (!hasTranscript(r.claudeSessionId)) { log(`restore: skip ${sess} (no transcript for ${r.claudeSessionId})`); continue; }
     if (tmux(['has-session', '-t', '=' + sess]) !== null) continue;   // already running
-    const ok = spawnSync('tmux', ['-u', 'new-session', '-d', '-s', sess, '-c', r.cwd, 'claude', '--resume', r.claudeSessionId],
+    const ok = spawnSync('tmux', ['-u', 'new-session', '-d', '-s', sess, '-c', r.cwd, 'claude-default', '--resume', r.claudeSessionId],
       { stdio: 'ignore' }).status === 0;
     if (ok) {
       tmux(['set-option', '-t', '=' + sess + ':', '@cbtoken', tok]);   // '=name:' — set-option rejects a bare '=name'
@@ -242,7 +259,7 @@ function restore(log = (s) => console.error(s)) {
   }
 }
 
-module.exports = { REG, TRASH, upsert, get, list, owns, remove, trash, untrash, purge, snapshot, restore };
+module.exports = { REG, TRASH, upsert, get, list, owns, patch, remove, trash, untrash, purge, snapshot, restore };
 
 // ---------- CLI ----------
 if (require.main === module) {

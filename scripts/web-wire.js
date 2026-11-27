@@ -240,6 +240,8 @@ function noteHost(st, host, how) {
 async function begin(source, label, env, extra) {
   const none = { id: null, env, update() {}, finish() {} };
   if (!getSettings().enabled || upstream().host !== API_HOST) return none;
+  // a session on another provider (its own ANTHROPIC_BASE_URL, web-models.js) is not recorded
+  try { if (env && env.ANTHROPIC_BASE_URL && new URL(env.ANTHROPIC_BASE_URL).host !== API_HOST) return none; } catch (_) { return none; }
   try { loadCerts(); fs.mkdirSync(WIRE_DIR, { recursive: true, mode: 0o700 }); } catch (e) { console.error('wire', e.message); return none; }
   const id = new Date().toISOString().replace(/[:.]/g, '-') + '-' + source + '-' + Math.random().toString(36).slice(2, 6);
   const st = { parts: new Map(), prev: [], meta: Object.assign({ id, source, label: String(label || '').slice(0, 200), started: new Date().toISOString(),

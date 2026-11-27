@@ -14,5 +14,6 @@
     "superpowers@claude-plugins-official": true
   },
   "theme": "dark",
+  "cleanupPeriodDays": 365,
   "skipWorkflowUsageWarning": true
 }

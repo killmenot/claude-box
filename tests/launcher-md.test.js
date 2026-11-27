@@ -16,7 +16,7 @@ function lift(name, until) {
   const end = html.indexOf(until, start + 1);
   return html.slice(start, end);
 }
-const ctx = { PANES: { a: { cwd: '/workspace/proj' } }, ACTIVE: 'a', WS_ROOT: '/workspace', WS_HOST: '' };
+const ctx = { PANES: { a: { cwd: '/workspace/proj' } }, ACTIVE: 'a', WS_ROOT: '/workspace', WS_HOST: '', CODE_ON: false };
 vm.createContext(ctx);
 vm.runInContext([
   html.slice(html.indexOf('function esc('), html.indexOf('\n', html.indexOf('function esc('))),
@@ -146,4 +146,15 @@ test('file links: a VS Code icon only when the host folder is known', () => {
     assert.match(out, /href="vscode:\/\/file\/Users\/me\/My%20Projects"/);
     for (const p of PAYLOADS) assertSafe(mdInline(p), p);
   } finally { ctx.WS_HOST = ''; }
+});
+
+test('file links: with the VS Code of the box (--vscode) the icon opens the VS Code tab of the session', () => {
+  ctx.CODE_ON = true; ctx.WS_HOST = '/Users/me/ws';
+  try {
+    const out = mdInline('[r](sub/r.md#L7)');
+    assert.match(out, /<a class="vsc" href="#" data-code="proj\/sub\/r\.md" data-line="7" title="Open in VS Code">/);
+    assert.match(out, /data-ws="proj\/sub\/r\.md" data-line="7"/);
+    assert.doesNotMatch(out, /vscode:/);
+    for (const p of PAYLOADS) assertSafe(mdInline(p), p);
+  } finally { ctx.CODE_ON = false; ctx.WS_HOST = ''; }
 });

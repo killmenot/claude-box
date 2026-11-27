@@ -13,8 +13,15 @@
 //   /inbox       -> the coordinator's cards: GET list, POST /inbox/act {token, op: send|seen|later|allow|deny} (web-inbox.js)
 //   /tasks       -> task workspaces: GET list, POST /tasks/{open,archive,reopen,refresh,forget,add-repos,repo-add}
 //   /auth        -> web login: GET /auth/state, POST /auth/password {user, password, current} (web-auth.js)
-//   /git         -> GitHub via gh: GET /git/status, GET /git/repos, POST /git/{login,login/cancel,logout} (web-git.js)
+//   /git         -> GitHub via gh: GET /git/status, GET /git/repos, POST /git/{login,login/cancel,logout,identity} (web-git.js)
+//   /models      -> model providers: GET list, POST {act: key|remove|default} (web-models.js); /model: the wizard's step
+//   /claude-auth -> Claude sign-in from the UI (claude auth login): POST {act: start|paste|cancel}, GET status
 //   /term,/token,/ws -> proxy to the internal ttyd (127.0.0.1:TTYD_PORT)
+//   /sessions/{storage,archive,restore,remove} -> archive or delete a session with its folder (web-archive.js)
+//   /context     -> a session's PRs, Slack threads and Jira issues for the context strip (web-context.js)
+//   /browser     -> the built-in browser (web-browser.js, only with ./claude-box --browser): viewer page, noVNC, WS /browser/websockify
+//   /artifact    -> the artifact panel's files (web-artifact.js): GET /artifact/f/<abs path>, /artifact/stat?p=
+//   /code        -> VS Code (code-server) for the Code tab, only with ./claude-box --vscode (web-code.js); POST /codetheme {theme}
 // Started by web-serve.js (the container entrypoint); `node web-sidecar.js` runs it standalone.
 const http = require('http');
 const https = require('https');
@@ -26,6 +33,13 @@ const { preview } = require('./web-preview.js');
 const { search } = require('./web-search.js');
 // CSRF / cross-site WebSocket / DNS-rebinding guard + the login check (see web-guard.js)
 const webGuard = require('./web-guard.js');
+const code = require('./web-code.js');
+const artifact = require('./web-artifact.js');
+const browser = require('./web-browser.js');
+// Claude's playwright tools name their session by token, or (a new chat, a console) by the chat's or
+// tmux session's name; the Browser tab uses the token
+browser.setKeyResolver((k) => { try { const r = registry.list().find((x) => x.token === k || x.name === k || x.tmuxSession === k); return r ? r.token : k; } catch (_) { return k; } });
+const context = require('./web-context.js');
 const guard = webGuard.makeGuard();
 
 // The address the listeners bind to inside the container. WEB_LISTEN_ADDR is set only by the
@@ -54,8 +68,8 @@ catch (e) { console.error('web chat disabled:', e.message); }
 // so every device (desktop, phone) sees the same layout. Shape: {cats:[{id,name}], map:{token:id}}.
 const CATS_FILE = process.env.WEB_CATEGORIES || require('path').join(process.env.HOME || '/home/node', '.claude', 'web-categories.json');
 function readCats() {
-  try { const o = JSON.parse(fs.readFileSync(CATS_FILE, 'utf8')); return { cats: o.cats || [], map: o.map || {} }; }
-  catch (_) { return { cats: [], map: {} }; }
+  try { const o = JSON.parse(fs.readFileSync(CATS_FILE, 'utf8')); return { cats: o.cats || [], map: o.map || {}, quiet: o.quiet || {} }; }
+  catch (_) { return { cats: [], map: {}, quiet: {} }; }
 }
 function cleanCats(o) {
   const str = (v, n) => String(v == null ? '' : v).slice(0, n);
@@ -64,7 +78,10 @@ function cleanCats(o) {
   const ids = new Set(cats.map((c) => c.id)), map = {};
   Object.entries((o && typeof o.map === 'object' && o.map) || {}).slice(0, 5000)
     .forEach(([k, v]) => { if (ids.has(String(v))) map[str(k, 64)] = String(v); });
-  return { cats, map };
+  // sessions kept out of the "Active" system category (loops, monitors)
+  const quiet = {};
+  Object.keys((o && typeof o.quiet === 'object' && o.quiet) || {}).slice(0, 5000).forEach((k) => { quiet[str(k, 64)] = 1; });
+  return { cats, map, quiet };
 }
 function writeCats(o) {
   const tmp = CATS_FILE + '.' + process.pid + '.tmp';
@@ -74,6 +91,7 @@ function writeCats(o) {
 let workspace = null;
 try { workspace = require(process.env.WEB_WORKSPACE_MODULE || './web-workspace.js'); }
 catch (e) { console.error('workspace manager disabled:', e.message); }
+const archive = require('./web-archive.js');
 let tasks = null;
 try { tasks = require(process.env.WEB_TASKS_MODULE || './web-tasks.js'); }
 catch (e) { console.error('tasks disabled:', e.message); }
@@ -151,6 +169,10 @@ let auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cooki
 // ttyd always runs with its own random login (web-serve.js), so a page that reaches its loopback
 // port directly gets nowhere; the sidecar, which has already checked the user, swaps that login in.
 let TTYD_AUTH = '';
+let models = null;              // model providers (web-models.js)
+try { models = require(process.env.WEB_MODELS_MODULE || './web-models.js'); } catch (e) { console.error('models disabled:', e.message); }
+let claudeLogin = null;         // the in-flight 'claude auth login' process (onboarding model step)
+let jiraLogin = null;           // the in-flight 'claude mcp login atlassian' process (onboarding Jira step)
 function ttydHeaders(h) {
   const o = Object.assign({}, h);
   if (TTYD_AUTH) o.authorization = 'Basic ' + Buffer.from(TTYD_AUTH).toString('base64');
@@ -169,6 +191,19 @@ function proxy(req, res) {
   res.on('error', () => up.destroy());
   req.on('error', () => up.destroy());
   req.pipe(up);
+}
+
+// the archive module's helpers, wired on first use (chat and tasks load optionally)
+let archiveWired = false;
+function archiveReady() {
+  if (archiveWired) return;
+  archiveWired = true;
+  archive.init({ registry, tasks, transcriptPath: (cid, cwd) => (chat && chat.transcriptPath ? chat.transcriptPath(cid, cwd) : null),
+    // the chat process, and the console's tmux session if this session runs there
+    stop: (tok) => Promise.resolve(chat && chat.stopByToken(tok)).catch(() => {}).then(() => browser.closeWindows(tok)).catch(() => {}).then(() => {
+      let name = null; try { name = registry.owns(tok); } catch (_) {}
+      if (name) return new Promise((r) => require('child_process').execFile('tmux', ['kill-session', '-t', '=' + name], () => r()));
+    }) });
 }
 
 const handler = (req, res) => {
@@ -197,6 +232,241 @@ const handler = (req, res) => {
       res.end(); return;
     }
     const path = req.url.split('?')[0];
+    if (path === '/browser/status') { browser.status().then((st) => json(res, 200, st)); return; }
+    if (path === '/browser/open' && req.method === 'POST') {             // a link from the context strip or the chat
+      if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
+      readJson(req, 8192, (o) => { browser.openUrl(o && o.url, o && o.id).then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message })); });
+      return;
+    }
+    if (path === '/context') {                                             // the session's PRs, Slack threads, Jira issues
+      const id = new URL(req.url, 'http://x').searchParams.get('id') || '';
+      const r = registry.get(id);
+      const file = r && r.claudeSessionId && chat && chat.transcriptPath ? chat.transcriptPath(r.claudeSessionId, r.cwd) : null;
+      let items = [];
+      // a new chat has no token yet, only its folder: that is enough for a task folder's issue and PRs
+      let cwd = (r && r.cwd) || require('path').resolve('/', new URL(req.url, 'http://x').searchParams.get('cwd') || '/');
+      if (!/^\/workspace(\/|$)/.test(cwd)) cwd = '';
+      try { items = context.forSession(file, cwd); } catch (e) { console.error('context:', e.message); }
+      json(res, 200, { items });
+      return;
+    }
+    if (path === '/browser/focus' && req.method === 'POST') {           // the Browser tab shows this session's window, or the shared one
+      if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
+      readJson(req, 1024, (o) => { browser.focus(o && o.id).then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message })); });
+      return;
+    }
+    if (path === '/browser/clipboard') {                                // Cmd+C / Cmd+V in the Browser tab
+      if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
+      if (req.method !== 'POST') { browser.clipboardGet().then((r) => json(res, 200, r), (e) => json(res, 409, { error: e.message })); return; }
+      readJson(req, 2 << 20, (o) => { browser.clipboardPaste(o && o.text).then((r) => json(res, 200, r), (e) => json(res, 409, { error: e.message })); });
+      return;
+    }
+    if (path === '/browser/size' && req.method === 'POST') {          // the Browser tab's size: the screen follows it
+      if (!browser.enabled()) { json(res, 404, { error: 'The browser is off' }); return; }
+      readJson(req, 1024, (o) => { browser.resize(o && o.w, o && o.h).then((v) => json(res, 200, v), (e) => json(res, 500, { error: e.message })); });
+      return;
+    }
+    if (path === '/browser' || path.startsWith('/browser/')) {
+      if (!browser.enabled()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('The browser is off: start claude-box with --browser'); return; }
+      if (path === '/browser') { res.writeHead(302, { location: '/browser/' }); res.end(); return; }
+      browser.serve(req, res, path.slice('/browser'.length)); return;
+    }
+    if (path.startsWith('/artifact/f/')) { artifact.serve(req, res, req.url.split('?')[0].slice('/artifact/f'.length)); return; }
+    if (path === '/artifact/stat') {
+      const q = new URL(req.url, 'http://x').searchParams.get('p') || '';
+      const r = artifact.stat(q); json(res, r.error || 200, r); return;
+    }
+    if (path === '/codetheme' && req.method === 'POST') {       // VS Code follows the launcher's theme
+      if (!code.enabled()) { json(res, 404, { error: 'VS Code is off' }); return; }
+      readJson(req, 1024, (o) => { try { json(res, 200, { ok: code.setTheme(o && o.theme) }); } catch (e) { json(res, 400, { error: e.message }); } });
+      return;
+    }
+    if (path === '/code' || path.startsWith('/code/')) {
+      if (!code.enabled()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('VS Code is off: start claude-box with --vscode'); return; }
+      code.proxy(req, res); return;
+    }
+    // model provider + integrations: written into ~/.claude/settings.json / ~/.claude.json, which
+    // every fresh claude process reads — so changes apply to new messages without a restart.
+    const homeDir = process.env.HOME || '/home/node';
+    const claudeJsonFile = require('path').join(homeDir, '.claude.json');
+    const defMcpFile = require('path').join(process.env.CLAUDE_DEFAULTS || '/opt/claude-defaults', 'mcp.json');
+    const readJ = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return d; } };
+    const writeJ = (f, o) => { const t = f + '.' + process.pid + '.tmp'; fs.writeFileSync(t, JSON.stringify(o, null, 2)); fs.renameSync(t, f); };
+    // model providers (web-models.js): several can be connected; each chat picks its own model
+    const claudeAuth = () => !!process.env.CLAUDE_CODE_OAUTH_TOKEN || fs.existsSync(require('path').join(homeDir, '.claude', '.credentials.json'));
+    if (path === '/models') {
+      if (!models) { json(res, 503, { error: 'models module not loaded' }); return; }
+      if (req.method !== 'POST') { json(res, 200, models.list(claudeAuth())); return; }
+      readJson(req, 8192, (o) => {
+        try {
+          o = o || {};
+          if (o.act === 'key') models.setKey(String(o.provider || ''), o.key, { base: o.base, model: o.model });
+          else if (o.act === 'remove') models.removeKey(String(o.provider || ''));
+          else if (o.act === 'default') models.setDefault(String(o.ref || ''));
+          else throw new Error('bad act');
+          json(res, 200, Object.assign({ ok: true }, models.list(claudeAuth())));
+        } catch (e) { json(res, 400, { error: String(e.message || e) }); }
+      });
+      return;
+    }
+    // the setup wizard's model step: which provider is the default, and set one (key + default)
+    if (path === '/model' && req.method === 'GET') {
+      if (!models) { json(res, 503, { error: 'models module not loaded' }); return; }
+      const l = models.list(claudeAuth()), prov = l.default.split('/')[0];
+      const p = l.providers.find((x) => x.id === prov) || {};
+      json(res, 200, { provider: prov, hasKey: !!p.keyHint, claudeAuth: claudeAuth(), default: l.default });
+      return;
+    }
+    if (path === '/model' && req.method === 'POST') {
+      readJson(req, 8192, (o) => {
+        try {
+          if (!models) throw new Error('models module not loaded');
+          const prov = String((o && o.provider) || '');
+          if (!models.PROVIDERS[prov]) throw new Error('provider required');
+          if (prov !== 'claude' && o.key) models.setKey(prov, o.key, { base: o.baseUrl, model: o.model });
+          const first = models.list(claudeAuth()).providers.find((x) => x.id === prov);
+          if (!first || !first.models.length) throw new Error('API key required');
+          models.setDefault(prov + '/' + first.models[0].id);
+          json(res, 200, { ok: true, note: 'applies to new sessions' });
+        } catch (e) { json(res, 400, { error: String(e.message || e) }); }
+      });
+      return;
+    }
+    if (path === '/integrations') {
+      if (req.method !== 'POST') { json(res, 200, (readJ(claudeJsonFile, {}).mcpServers) || {}); return; }
+      readJson(req, 8192, (o) => {
+        try {
+          if (!o || typeof o.atlassian !== 'boolean') throw new Error('atlassian boolean required');
+          const cfg = readJ(claudeJsonFile, {});
+          cfg.mcpServers = cfg.mcpServers || {};
+          if (o.atlassian) {
+            const def = readJ(defMcpFile, {});
+            if (def.mcpServers && def.mcpServers.atlassian) cfg.mcpServers.atlassian = def.mcpServers.atlassian;
+          } else delete cfg.mcpServers.atlassian;
+          writeJ(claudeJsonFile, cfg);
+          writeJ(require('path').join(homeDir, '.claude', 'web-integrations.json'), { atlassian: o.atlassian });
+          json(res, 200, { ok: true, atlassian: o.atlassian });
+        } catch (e) { json(res, 400, { error: String(e.message || e) }); }
+      });
+      return;
+    }
+    if (path === '/jira-auth') {
+      // Drive `claude mcp login atlassian` for the onboarding step: start → {url}; paste the
+      // redirected URL back in → the login completes; status → is the server connected now.
+      // The login command requires a TTY, so we use the `script` command to provide a pseudo-terminal.
+      const { spawn } = require('child_process');
+      const { execFile } = require('child_process');
+      readJson(req, 16384, (o) => {
+        const act = o && o.act;
+        if (req.method === 'POST' && act === 'start') {
+          if (jiraLogin && jiraLogin.child) { json(res, 200, { url: jiraLogin.url || '' }); return; }
+          // Use `script -q -c` to run the command in a pseudo-terminal and capture output
+          // -q: quiet mode (no header/trailer), -c: command to run, -f: output to stdout
+          const child = spawn('script', ['-q', '-f', '-', '-c', 'claude mcp login atlassian'], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: Object.assign({}, process.env, { TERM: 'xterm-256color' })
+          });
+          jiraLogin = { child, url: '', buf: '' };
+          const collect = (d) => {
+            jiraLogin.buf += String(d);
+            if (!jiraLogin.url) {
+              const m = /https?:\/\/\S+/.exec(jiraLogin.buf);
+              if (m) jiraLogin.url = m[0];
+            }
+          };
+          child.stdout.on('data', collect);
+          child.stderr.on('data', collect);
+          child.on('exit', () => { if (jiraLogin) jiraLogin.child = null; });
+          const give = () => { if (jiraLogin) json(res, 200, { url: jiraLogin.url }); };
+          setTimeout(give, 1500);           // give the URL a moment to appear in the output
+          setTimeout(() => { if (jiraLogin && jiraLogin.child) { try { jiraLogin.child.kill(); } catch (_) {} } }, 10 * 60000);
+          return;
+        }
+        if (req.method === 'POST' && act === 'paste') {
+          const u = String(o.url || '').trim();
+          if (jiraLogin && jiraLogin.child && u) { jiraLogin.child.stdin.write(u + '\n'); json(res, 200, { ok: true }); }
+          else json(res, 400, { error: 'no login in progress' });
+          return;
+        }
+        if (req.method === 'GET') {
+          execFile('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 60000, maxBuffer: 1 << 20 }, (e, out) => {
+            json(res, 200, { connected: /atlassian: \S+ .*Connected/.test(String(out)) });
+          });
+          return;
+        }
+        json(res, 400, { error: 'bad act' });
+      });
+      return;
+    }
+    if (path === '/claude-auth') {
+      // Sign Claude in from the UI with `claude auth login` (claude.ai subscription): start -> {url};
+      // the user signs in at claude.ai, which shows a code; paste -> the code goes to the process'
+      // stdin; GET -> `claude auth status`. Credentials land in ~/.claude, like a /login in a terminal.
+      const { spawn, execFile } = require('child_process');
+      readJson(req, 16384, (o) => {
+        const act = o && o.act;
+        if (req.method === 'POST' && act === 'start') {
+          if (claudeLogin && claudeLogin.child && claudeLogin.url) { json(res, 200, { url: claudeLogin.url }); return; }
+          let child;
+          try {
+            child = spawn('claude', ['auth', 'login', '--claudeai'], { stdio: ['pipe', 'pipe', 'pipe'],
+              env: Object.assign({}, process.env, { BROWSER: 'true', NO_COLOR: '1' }) });
+          } catch (e) { json(res, 500, { error: 'claude could not start: ' + e.message }); return; }
+          const L = claudeLogin = { child, url: '', buf: '', exit: null };
+          const collect = (d) => {
+            L.buf = (L.buf + String(d)).slice(-8192);
+            if (!L.url) { const m = /https:\/\/\S+/.exec(L.buf); if (m) L.url = m[0]; }
+          };
+          child.stdout.on('data', collect); child.stderr.on('data', collect);
+          child.on('error', (e) => { L.child = null; L.exit = -1; L.buf += '\n' + e.message; });
+          child.on('exit', (code) => { L.child = null; L.exit = code; });
+          setTimeout(() => { if (L.child) { try { L.child.kill(); } catch (_) {} } }, 10 * 60000);
+          const t0 = Date.now();
+          (function wait() {
+            if (L.url || L.exit !== null || Date.now() - t0 > 8000) json(res, 200, L.url ? { url: L.url } : { error: 'No sign-in link from claude. Try again.' });
+            else setTimeout(wait, 200);
+          })();
+          return;
+        }
+        if (req.method === 'POST' && act === 'paste') {
+          const code = String(o.code || '').trim();
+          if (!code || /[\r\n]/.test(code) || code.length > 4096) { json(res, 400, { error: 'Paste the code from claude.ai.' }); return; }
+          if (!claudeLogin || !claudeLogin.child) { json(res, 400, { error: 'The sign-in expired. Start again.' }); return; }
+          claudeLogin.child.stdin.write(code + '\n');
+          json(res, 200, { ok: true });
+          return;
+        }
+        if (req.method === 'POST' && act === 'cancel') {
+          if (claudeLogin && claudeLogin.child) { try { claudeLogin.child.kill(); } catch (_) {} }
+          claudeLogin = null; json(res, 200, { ok: true });
+          return;
+        }
+        if (req.method === 'GET') {
+          execFile('claude', ['auth', 'status', '--json'], { encoding: 'utf8', timeout: 20000, maxBuffer: 1 << 20 }, (e, out) => {
+            let st = {}; try { st = JSON.parse(String(out || '{}')); } catch (_) {}
+            const L = claudeLogin;
+            const failed = L && L.exit !== null && L.exit !== 0;
+            json(res, 200, {
+              loggedIn: !!st.loggedIn, method: st.authMethod || '', email: st.email || '', org: st.orgName || '',
+              envToken: !!process.env.CLAUDE_CODE_OAUTH_TOKEN,
+              pending: !!(L && L.child),
+              error: failed ? (L.buf.split('\n').map((l) => l.replace(/^.*Paste code here[^>]*>\s*/, '').trim()).filter(Boolean).pop() || 'Sign-in failed.').slice(0, 300) : '',
+            });
+          });
+          return;
+        }
+        json(res, 400, { error: 'bad act' });
+      });
+      return;
+    }
+    if (path === '/cert') {          // the self-signed cert, for importing into client devices
+      try {
+        const buf = fs.readFileSync(process.env.WEB_TLS_CERT || '/nonexistent');
+        res.writeHead(200, { 'content-type': 'application/x-x509-ca-cert', 'content-disposition': 'attachment; filename="claude-box.crt"' });
+        res.end(buf);
+      } catch (_) { res.writeHead(404); res.end('no certificate'); }
+      return;
+    }
     if (path === '/auth/state') {
       json(res, 200, { configured: authStore.configured(), fromEnv: authStore.fromEnv(), user: authStore.configured() ? authStore.user() : '' });
       return;
@@ -229,15 +499,24 @@ const handler = (req, res) => {
       if (path === '/git/login') { json(res, 200, webGit.start()); return; }
       if (path === '/git/login/cancel') { json(res, 200, webGit.cancel()); return; }
       if (path === '/git/logout') { webGit.logout().then((r) => json(res, r.ok ? 200 : 400, r)); return; }
+      if (path === '/git/identity') {
+        readJson(req, 4096, (o) => { webGit.setIdentity(o).then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message })); });
+        return;
+      }
     }
     if (path === '/sessions') {
+      const t0 = Date.now();
       let rows; try { rows = registry.list(); } catch (_) { json(res, 500, '[]'); return; }
-      json(res, 200, chat ? chat.decorate(rows) : rows);
+      const t1 = Date.now();
+      rows = chat ? chat.decorate(rows) : rows;
+      const t2 = Date.now();
+      if (t2 - t0 > 500) console.error(`[sessions] slow: registry ${t1 - t0}ms, decorate ${t2 - t1}ms, ${rows.length} rows at ${new Date().toISOString()}`);
+      json(res, 200, rows);
       return;
     }
     if (path === '/chat/info') {
       if (!chat) { json(res, 200, { enabled: false, error: 'chat module not loaded' }); return; }
-      chat.info().then((i) => json(res, 200, i), () => json(res, 200, { enabled: false }));
+      chat.info().then((i) => json(res, 200, Object.assign({}, i, { code: code.enabled(), browser: browser.enabled() })), () => json(res, 200, { enabled: false, code: code.enabled(), browser: browser.enabled() }));
       return;
     }
     if (path === '/dirs') { json(res, 200, chat ? chat.dirs() : []); return; }
@@ -427,7 +706,9 @@ const handler = (req, res) => {
         try {
           if (e) { res.writeHead(500); res.end('no launcher'); return; }
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'referrer-policy': 'no-referrer' });
-          res.end(buf);
+          // no login yet: mark the page so the setup wizard is up from the first paint, instead of
+          // the app showing for a moment and then being covered by it
+          res.end(authStore.configured() ? buf : Buffer.from(String(buf).replace('<html lang="en">', '<html lang="en" data-setup="1">')));
         } catch (_) {}
       });
       return;
@@ -452,6 +733,24 @@ const handler = (req, res) => {
       if (!m) { try { res.writeHead(400, { 'content-type': 'application/json' }); res.end('{}'); } catch (_) {} return; }
       preview(safeDecode(m[1]), /(?:^|&)full=1(?:&|$)/.test(q))
         .then((o) => json(res, 200, o), () => json(res, 500, '{}'));
+      return;
+    }
+    // archive / restore / remove a session with its folder; the Storage list (web-archive.js)
+    if (path === '/sessions/inspect') {                                    // what archive / delete would remove
+      archiveReady();
+      const id = new URL(req.url, 'http://x').searchParams.get('id') || '';
+      archive.inspect(id).then((o) => json(res, 200, { folder: o.folder ? o.folder.dir : '', kind: o.folder ? o.folder.kind : '', size: o.size,
+        issues: o.issues, sharedWith: o.sharedWith, archived: !!o.rec.archived }), (e) => json(res, 400, { error: e.message }));
+      return;
+    }
+    if (path === '/sessions/storage') { archiveReady(); archive.storage().then((r) => json(res, 200, r), (e) => json(res, 500, { error: e.message })); return; }
+    if (/^\/sessions\/(archive|restore|remove)$/.test(path) && req.method === 'POST') {
+      archiveReady();
+      readJson(req, 4096, (o) => {
+        const op = path.split('/')[2], id = String((o && o.id) || '');
+        const p = op === 'restore' ? archive.restore(id) : archive[op](id, !!(o && o.force));
+        p.then((r) => json(res, 200, r), (e) => json(res, 400, { error: e.message }));
+      });
       return;
     }
     if (path === '/delete' && req.method === 'POST') {
@@ -526,6 +825,14 @@ function onUpgrade(req, socket, head) {
     if (denied) { socket.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
     const a = auth(req);
     if (!a.ok) { socket.end(a.status === 429 ? 'HTTP/1.1 429 Too Many Requests\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
+    if (req.url.split('?')[0] === '/browser/websockify') {
+      if (!browser.enabled()) { socket.end('HTTP/1.1 404 Not Found\r\n\r\n'); return; }
+      browser.upgrade(req, socket, head); return;
+    }
+    if (/^\/code(\/|$)/.test(req.url.split('?')[0])) {
+      if (!code.enabled()) { socket.end('HTTP/1.1 404 Not Found\r\n\r\n'); return; }
+      code.upgrade(req, socket, head); return;
+    }
     if (req.url.split('?')[0] === '/chat/ws') {
       if (!chat) { socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n'); return; }
       chat.handleUpgrade(req, socket, head); return;
@@ -552,6 +859,9 @@ function start(opts) {
   TTYD_AUTH = opts.ttydAuth || '';
   if (opts.apiToken) auth = webGuard.makeAuth({ user: USER, password: PW, store: authStore, cookie: COOKIE, apiToken: opts.apiToken });
   const tls = loadTls();
+  if (tasks && tasks.startSync && !opts.noRepoSync) tasks.startSync();     // keep /workspace/repos fresh
+  // the built-in browser is up from the start, so Claude's playwright tools find it before anyone opens the tab
+  if (browser.enabled()) browser.ensure().then(() => console.error('browser: up'), (e) => console.error('browser:', e.message));
   const servers = [];
   // requestTimeout 0: large uploads to the Workspace file manager may take longer than Node's 5 min default
   const httpServer = http.createServer({ requestTimeout: 0 }, handler);
@@ -568,5 +878,14 @@ function start(opts) {
 }
 
 module.exports = { start, handler, onUpgrade };
+// Event-loop lag probe: when the loop stalls (a sync scan, GC, a wedged child), every endpoint
+// freezes for that long — the "sessions slow for a few seconds" symptom. This makes such stalls
+// visible in docker logs with their exact duration instead of being invisible from outside.
+let lastBeat = Date.now();
+setInterval(() => {
+  const now = Date.now(), drift = now - lastBeat - 2000;
+  lastBeat = now;
+  if (drift > 800) console.error(`[loop] stalled ${drift}ms at ${new Date().toISOString()}`);
+}, 2000).unref();
 // standalone (tests, debugging): the same options from the environment
 if (require.main === module) start({ ttydAuth: process.env.CB_TTYD_AUTH, apiToken: process.env.CB_API_TOKEN });

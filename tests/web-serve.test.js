@@ -48,26 +48,6 @@ test('later starts keep the user\'s own settings and MCP servers', () => {
   assert.strictEqual(c.numStartups, 5);
 });
 
-test('MCP urls: ${VAR} / ${VAR:-default} filled from the env (Claude Code takes them literally), keys stay out', () => {
-  const { expandUrl } = require('../scripts/web-serve.js');
-  delete process.env.CB_T_URL;
-  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://app.example.com/mcp');
-  process.env.CB_T_URL = '';
-  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://app.example.com/mcp');   // empty = unset
-  process.env.CB_T_URL = 'https://team.example.com/';
-  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://team.example.com/mcp');  // no double slash
-  assert.strictEqual(expandUrl('https://mcp.example.com/mcp'), 'https://mcp.example.com/mcp');
-
-  const helper = 'node -e "print the key"';
-  fs.writeFileSync(path.join(def, 'mcp.json'), JSON.stringify({ mcpServers: {
-    wiki: { type: 'http', url: '${CB_T_URL}/mcp', headersHelper: helper } } }));
-  seedDefaults();
-  const w = read('.claude.json').mcpServers.wiki;
-  assert.strictEqual(w.url, 'https://team.example.com/mcp');
-  assert.strictEqual(w.headersHelper, helper);
-  delete process.env.CB_T_URL;
-});
-
 // metrics read /proc: Linux only, as in the image
 test('metrics: host numbers without a token, nulls for the session part', { skip: process.platform !== 'linux' && 'reads /proc (Linux only)' }, async () => {
   const { metrics } = require('../scripts/web-metrics.js');
@@ -134,21 +114,72 @@ test('pickTtydPort: finds the first free loopback port, explicit TTYD_PORT wins'
   for (const srv of holders) if (srv.listening) srv.close();
 });
 
-test('setupGitIdentity: GIT_USER_NAME/EMAIL from the env file win; unset ones keep ~/.gitconfig', (t) => {
-  const { execFileSync } = require('child_process');
-  try { execFileSync('git', ['--version'], { stdio: 'ignore' }); } catch (_) { return t.skip('git not installed'); }
-  const { setupGitIdentity } = require('../scripts/web-serve.js');
-  const home = fs.mkdtempSync(path.join(tmp, 'git-'));
-  const e = Object.assign({}, process.env, { HOME: home, XDG_CONFIG_HOME: home });
-  delete e.GIT_CONFIG_GLOBAL; delete e.GIT_USER_NAME; delete e.GIT_USER_EMAIL;
-  const get = (k) => { try { return execFileSync('git', ['config', '--global', '--get', k], { env: e, encoding: 'utf8' }).trim(); } catch (_) { return ''; } };
-  setupGitIdentity(e);                                                  // nothing set: nothing written
-  assert.strictEqual(get('user.name'), '');
-  execFileSync('git', ['config', '--global', 'user.name', 'Old Name'], { env: e });
-  execFileSync('git', ['config', '--global', 'user.email', 'old@example.com'], { env: e });
-  setupGitIdentity(Object.assign({}, e, { GIT_USER_EMAIL: ' new@example.com ' }));
-  assert.strictEqual(get('user.email'), 'new@example.com');             // the env file wins, trimmed
-  assert.strictEqual(get('user.name'), 'Old Name');                     // unset: kept
-  setupGitIdentity(Object.assign({}, e, { GIT_USER_NAME: 'Jane Doe' }));
-  assert.strictEqual(get('user.name'), 'Jane Doe');
+test('skills from the image: installed with a marker, updated on restart, own and unmarked ones kept', () => {
+  const { syncSkills } = require('../scripts/web-serve.js');
+  const src = path.join(tmp, 'img-skills'), dst = path.join(tmp, '.claude', 'skills');
+  fs.mkdirSync(path.join(src, 'pr-review'), { recursive: true });
+  fs.mkdirSync(path.join(src, 'other'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'pr-review', 'SKILL.md'), 'v1');
+  fs.writeFileSync(path.join(src, 'other', 'SKILL.md'), 'image');
+  fs.mkdirSync(path.join(dst, 'other'), { recursive: true });
+  fs.writeFileSync(path.join(dst, 'other', 'SKILL.md'), 'mine');           // the user's own skill, same name
+  assert.deepStrictEqual(syncSkills(src, dst), ['pr-review']);
+  assert.ok(fs.existsSync(path.join(dst, 'pr-review', '.claude-box-managed')));
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'other', 'SKILL.md'), 'utf8'), 'mine');
+  fs.writeFileSync(path.join(src, 'pr-review', 'SKILL.md'), 'v2');
+  fs.writeFileSync(path.join(dst, 'pr-review', 'stale.md'), 'old file');
+  syncSkills(src, dst);
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'pr-review', 'SKILL.md'), 'utf8'), 'v2');
+  assert.ok(!fs.existsSync(path.join(dst, 'pr-review', 'stale.md')), 'files removed from the image go away');
+  fs.unlinkSync(path.join(dst, 'pr-review', '.claude-box-managed'));        // the user takes it over
+  fs.writeFileSync(path.join(dst, 'pr-review', 'SKILL.md'), 'edited');
+  fs.writeFileSync(path.join(src, 'pr-review', 'SKILL.md'), 'v3');
+  syncSkills(src, dst);
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'pr-review', 'SKILL.md'), 'utf8'), 'edited');
+  assert.deepStrictEqual(syncSkills(path.join(tmp, 'missing'), dst), []);
 });
+
+test('skills: no copyFile (breaks on virtiofs), exec bit kept, a broken half-copy is healed, a failed copy leaves nothing', () => {
+  const { syncSkills } = require('../scripts/web-serve.js');
+  const src = path.join(tmp, 'img2'), dst = path.join(tmp, 'skills2');
+  fs.mkdirSync(path.join(src, 'w', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'w', 'SKILL.md'), 'skill');
+  fs.writeFileSync(path.join(src, 'w', 'bin', 'tool'), '#!/bin/sh\n', { mode: 0o755 });
+  // what an interrupted copy left on the bind mount: an empty, write-only SKILL.md and no marker
+  fs.mkdirSync(path.join(dst, 'w'), { recursive: true });
+  fs.writeFileSync(path.join(dst, 'w', 'SKILL.md'), '');
+  fs.chmodSync(path.join(dst, 'w', 'SKILL.md'), 0o200);
+  const orig = { cp: fs.copyFileSync, cpSync: fs.cpSync };
+  fs.copyFileSync = fs.cpSync = () => { throw new Error('copyFile must not be used'); };
+  try { assert.deepStrictEqual(syncSkills(src, dst), ['w']); } finally { fs.copyFileSync = orig.cp; fs.cpSync = orig.cpSync; }
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'w', 'SKILL.md'), 'utf8'), 'skill');
+  assert.ok(fs.statSync(path.join(dst, 'w', 'bin', 'tool')).mode & 0o100, 'executable stays executable');
+  // a failing write: the installed copy stays as it was and no temp folder is left behind
+  const write = fs.writeFileSync;
+  fs.writeFileSync(path.join(src, 'w', 'SKILL.md'), 'v2');
+  fs.writeFileSync = (f, ...a) => { if (String(f).includes('.tmp-')) throw new Error('disk full'); return write(f, ...a); };
+  try { assert.deepStrictEqual(syncSkills(src, dst), []); } finally { fs.writeFileSync = write; }
+  assert.strictEqual(fs.readFileSync(path.join(dst, 'w', 'SKILL.md'), 'utf8'), 'skill');
+  assert.deepStrictEqual(fs.readdirSync(dst).filter((n) => n.includes('.tmp-')), []);
+});
+
+test('MCP urls: ${VAR} / ${VAR:-default} filled from the env (Claude Code takes them literally), keys stay out', () => {
+  const { expandUrl } = require('../scripts/web-serve.js');
+  delete process.env.CB_T_URL;
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://app.example.com/mcp');
+  process.env.CB_T_URL = '';
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://app.example.com/mcp');   // empty = unset
+  process.env.CB_T_URL = 'https://team.example.com/';
+  assert.strictEqual(expandUrl('${CB_T_URL:-https://app.example.com}/mcp'), 'https://team.example.com/mcp');  // no double slash
+  assert.strictEqual(expandUrl('https://mcp.example.com/mcp'), 'https://mcp.example.com/mcp');
+
+  const helper = 'node -e "print the key"';
+  fs.writeFileSync(path.join(def, 'mcp.json'), JSON.stringify({ mcpServers: {
+    wiki: { type: 'http', url: '${CB_T_URL}/mcp', headersHelper: helper } } }));
+  seedDefaults();
+  const w = read('.claude.json').mcpServers.wiki;
+  assert.strictEqual(w.url, 'https://team.example.com/mcp');
+  assert.strictEqual(w.headersHelper, helper);
+  delete process.env.CB_T_URL;
+});
+

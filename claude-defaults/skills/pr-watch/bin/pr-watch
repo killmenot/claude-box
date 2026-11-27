@@ -1,0 +1,295 @@
+#!/usr/bin/env node
+'use strict';
+// pr-watch — the helper of the pr-watch skill. Run it from the watch folder: the folder whose
+// sub-folders are local clones of the GitHub repos to watch. Everything it keeps lives in
+// <watch folder>/.pr-watch/ (config.json, state.json, log.md, work/<owner>-<repo>-<n>/).
+//
+//   pr-watch init                       config with defaults (if missing), repos found, the open PRs
+//                                       recorded as a baseline (not reviewed unless they get new commits)
+//   pr-watch repos                      the watched repos: [{repo, local}]
+//   pr-watch scan                       {todo:[...], skipped:[...], running:N, today:N} across all repos
+//   pr-watch prepare <owner/repo> <n>   a clone with the PR head checked out -> {dir, sha}
+//   pr-watch mark <owner/repo> <n> '<json>'   merge fields into the PR's state (status, token, verdict…)
+//   pr-watch post <owner/repo> <n> [--dry-run]   publish .review/result.json under the posting rules
+//   pr-watch ready                      PRs reviewed at their current head with nothing blocking
+//   pr-watch approve <owner/repo> <n> [--force]   approve (only when the user said so; head must be
+//                                       the reviewed commit unless --force)
+//   pr-watch status                     one line per PR in the state
+//
+// Hard rules enforced here, whatever the caller asks: only findings of config.post_severities are
+// posted (never "habits" ones), never twice, never to a PR that moved past the reviewed commit, as a
+// COMMENT review; approving is a separate explicit command; nothing is ever merged or pushed.
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
+
+const ROOT = process.env.PR_WATCH_DIR ? path.resolve(process.env.PR_WATCH_DIR) : process.cwd();
+const DIR = path.join(ROOT, '.pr-watch');
+const CFG = path.join(DIR, 'config.json'), STATE = path.join(DIR, 'state.json'), LOG = path.join(DIR, 'log.md');
+const DEFAULTS = {
+  repos: [],                      // empty: every GitHub clone directly inside the watch folder
+  exclude_repos: [],
+  only_requested: false,          // true: only PRs where a review is requested from me or my team
+  authors: [],                    // non-empty: only PRs by these GitHub logins (per repo: {"owner/repo": [...]})
+  skip_authors: [],               // the current gh user is always skipped
+  skip_bots: true,
+  skip_drafts: true,
+  max_age_days: 14,
+  max_parallel: 3,
+  max_per_day: 20,
+  level: 'high',
+  post_comments: true,            // false: review and report only, publish nothing
+  post_severities: ['critical', 'high'],
+  approve_body: '',
+  interval_minutes: 5,
+};
+
+// ---------------------------------------------------------------- pure helpers (tested)
+function parseRemote(url) {
+  const m = /github\.com[:/]+([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(url || '').trim());
+  return m ? `${m[1]}/${m[2]}` : '';
+}
+const keyOf = (repo, n) => `${repo}#${n}`;
+const fingerprint = (f) => crypto.createHash('sha1')
+  .update(String(f.file || '') + '\n' + String(f.title || '').toLowerCase().trim()).digest('hex').slice(0, 12);
+const isBot = (a) => !!a && (a.is_bot || /^app\//.test(a.login || '') || /\[bot\]$/.test(a.login || ''));
+const today = (now) => new Date(now).toISOString().slice(0, 10);
+
+// which open PRs of one repo need a review now
+function decide(repo, prs, state, cfg, me, myTeams, now) {
+  const todo = [], skipped = [];
+  const maxAge = (cfg.max_age_days || 14) * 864e5;
+  // authors: a list for every repo, or {"owner/repo": [...], "*": [...]}; empty = everyone
+  const a = cfg.authors || [];
+  const wanted = (Array.isArray(a) ? a : (a[repo] || a['*'] || [])).map((x) => String(x).toLowerCase());
+  for (const p of prs) {
+    const login = (p.author && p.author.login) || '';
+    const requested = (p.reviewRequests || []).some((r) => (r.login && r.login === me) || (r.slug && myTeams.includes(r.slug)) || (r.name && myTeams.includes(r.name)));
+    const why = (cfg.skip_drafts !== false && p.isDraft) ? 'draft'
+      : (cfg.skip_bots !== false && isBot(p.author)) ? 'bot'
+      : (login === me || (cfg.skip_authors || []).includes(login)) ? 'own or skipped author'
+      : (wanted.length && !wanted.includes(login.toLowerCase())) ? 'author not watched'
+      : (now - Date.parse(p.updatedAt) > maxAge) ? 'stale'
+      : (cfg.only_requested && !requested) ? 'review not requested from me' : '';
+    const ref = keyOf(repo, p.number);
+    if (why) { skipped.push({ ref, why }); continue; }
+    const s = state.prs[ref];
+    if (s && s.status === 'running') { skipped.push({ ref, why: 'review running' }); continue; }
+    if (s && s.status === 'paused') { skipped.push({ ref, why: 'paused' }); continue; }
+    if (s && s.sha === p.headRefOid && s.status === 'baseline') { skipped.push({ ref, why: 'baseline (open before the watch started)' }); continue; }
+    if (s && s.sha === p.headRefOid && s.status === 'error' && (s.errors || 0) >= 2) { skipped.push({ ref, why: 'failed twice at this commit' }); continue; }
+    if (s && s.sha === p.headRefOid && s.status !== 'error') { skipped.push({ ref, why: 'reviewed at this commit' }); continue; }
+    const item = { ref, repo, number: p.number, title: p.title, author: login, sha: p.headRefOid, url: p.url, updated: p.updatedAt,
+      reason: !s ? 'new' : s.sha !== p.headRefOid ? 'new commits' : 'retry after error' };
+    if (s && Array.isArray(s.findings) && s.findings.length) item.previous = s.findings;
+    todo.push(item);
+  }
+  return { todo, skipped };
+}
+
+// what `post` would publish for a result, given what is already posted
+function plan(result, cfg, posted) {
+  const sev = new Set((cfg.post_severities || ['critical', 'high']).map((x) => String(x).toLowerCase()));
+  const all = (Array.isArray(result.findings) ? result.findings : []).filter((f) => f && f.source !== 'habits');
+  const blocking = all.filter((f) => sev.has(String(f.severity).toLowerCase()));
+  const toPost = blocking.filter((f) => !posted.has(fingerprint(f)));
+  return { blocking, toPost, held: all.length - blocking.length };
+}
+
+// ---------------------------------------------------------------- io
+const gh = (args, input) => execFileSync('gh', args, { encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 64 << 20 });
+const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (_) { return d; } };
+function writeJson(f, o) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + '.tmp', JSON.stringify(o, null, 1)); fs.renameSync(f + '.tmp', f); }
+const loadCfg = () => Object.assign({}, DEFAULTS, readJson(CFG, {}));
+function loadState() { const s = readJson(STATE, {}); s.prs = s.prs || {}; s.day = s.day || {}; return s; }
+function log(line) { fs.mkdirSync(DIR, { recursive: true }); fs.appendFileSync(LOG, `- ${new Date().toISOString().slice(0, 16).replace('T', ' ')} ${line}\n`); }
+const die = (m) => { console.error('pr-watch: ' + m); process.exit(1); };
+const out = (o) => console.log(JSON.stringify(o, null, 1));
+let meCache = null;
+function me() { if (meCache === null) { try { meCache = gh(['api', 'user', '--jq', '.login']).trim(); } catch (e) { die('gh is not signed in: ' + e.message.split('\n')[0]); } } return meCache; }
+function myTeams() { try { return gh(['api', 'user/teams', '--paginate', '--jq', '.[].slug']).split('\n').filter(Boolean); } catch (_) { return []; } }
+
+function repos(cfg) {
+  if (cfg.repos && cfg.repos.length) {
+    return cfg.repos.map((r) => (typeof r === 'string' ? { repo: r, local: '' } : r)).filter((r) => !cfg.exclude_repos.includes(r.repo));
+  }
+  const found = [];
+  for (const d of fs.readdirSync(ROOT, { withFileTypes: true })) {
+    if (!d.isDirectory() || d.name.startsWith('.')) continue;
+    const local = path.join(ROOT, d.name);
+    if (!fs.existsSync(path.join(local, '.git'))) continue;
+    let url = ''; try { url = execFileSync('git', ['-C', local, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch (_) {}
+    const repo = parseRemote(url);
+    if (repo && !cfg.exclude_repos.includes(repo) && !found.some((f) => f.repo === repo)) found.push({ repo, local });
+  }
+  return found;
+}
+const listPrs = (repo) => JSON.parse(gh(['pr', 'list', '-R', repo, '--state', 'open', '--limit', '200',
+  '--json', 'number,title,author,isDraft,headRefOid,updatedAt,reviewRequests,url']));
+const workDir = (repo, n) => path.join(DIR, 'work', `${repo.replace('/', '-')}-${n}`);
+function needRepoArgs(a) { if (!/^[\w.-]+\/[\w.-]+$/.test(a[0] || '') || !/^\d+$/.test(a[1] || '')) die('usage: <owner/repo> <number>'); return [a[0], +a[1]]; }
+
+// ---------------------------------------------------------------- commands
+const cmd = {
+  init() {
+    const cfg = Object.assign({}, DEFAULTS, readJson(CFG, {}));
+    if (!fs.existsSync(CFG)) writeJson(CFG, DEFAULTS);
+    const rs = repos(cfg);
+    const st = loadState();
+    if (!st.started) st.started = new Date().toISOString();
+    let baseline = 0;
+    for (const { repo } of rs) {
+      for (const p of listPrs(repo)) {
+        const ref = keyOf(repo, p.number);
+        if (!st.prs[ref]) { st.prs[ref] = { repo, number: p.number, status: 'baseline', sha: p.headRefOid, title: p.title, author: p.author && p.author.login }; baseline++; }
+      }
+    }
+    writeJson(STATE, st);
+    if (baseline) log(`init: ${rs.length} repos, ${baseline} open PRs recorded as baseline`);
+    out({ dir: DIR, me: me(), repos: rs, baseline, config: CFG });
+  },
+  repos() { out(repos(loadCfg())); },
+  scan() {
+    const cfg = loadCfg(), st = loadState(), now = Date.now(), who = me(), teams = cfg.only_requested ? myTeams() : [];
+    const todo = [], skipped = [], errors = [];
+    for (const { repo } of repos(cfg)) {
+      try { const r = decide(repo, listPrs(repo), st, cfg, who, teams, now); todo.push(...r.todo); skipped.push(...r.skipped); }
+      catch (e) { errors.push({ repo, error: String(e.message).split('\n')[0] }); }
+    }
+    todo.sort((a, b) => Date.parse(a.updated) - Date.parse(b.updated));
+    const running = Object.values(st.prs).filter((s) => s.status === 'running').length;
+    const startedToday = st.day.date === today(now) ? st.day.count || 0 : 0;
+    const slots = Math.max(0, Math.min((cfg.max_parallel || 3) - running, (cfg.max_per_day || 20) - startedToday));
+    for (const t of todo.slice(slots)) t.wait = startedToday >= (cfg.max_per_day || 20) ? 'daily limit' : 'parallel limit';
+    out({ todo, skipped, errors, running, today: startedToday, slots });
+  },
+  prepare(a) {
+    const [repo, n] = needRepoArgs(a);
+    const local = (repos(loadCfg()).find((r) => r.repo === repo) || {}).local;
+    const dir = workDir(repo, n), env = Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0' });
+    const git = (args, o) => execFileSync('git', args, Object.assign({ encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }, o || {}));
+    if (!fs.existsSync(path.join(dir, '.git'))) {
+      fs.mkdirSync(path.dirname(dir), { recursive: true });
+      const ref = local && fs.existsSync(path.join(local, '.git')) ? ['--reference-if-able', local, '--dissociate'] : [];
+      git(['clone', '-q', ...ref, `https://github.com/${repo}.git`, dir]);
+    }
+    git(['-C', dir, 'reset', '-q', '--hard']);
+    git(['-C', dir, 'clean', '-qfd', '-e', '.review']);
+    execFileSync('gh', ['pr', 'checkout', String(n), '-R', repo, '--force'], { cwd: dir, env, stdio: ['ignore', 'ignore', 'pipe'] });
+    fs.mkdirSync(path.join(dir, '.review'), { recursive: true });
+    fs.rmSync(path.join(dir, '.review', 'result.json'), { force: true });
+    const ex = path.join(dir, '.git', 'info', 'exclude');
+    if (!/^\.review\/$/m.test(fs.existsSync(ex) ? fs.readFileSync(ex, 'utf8') : '')) fs.appendFileSync(ex, '\n.review/\n');
+    out({ dir, sha: git(['-C', dir, 'rev-parse', 'HEAD']).trim() });
+  },
+  mark(a) {
+    const [repo, n] = needRepoArgs(a);
+    let patch; try { patch = JSON.parse(a[2] || '{}'); } catch (e) { die('bad JSON: ' + e.message); }
+    const st = loadState(), ref = keyOf(repo, n), now = new Date().toISOString();
+    const s = st.prs[ref] = Object.assign({ repo, number: n }, st.prs[ref] || {});
+    if (patch.status === 'running' && s.status !== 'running') {
+      s.started = now;
+      const d = today(Date.now()); st.day = st.day.date === d ? st.day : { date: d, count: 0 }; st.day.count++;
+    }
+    if (patch.status === 'error') s.errors = (s.sha === patch.sha || !patch.sha ? s.errors || 0 : 0) + 1;
+    if (['done', 'error', 'outdated'].includes(patch.status)) s.finished = now;
+    Object.assign(s, patch);
+    writeJson(STATE, st);
+    out({ ref, state: s });
+  },
+  post(a) {
+    const [repo, n] = needRepoArgs(a);
+    const DRY = a.includes('--dry-run');
+    const cfg = loadCfg(), dir = workDir(repo, n), ref = keyOf(repo, n);
+    const r = readJson(path.join(dir, '.review', 'result.json'), null);
+    if (!r) die('no valid result.json in ' + path.join(dir, '.review'));
+    if (String(r.pr) !== String(n)) die(`result is for PR ${r.pr}, not ${n}`);
+    const pr = JSON.parse(gh(['pr', 'view', String(n), '-R', repo, '--json', 'headRefOid,author,state']));
+    if (pr.state !== 'OPEN') die('PR is ' + pr.state);
+    if (pr.author.login === me() || (cfg.skip_authors || []).includes(pr.author.login)) die('author ' + pr.author.login + ' is skipped');
+    if (r.sha !== pr.headRefOid) die(`PR moved: reviewed ${String(r.sha).slice(0, 7)}, head is ${pr.headRefOid.slice(0, 7)} — re-review first`);
+    const st = loadState(), s = st.prs[ref] = Object.assign({ repo, number: n }, st.prs[ref] || {});
+    const posted = new Set(s.posted || []);
+    const { blocking, toPost, held } = plan(r, cfg, posted);
+    const text = (f) => `**${String(f.severity).toLowerCase()}: ${f.title}**\n\n${String(f.body || '').trim()}`;
+    const res = { ref, sha: r.sha.slice(0, 7), verdict: r.verdict, posted: 0, held, already: blocking.length - toPost.length, action: 'none' };
+    if (toPost.length && cfg.post_comments !== false) {
+      const inline = toPost.filter((f) => f.file && Number.isInteger(+f.line) && +f.line > 0);
+      const loose = toPost.filter((f) => !inline.includes(f));
+      const review = (comments, bodyItems) => ({
+        commit_id: r.sha, event: 'COMMENT',
+        body: bodyItems.length ? bodyItems.map((f) => (f.file ? `\`${f.file}${f.line ? ':' + f.line : ''}\` ` : '') + text(f)).join('\n\n---\n\n')
+          : `${toPost.length} issue${toPost.length > 1 ? 's' : ''} to look at before merge, see the inline comments.`,
+        comments: comments.map((f) => ({ path: f.file, line: +f.line, side: 'RIGHT', body: text(f) })),
+      });
+      res.action = 'comment';
+      if (DRY) res.dry_run = review(inline, loose);
+      else {
+        let url;
+        try { url = JSON.parse(gh(['api', '-X', 'POST', `repos/${repo}/pulls/${n}/reviews`, '--input', '-'], JSON.stringify(review(inline, loose)))).html_url; }
+        catch (_) {   // a line outside the diff -> 422: everything into the review body
+          url = JSON.parse(gh(['api', '-X', 'POST', `repos/${repo}/pulls/${n}/reviews`, '--input', '-'], JSON.stringify(review([], toPost)))).html_url;
+          res.inline_failed = true;
+        }
+        res.url = url; res.posted = toPost.length;
+        toPost.forEach((f) => posted.add(fingerprint(f)));
+      }
+    } else if (toPost.length) res.action = 'report only (post_comments is false)';
+    else res.action = blocking.length ? 'none (already posted)' : 'nothing blocking — ready to approve on your word';
+    if (!DRY) {
+      s.posted = [...posted];
+      s.last_post = { at: new Date().toISOString(), sha: r.sha, action: res.action, url: res.url || null };
+      writeJson(STATE, st);
+      log(`${ref} ${res.action}${res.posted ? ` (${res.posted})` : ''}${res.url ? ' ' + res.url : ''}`);
+    }
+    out(res);
+  },
+  ready() {
+    const cfg = loadCfg(), st = loadState(), list = [];
+    for (const [ref, s] of Object.entries(st.prs)) {
+      if (s.status !== 'done' || s.approved) continue;
+      const r = readJson(path.join(workDir(s.repo, s.number), '.review', 'result.json'), null);
+      if (!r || plan(r, cfg, new Set()).blocking.length) continue;
+      let pr; try { pr = JSON.parse(gh(['pr', 'view', String(s.number), '-R', s.repo, '--json', 'state,headRefOid,isDraft,reviewDecision,statusCheckRollup,title,url'])); } catch (_) { continue; }
+      if (pr.state !== 'OPEN' || pr.headRefOid !== r.sha) continue;
+      const checks = pr.statusCheckRollup || [];
+      const bad = checks.filter((c) => ['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED'].includes(c.conclusion || c.state)).length;
+      const pending = checks.filter((c) => !(c.conclusion || c.state) || ['PENDING', 'IN_PROGRESS', 'QUEUED', 'EXPECTED'].includes(c.status || c.state)).length;
+      list.push({ ref, title: pr.title, url: pr.url, ci: bad ? `${bad} failing` : pending ? `${pending} pending` : 'green',
+        decision: pr.reviewDecision, needs_human: (r.needs_human || []).length, rollout: (r.rollout || []).length });
+    }
+    out(list);
+  },
+  approve(a) {
+    const [repo, n] = needRepoArgs(a);
+    const force = a.includes('--force'), cfg = loadCfg(), ref = keyOf(repo, n), st = loadState(), s = st.prs[ref] || {};
+    const pr = JSON.parse(gh(['pr', 'view', String(n), '-R', repo, '--json', 'state,headRefOid,author']));
+    if (pr.state !== 'OPEN') die('PR is ' + pr.state);
+    if (pr.author.login === me()) die('cannot approve your own PR');
+    if (!force && s.sha !== pr.headRefOid) die(`new commits since the review (reviewed ${String(s.sha || 'nothing').slice(0, 7)}, head ${pr.headRefOid.slice(0, 7)}) — re-review, or --force`);
+    const args = ['pr', 'review', String(n), '-R', repo, '--approve'];
+    if (cfg.approve_body) args.push('--body', cfg.approve_body);
+    gh(args);
+    s.approved = { at: new Date().toISOString(), sha: pr.headRefOid };
+    st.prs[ref] = Object.assign({ repo, number: n }, s);
+    writeJson(STATE, st);
+    log(`${ref} approved (${pr.headRefOid.slice(0, 7)})`);
+    out({ ref, approved: true, sha: pr.headRefOid.slice(0, 7) });
+  },
+  status() {
+    const st = loadState();
+    for (const [ref, s] of Object.entries(st.prs)) {
+      if (s.status === 'baseline') continue;
+      console.log([ref, s.status, s.verdict || '', (s.findings || []).length + ' findings', s.approved ? 'approved' : '', (s.last_post && s.last_post.url) || ''].filter(Boolean).join(' · '));
+    }
+  },
+};
+
+if (require.main === module) {
+  const [c, ...rest] = process.argv.slice(2);
+  if (!cmd[c]) { console.error('usage: pr-watch init|repos|scan|prepare|mark|post|ready|approve|status'); process.exit(2); }
+  try { cmd[c](rest); } catch (e) { die(String((e.stderr && String(e.stderr).trim()) || e.message).split('\n').slice(0, 3).join(' ')); }
+}
+
+module.exports = { parseRemote, decide, plan, fingerprint, keyOf, DEFAULTS };
