@@ -40,3 +40,4 @@ site/deploy.sh
 
 # words that must never reach the public repo, one regex per line (tests/private-words.test.js)
 .private-words
+.playwright-mcp/
