@@ -52,11 +52,18 @@ function isPrompt(e) {
 // The tick runs every 15 s and tails EVERY session; without this cache that means re-reading
 // up to TAIL_BYTES per transcript (~30 MB of sync reads + JSON parsing) per tick, which stalls
 // the whole server for seconds. Unchanged files reuse the cached last uuid instead.
-const TAIL_CACHE = new Map();      // token-independent: file -> {size, uuid, result}
+const TAIL_CACHE = new Map();      // token-independent: file -> {size, result} (result null: nothing to read)
+const TAIL_CACHE_MAX = 500;
+function remember(file, size, result) {
+  TAIL_CACHE.delete(file); TAIL_CACHE.set(file, { size, result });
+  while (TAIL_CACHE.size > TAIL_CACHE_MAX) TAIL_CACHE.delete(TAIL_CACHE.keys().next().value);
+  return result;
+}
 function tail(file) {
   let st; try { st = fs.statSync(file); } catch (_) { return null; }
   const cached = TAIL_CACHE.get(file);
-  if (cached && cached.size === st.size) return cached.uuid ? cached : null;
+  // the cached tail itself, not the cache entry: a triage retried after a failed run needs its text
+  if (cached && cached.size === st.size) return cached.result;
   let buf = '';
   try {
     const fd = fs.openSync(file, 'r'), n = Math.min(st.size, TAIL_BYTES), b = Buffer.alloc(n);
@@ -68,7 +75,7 @@ function tail(file) {
     let e; try { e = JSON.parse(l); } catch (_) { continue; }
     if ((e.type === 'user' || e.type === 'assistant') && !e.isSidechain && e.uuid) ents.push(e);
   }
-  if (!ents.length) return null;
+  if (!ents.length) return remember(file, st.size, null);
   let from = 0;
   for (let i = ents.length - 1; i >= 0; i--) if (ents[i].type === 'user' && isPrompt(ents[i])) { from = i; break; }
   const lines = [], tools = {};
@@ -90,9 +97,7 @@ function tail(file) {
   let text = lines.join('\n\n');
   if (text.length > 12000) text = text.slice(0, 2500) + '\n\n[…]\n\n' + text.slice(-9000);
   const toolLine = Object.keys(tools).map((k) => k + '×' + tools[k]).join(', ');
-  const res = { uuid: ents[ents.length - 1].uuid, text, tools: toolLine, errors };
-  TAIL_CACHE.set(file, { size: st.size, uuid: res.uuid, result: res });
-  return res;
+  return remember(file, st.size, { uuid: ents[ents.length - 1].uuid, text, tools: toolLine, errors });
 }
 
 // ---------- the model run: no tools, JSON out ----------
