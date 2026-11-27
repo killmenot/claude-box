@@ -781,9 +781,59 @@ function scanAgentLine(l, agents) {
 const READERS = new Map();         // cid -> backward reader state (LRU, see cacheTouch)
 function readerFor(chat) {
   return cacheTouch(READERS, chat.cid, () =>
-    ({ file: null, front: 0, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false }));
+    ({ file: null, front: 0, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false, capped: false }));
 }
-// Consume one more window moving toward the file start, until the collected tail holds at least
+// One transcript line -> times/agents/extras and, for a real turn, an item in acc.win. Shared by
+// the reader and the seek walker. acc.win is filled newest-first (the walk goes backward); the
+// callers reverse it once at the end.
+function consumeLine(l, acc) {
+  const t = UUID_TS.exec(l);
+  if (t) { const ms = Date.parse(t[2]); if (ms) acc.times.set(t[1], ms); }
+  if (acc.agents && !l.includes('"isSidechain":true')) scanAgentLine(l, acc.agents);
+  if (!l.startsWith('{')) return;
+  let e; try { e = JSON.parse(l); } catch (_) { return; }
+  if (e.type === 'system' && e.subtype === 'local_command' && !e.isSidechain) {
+    const c = String(e.content || '').replace(/<\/?local-command-std(out|err)>/g, '').trim();
+    if (c) {
+      const k = e.parentUuid || '';
+      acc.extras.set(k, [{ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: c }].concat(acc.extras.get(k) || []));
+    }
+  }
+  if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain) return;
+  if (!e.uuid || !e.message) return;
+  acc.win.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null, meta: !!e.isMeta,
+    from: (e.origin && e.origin.name) || undefined });
+}
+// Start offset of the transcript line that ends right before byte offset `pos` (`pos` is itself a
+// line start). Probes backward in growing chunks, so a line of any length costs one small probe —
+// window-cut parsing never dropped whole (huge) tool-result lines this way.
+function prevLineStart(f, pos) {
+  let probe = 16384;
+  while (true) {
+    const to = pos - 1;                                  // the '\n' that ends the previous line
+    if (to <= 0) return 0;
+    const from = Math.max(0, to - probe);
+    const fd = fs.openSync(f, 'r');
+    let buf;
+    try { buf = Buffer.alloc(to - from); fs.readSync(fd, buf, 0, buf.length, from); }
+    finally { fs.closeSync(fd); }
+    const idx = buf.lastIndexOf('\n');
+    if (idx >= 0) return from + idx + 1;
+    if (from === 0) return 0;
+    probe *= 8;
+    if (probe > 32 * 1024 * 1024) return 0;              // hopeless gap: treat as the file start
+  }
+}
+function readLineText(f, s, e) {
+  if (e <= s) return '';
+  if (e - s > 8 * 1024 * 1024) return null;              // a single message over 8 MB: not worth a page
+  const fd = fs.openSync(f, 'r');
+  let buf;
+  try { buf = Buffer.alloc(e - s); fs.readSync(fd, buf, 0, buf.length, s); }
+  finally { fs.closeSync(fd); }
+  return buf.toString('utf8');
+}
+// Consume more lines moving toward the file start, until the collected tail holds at least
 // minPrompts user prompts (or the file start is reached).
 // Agent-heavy sessions go megabytes without a single user prompt, so counting prompts alone made
 // the reader consume whole transcripts (hundreds of MB of JS objects -> OOM-ish heap). Reading is
@@ -794,44 +844,23 @@ function extendBack(entry, chat, minPrompts) {
   const f = transcriptPath(chat.cid, chat.cwd);
   if (!f) { entry.atStart = true; return; }
   let size; try { size = fs.statSync(f).size; } catch (_) { entry.atStart = true; return; }
-  if (entry.file !== f) { Object.assign(entry, { file: f, size, front: size, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false, read: 0 }); }
+  if (entry.file !== f) { Object.assign(entry, { file: f, size, front: size, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false, capped: false, read: 0 }); }
   const prompts = () => entry.items.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
   const enough = () => prompts() >= minPrompts || entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES;
+  const win = [];
   while (!entry.atStart && !enough()) {
-    const end = entry.front, start = Math.max(0, end - WINDOW);
-    const fd = fs.openSync(f, 'r');
-    let buf;
-    try { buf = Buffer.alloc(end - start); fs.readSync(fd, buf, 0, buf.length, start); }
-    finally { fs.closeSync(fd); }
-    const lines = buf.toString('utf8').split('\n');
-    if (start > 0) lines.shift();             // the line cut at the window head: its head lives in the previous window
-    const win = [], winExtras = new Map();
-    for (const l of lines) {
-      const t = UUID_TS.exec(l);
-      if (t) { const ms = Date.parse(t[2]); if (ms) entry.times.set(t[1], ms); }
-      if (!l.includes('"isSidechain":true')) scanAgentLine(l, entry.agents);
-      if (!l.startsWith('{')) continue;
-      let e; try { e = JSON.parse(l); } catch (_) { continue; }
-      if (e.type === 'system' && e.subtype === 'local_command' && !e.isSidechain) {
-        const c = String(e.content || '').replace(/<\/?local-command-std(out|err)>/g, '').trim();
-        if (c) { const k = e.parentUuid || ''; if (!winExtras.has(k)) winExtras.set(k, []);
-          winExtras.get(k).push({ type: 'system', subtype: 'local_command_output', uuid: e.uuid, content: c }); }
-      }
-      // isMeta stays: scheduled/cron turns are real user turns and must be visible
-      if ((e.type !== 'user' && e.type !== 'assistant') || e.isSidechain) continue;
-      if (!e.uuid || !e.message) continue;
-      win.push({ type: e.type, uuid: e.uuid, message: e.message, parent_tool_use_id: e.parent_tool_use_id || null, meta: !!e.isMeta,
-        from: (e.origin && e.origin.name) || undefined });
-    }
-    entry.items = win.concat(entry.items);
-    for (const [k, v] of winExtras) {
-      if (!entry.extras.has(k)) entry.extras.set(k, []);
-      entry.extras.set(k, v.concat(entry.extras.get(k) || []));
-    }
-    entry.front = start;
-    entry.read += end - start;
-    if (start <= 0 || entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES) entry.atStart = true;
+    if (entry.front <= 0) { entry.atStart = true; break; }
+    const prev = prevLineStart(f, entry.front);
+    const l = readLineText(f, prev, entry.front);
+    entry.read += entry.front - prev;
+    consumeLine(l || '', { times: entry.times, agents: entry.agents, extras: entry.extras, win });
+    entry.front = prev;
+    if (prev <= 0) entry.atStart = true;      // isMeta stays: scheduled/cron turns are real user turns and must be visible
   }
+  // a byte/item cap (not the file start) stopped the walk: deeper history exists, the next
+  // "earlier" request for a boundary behind the cap goes to seekPage
+  if (!entry.atStart && (entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES)) entry.capped = true;
+  if (win.length) { win.reverse(); entry.items = win.concat(entry.items); }
 }
 // The page the browser shows: the last PAGE_PROMPTS prompts counting from the end, or — with
 // `beforeUuid` — the PAGE_PROMPTS prompts right before that message (the "earlier" page).
@@ -847,14 +876,18 @@ function tailPage(chat, beforeUuid) {
   extendBack(entry, chat, PAGE_PROMPTS);
   let end = beforeUuid ? entry.items.findIndex((i) => i.uuid === beforeUuid) : entry.items.length;
   let guard = 0;
-  while (beforeUuid && end < 0 && !entry.atStart && guard++ < 8) {   // the boundary page was evicted: read further back
+  while (beforeUuid && end < 0 && !entry.atStart && !entry.capped && guard++ < 8) {   // the boundary page was evicted: read further back
     extendBack(entry, chat, PAGE_PROMPTS * (guard + 1));
     end = entry.items.findIndex((i) => i.uuid === beforeUuid);
   }
-  if (beforeUuid && end < 0) return { items: [], more: 0, lost: true };
+  if (beforeUuid && end < 0) return seekPage(chat, beforeUuid);
   const stop = end < 0 ? entry.items.length : end;
   const start = pageStart(entry.items, stop);
   const page = entry.items.slice(start, stop);
+  // a capped window may have the boundary but not a full page under it; seekPage is independent
+  // of the reader's byte/item caps and fills the page from the file itself
+  if (beforeUuid && entry.capped &&
+      page.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0) < PAGE_PROMPTS) return seekPage(chat, beforeUuid);
   if (!beforeUuid) {                                                 // streamed this turn, transcript may lag
     const seen = new Set(page.map((i) => i.uuid));
     for (const m of chat.turn) if (!seen.has(m.uuid))
@@ -868,6 +901,66 @@ function tailPage(chat, beforeUuid) {
     for (const x of entry.extras.get(i.uuid) || []) out.push(x);
   }
   return { items: out, more: start > 0 ? start : (!entry.atStart ? 1 : 0) };
+}
+// Long sessions outgrow the reader's bounded window (READER_MAX_*): an "earlier" request whose
+// boundary lies deeper than the cap used to come back empty (lost) and the UI stopped loading
+// history. For that case seek the boundary in the raw file instead: find its line by a plain-text
+// needle (safe: inside JSON strings the quotes are escaped, so the needle only matches a real
+// "uuid" field), then parse just the one page backward from it. Nothing is kept in the LRU — the
+// raw scan costs no JSON parsing, and the parse is bounded by the page itself.
+const SEEK_MAX_BYTES = 64 * 1024 * 1024;
+function seekPage(chat, beforeUuid) {
+  const lost = { items: [], more: 0, lost: true };
+  const f = transcriptPath(chat.cid, chat.cwd);
+  if (!f || !beforeUuid) return lost;
+  let size; try { size = fs.statSync(f).size; } catch (_) { return lost; }
+  // phase 1: locate the boundary line's start offset (backward, window by window, a small carry
+  // covers a needle that straddles a window edge)
+  const NEEDLE = `"uuid":"${beforeUuid}"`;
+  const carryLen = NEEDLE.length - 1;
+  let at = -1, front = size, scanned = 0, carry = '';
+  while (front > 0 && scanned < SEEK_MAX_BYTES) {
+    const start = Math.max(0, front - WINDOW);
+    const fd = fs.openSync(f, 'r');
+    let buf;
+    try { buf = Buffer.alloc(front - start); fs.readSync(fd, buf, 0, buf.length, start); }
+    finally { fs.closeSync(fd); }
+    scanned += buf.length;
+    const text = buf.toString('utf8') + carry;
+    carry = carryLen ? buf.toString('utf8', 0, Math.min(carryLen, buf.length)) : '';
+    const idx = text.indexOf(NEEDLE);
+    if (idx >= 0 && idx < buf.length + carryLen) {
+      const lineStart = text.lastIndexOf('\n', idx) + 1;
+      at = start + lineStart;                    // carry only extends past the window end
+      if (lineStart >= buf.length) at = -1;      // match landed fully in the carry: look deeper
+      else break;
+    }
+    front = start;
+  }
+  if (at < 0) return lost;
+  // phase 2: parse backward from the boundary line until the page holds PAGE_PROMPTS prompts
+  const times = new Map(), extras = new Map(), win = [];
+  let back = at, read = 0, atStart = false;
+  while (!atStart && read < SEEK_MAX_BYTES && win.length < READER_MAX_ITEMS) {
+    const prev = prevLineStart(f, back);
+    read += back - prev;
+    const l = readLineText(f, prev, back);
+    if (l !== null) consumeLine(l, { times, agents: null, extras, win });
+    back = prev;
+    if (prev <= 0) atStart = true;
+    else if (win.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0) >= PAGE_PROMPTS) break;
+  }
+  win.reverse();                                             // the walk went backward: restore file order
+  const start = pageStart(win, win.length);
+  const page = win.slice(start);
+  const out = [];
+  for (const i of page) {
+    if (i.type !== 'user' && i.type !== 'assistant') continue;
+    const ts = times.get(i.uuid) || 0;
+    out.push({ type: i.type, uuid: i.uuid, message: i.message, parent_tool_use_id: i.parent_tool_use_id || null, ts: ts || undefined });
+    for (const x of extras.get(i.uuid) || []) out.push(x);
+  }
+  return { items: out, more: start > 0 || !atStart ? 1 : 0 };
 }
 // ---------- one-shot shell runs (the "Run" button on code blocks) ----------
 // A fresh bash per run: real shell semantics ( pipes, env, builds) with a clean state and no

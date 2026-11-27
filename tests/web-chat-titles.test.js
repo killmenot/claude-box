@@ -132,3 +132,50 @@ test('tailPage: a prompt appended after the page was read shows up on reopen', (
   const prompts = pg.items.filter((i) => i.type === 'user').map((i) => i.message.content);
   assert.strictEqual(prompts[prompts.length - 1], 'prompt 31');
 });
+
+test('tailPage: boundary deeper than the reader cap -> seek finds the page (long session)', () => {
+  // a session whose history is over READER_MAX_BYTES (4 MB): 6 prompts, one huge tool line, more prompts.
+  // The tail reader stops inside the bulk; asking for a boundary behind it must still load.
+  const proj2 = path.join(tmp, '.claude', 'projects', '-w-big');
+  fs.mkdirSync(proj2, { recursive: true });
+  const cid2 = 'c-big';
+  const file2 = path.join(proj2, cid2 + '.jsonl');
+  const chat2 = { cid: cid2, cwd: '/w/big', turn: [] };
+  const ln = (u, t, role, content) => `{"uuid":"${u}","sessionId":"${cid2}","timestamp":"2026-01-01T00:00:00Z","type":"${t}","message":{"role":"${role}","content":${content}}}\n`;
+  let body2 = '';
+  for (let i = 1; i <= 6; i++) {
+    body2 += ln('P' + i, 'user', 'user', JSON.stringify('big prompt ' + i));
+    body2 += ln('A' + i, 'assistant', 'assistant', JSON.stringify([{ type: 'text', text: 'big answer ' + i }]));
+  }
+  body2 += `{"uuid":"bulk","sessionId":"${cid2}","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"${'x'.repeat(5 * 1024 * 1024)}"}]}}\n`;
+  for (let i = 7; i <= 30; i++) {
+    body2 += ln('P' + i, 'user', 'user', JSON.stringify('big prompt ' + i));
+    body2 += ln('A' + i, 'assistant', 'assistant', JSON.stringify([{ type: 'text', text: 'big answer ' + i }]));
+  }
+  fs.writeFileSync(file2, body2);
+  const pg = wc.tailPage(chat2, 'P8');                     // 5 prompts before P8 (P3..P7): behind the bulk,
+  assert.ok(!pg.lost, 'seek behind the reader cap returned lost');   // so the 4 MB reader cap is hit first
+  const prompts = pg.items.filter((i) => i.type === 'user').map((i) => i.message.content);
+  assert.deepStrictEqual(prompts, ['big prompt 3', 'big prompt 4', 'big prompt 5', 'big prompt 6', 'big prompt 7']);
+  assert.ok(pg.items.some((i) => i.type === 'assistant' && i.message.content[0].text.startsWith('x')), 'the bulk line vanished from the page');
+  assert.ok(!pg.items.some((i) => i.uuid === 'P12'), 'the boundary message itself leaked into the page');
+  assert.ok(pg.more > 0);
+  // paging continues from the seeked page and terminates at the file start
+  let cur = pg, pages = 0, seen = prompts;
+  while (cur.more > 0 && pages < 8) {
+    const b = cur.items.find((i) => i.type === 'user');
+    cur = wc.tailPage(chat2, b.uuid); pages++;
+    seen = seen.concat(cur.items.filter((i) => i.type === 'user').map((i) => i.message.content));
+  }
+  assert.strictEqual(cur.more, 0, 'seek paging did not terminate at the file start');
+  assert.ok(seen.includes('big prompt 1'), 'the first prompt never reached a seeked page');
+});
+
+test('tailPage: seek of an unknown uuid stays lost', () => {
+  const proj2 = path.join(tmp, '.claude', 'projects', '-w-big');
+  const chat3 = { cid: 'c-big', cwd: '/w/big', turn: [] };   // same session: reader cap already hit
+  const pg = wc.tailPage(chat3, 'nope-' + 'z'.repeat(40));
+  assert.strictEqual(pg.lost, true);
+  assert.deepStrictEqual(pg.items, []);
+  void proj2;
+});
