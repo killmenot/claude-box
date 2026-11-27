@@ -3242,8 +3242,17 @@ function userTextHtml(p, t, imgs, from){
   if(AGENT_MSG.test(t)){ agentMsg(p, t, from); return; }
   var voice=false;
   Object.keys(VOICE_NOTES).forEach(function(k){ var n=VOICE_NOTES[k]; if(!voice && t.indexOf(n)===0){ voice=true; t=t.slice(n.length).replace(/^\r?\n/,''); } });
+  var atts=(imgs||[]).slice();
+  // the harness's "[Image: source: <path>, …]" note: the picture itself lives in the box, so show
+  // it as an attachment (workspace/image serves any absolute path); a note without a path is noise and goes
+  t=t.replace(/\[Image: source: ([^\]\s][^\],]*?\.(?:png|jpe?g|gif|webp))[^\]]*\]/gi, function(_, f){
+    f=f.trim(); var u=imgSrc(f);
+    if(u) atts.push({ name: f.split('/').pop() || 'image', url: u });
+    return '';
+  });
+  t=t.replace(/^[ \t]*\[Image: [^\]]*\][ \t]*$/gm, '');
   // "[Attached files]" block appended by web-chat.js -> chips; inline images come in as imgs
-  var atts=(imgs||[]).slice(), am=/(?:^|\n\n)\[Attached files\]\n([\s\S]*)$/.exec(t);
+  var am=/(?:^|\n\n)\[Attached files\]\n([\s\S]*)$/.exec(t);
   if(am){
     var named=am[1].split('\n').map(function(l){ var m=/^- (.+?) \((.+), ([\d.]+ [KM]?B)\)$/.exec(l); return m?{name:m[2]}:null; }).filter(Boolean);
     // inline images are the listed image files, in list order; the rest become plain chips
