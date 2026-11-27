@@ -31,8 +31,10 @@ const DISPLAY = process.env.CB_BROWSER_DISPLAY || ':77';
 const CDP_PORT = parseInt(process.env.CB_BROWSER_CDP_PORT || '9333', 10);
 const SESSION_PORT = parseInt(process.env.CB_BROWSER_SESSION_PORT || '9334', 10);
 // The virtual screen is as big as a view may get; the VNC picture and the Chromium windows follow the
-// size of the Browser tab (resize()), so the tab shows the browser 1:1 with no black bars.
-const MAX = (process.env.CB_BROWSER_MAX || '3840x2160').split('x').map(Number);
+// size of the Browser tab (resize()), so the tab shows the browser 1:1 with no black bars. The cap
+// is generous (8K): a tall portrait window on a big monitor wants more height than 4K. Only the
+// clipped region streams, so the screen size costs nothing but its framebuffer (~130 MB at 8K).
+const MAX = (process.env.CB_BROWSER_MAX || '7680x4320').split('x').map(Number);
 const view = (() => { const v = (process.env.CB_BROWSER_SIZE || '1440x900').split('x').map(Number); return { w: v[0], h: v[1] }; })();
 const PROFILE = path.join(HOME, '.config', 'claude-box-browser');
 const DIR = process.env.CB_BROWSER_DIR || path.join(os.tmpdir(), `claude-box-browser-${process.getuid ? process.getuid() : 'u'}`);
