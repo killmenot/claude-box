@@ -1999,7 +1999,8 @@ setInterval(browserPill, 1500);
 // ---------- the context strip: the session's PRs, Slack threads and Jira issues ----------
 // One line while each kind has at most one; a line per kind once any has two. A click opens the
 // link in the Browser tab (a PR or issue in its own browser tab, Slack in one tab), or in a new tab
-// of this browser without --browser. x hides one for this session (kept in this browser).
+// of this browser without --browser. Ctrl+click opens it in a new tab of the system browser.
+// x hides one for this session (kept in this browser).
 var CTX_KIND={pr:{l:'PRs', i:'⎇'}, slack:{l:'Slack', i:'#'}, jira:{l:'Jira', i:'◆'}};
 function ctxHidden(p){ try{ return JSON.parse(ls('cb.ctxhide.'+(p.token||p.key))||'{}')||{}; }catch(e){ return {}; } }
 function ctxLoad(p){
@@ -2031,7 +2032,7 @@ function ctxChip(it){
     if(it.status) h+='<span class="t lab">'+esc(it.status)+'</span>';
     if(it.title) tip=it.key+': '+it.title;
   }
-  return '<span class="cchip" role="button" tabindex="0" data-curl="'+esc(it.url)+'" title="'+esc(tip)+'">'+h+'<button type="button" class="x" data-chide="'+esc(it.key)+'" title="Hide from this session" aria-label="Hide">×</button></span>';
+  return '<span class="cchip" role="button" tabindex="0" data-curl="'+esc(it.url)+'" title="'+esc(tip+'\nClick: open in the box browser · Ctrl+click: a new tab in your browser')+'">'+h+'<button type="button" class="x" data-chide="'+esc(it.key)+'" title="Hide from this session" aria-label="Hide">×</button></span>';
 }
 function ctxRender(){
   var bar=$('ctxbar'), p=PANES[ACTIVE];
@@ -2062,7 +2063,11 @@ var CTX_URL=/^https:\/\/(github\.com\/[^/]+\/[^/]+\/pull\/\d+|[\w-]+\.slack\.com
 $('ctxbar').addEventListener('click', function(e){
   var x=e.target.closest('[data-chide]'), p=PANES[ACTIVE];
   if(x && p){ e.stopPropagation(); var h=ctxHidden(p); h[x.dataset.chide]=1; ls('cb.ctxhide.'+(p.token||p.key), JSON.stringify(h)); ctxRender(); return; }
-  var c=e.target.closest('[data-curl]'); if(c) ctxOpen(c.dataset.curl);
+  var c=e.target.closest('[data-curl]');
+  if(c){
+    if(e.ctrlKey || e.metaKey){ window.open(c.dataset.curl, '_blank', 'noopener'); return; }   // Ctrl: the system browser, new tab
+    ctxOpen(c.dataset.curl);
+  }
 });
 $('ctxbar').addEventListener('keydown', function(e){ var c=e.target.closest('[data-curl]'); if(c && (e.key==='Enter'||e.key===' ')){ e.preventDefault(); ctxOpen(c.dataset.curl); } });
 // links to a PR, a Slack message or a Jira issue in the chat open in the box browser too
