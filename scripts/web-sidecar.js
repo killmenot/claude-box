@@ -455,15 +455,38 @@ const handler = (req, res) => {
       return;
     }
     if (path === '/delete' && req.method === 'POST') {
-      // remove a session from the dashboard (registry + cache + kill its tmux). POST only,
+      // remove a session from the dashboard: stop it (kill its tmux / chat process) and move its
+      // record to the trash, with its category so a restore puts it back there. POST only,
       // so a stray GET/prefetch can't wipe a session. Behind the authed() barrier.
       const q = req.url.split('?')[1] || '';
       const m = /(?:^|&)id=([^&]*)/.exec(q);
       if (!m) { try { res.writeHead(400, { 'content-type': 'application/json' }); res.end('{"ok":false}'); } catch (_) {} return; }
       const tok = safeDecode(m[1]);
       Promise.resolve(chat && chat.stopByToken(tok)).catch(() => {}).then(() => {
-        try { registry.remove(tok); json(res, 200, '{"ok":true}'); } catch (_) { json(res, 500, '{"ok":false}'); }
+        try { registry.remove(tok, { category: readCats().map[tok] || '' }); json(res, 200, '{"ok":true}'); }
+        catch (_) { json(res, 500, '{"ok":false}'); }
       });
+      return;
+    }
+    if (path === '/trash') {                     // deleted sessions, most recently deleted first
+      let rows; try { rows = registry.trash(); } catch (_) { json(res, 500, '[]'); return; }
+      json(res, 200, chat ? chat.decorate(rows) : rows);
+      return;
+    }
+    if ((path === '/trash/restore' || path === '/trash/purge') && req.method === 'POST') {
+      const m = /(?:^|&)id=([^&]*)/.exec(req.url.split('?')[1] || '');
+      if (!m) { json(res, 400, { ok: false }); return; }
+      const tok = safeDecode(m[1]);
+      try {
+        if (path === '/trash/purge') { const ok = registry.purge(tok); json(res, ok ? 200 : 404, { ok }); return; }
+        const rec = registry.untrash(tok);
+        if (!rec) { json(res, 404, { ok: false, error: 'not in the trash' }); return; }
+        const cats = readCats();                 // back into its category, if that still exists
+        if (rec.category && cats.cats.some((c) => c.id === rec.category)) {
+          cats.map[rec.token] = rec.category; writeCats(cats);
+        }
+        json(res, 200, { ok: true, token: rec.token });
+      } catch (e) { json(res, 500, { ok: false, error: String(e.message || e) }); }
       return;
     }
     if (path === '/search') {

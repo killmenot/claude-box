@@ -8,7 +8,10 @@
 //   upsert --claude-id <id> --cwd <p> --name <n> --state <s> --tmux <sess> [--title t] [--mode chat|console] -> token
 //   get <token>    -> JSON of the record (exit 1 if not found)
 //   list           -> JSON array, newest first, with a live flag
-//   delete <token> -> kill the session's tmux (only if it is provably this record's) + erase record and preview cache
+//   delete <token> -> kill the session's tmux (only if it is provably this record's), move the record to the trash
+//   trash          -> JSON array of deleted records, most recently deleted first
+//   untrash <token> -> move a deleted record back into the registry (its transcript was never touched)
+//   purge <token>  -> drop a deleted record for good (the transcript itself stays on disk)
 //   owns <token>   -> print the token's live tmux session name (exit 1 if it has none)
 //   snapshot       -> save the tokens of the currently running sessions (restored after a restart)
 //   restore        -> after a container restart, recreate those sessions with claude --resume
@@ -20,20 +23,32 @@ const { execFileSync, spawnSync } = require('child_process');
 const HOME = process.env.HOME || '/home/node';
 const REG = process.env.CLAUDE_WEB_REGISTRY || path.join(HOME, '.claude', 'web-sessions.json');
 const LIVE = process.env.CLAUDE_WEB_LIVE || path.join(path.dirname(REG), 'web-live-sessions.json');
+// Deleted records: {<token>: {...record, deletedAt, category?}}. Kept TRASH_DAYS, then dropped.
+const TRASH = process.env.CLAUDE_WEB_TRASH || path.join(path.dirname(REG), 'web-sessions-trash.json');
+const UNDEAD_SEC = 10;
+const TRASH_DAYS = (() => { const n = parseFloat(process.env.CLAUDE_WEB_TRASH_DAYS || '30'); return n > 0 ? n : 30; })();
 const PREVIEWS = path.join(HOME, '.claude', 'web-previews');
 
 const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 // ---------- storage ----------
-function read() {
-  try { const o = JSON.parse(fs.readFileSync(REG, 'utf8')); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; }
+function readJson(file) {
+  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; }
   catch (_) { return {}; }
 }
-function write(obj) {
-  fs.mkdirSync(path.dirname(REG), { recursive: true });
-  const tmp = `${REG}.${process.pid}.tmp`;
+function writeJson(file, obj) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(obj));
-  fs.renameSync(tmp, REG);                       // atomic: readers never see a half-written file
+  fs.renameSync(tmp, file);                      // atomic: readers never see a half-written file
+}
+const read = () => readJson(REG);
+const write = (obj) => writeJson(REG, obj);
+// The trash without its expired entries (older than TRASH_DAYS).
+function readTrash() {
+  const t = readJson(TRASH), cut = Math.floor(Date.now() / 1000) - TRASH_DAYS * 86400;
+  for (const k of Object.keys(t)) if (!t[k] || (t[k].deletedAt || 0) < cut) delete t[k];
+  return t;
 }
 // Read-modify-write under a lock: the hook (one process per Claude event) and the sidecar write
 // concurrently. mkdir is atomic; a lock older than 10s is a crashed holder and is broken.
@@ -89,8 +104,17 @@ function upsert(f) {
   if (!f || !f.cid) throw new Error('upsert: claude id required');
   return locked(() => {
     const reg = read();
-    const token = Object.keys(reg).find((t) => reg[t].claudeSessionId === f.cid) || genToken();
-    const prev = reg[token] || {};
+    let token = Object.keys(reg).find((t) => reg[t].claudeSessionId === f.cid);
+    let prev = token ? reg[token] : null;
+    if (!token) {
+      // a deleted session that is running again (resumed by hand) leaves the trash under its old token
+      const trash = readTrash(), tt = Object.keys(trash).find((t) => trash[t].claudeSessionId === f.cid);
+      // ...but not the last hook / state event of the process that the delete itself just stopped
+      if (tt && Date.now() / 1000 - (trash[tt].deletedAt || 0) < UNDEAD_SEC) return '';
+      if (tt) { token = tt; prev = trash[tt]; delete trash[tt]; writeJson(TRASH, trash); }
+    }
+    token = token || genToken();
+    prev = prev || {};
     reg[token] = {
       token, claudeSessionId: f.cid, cwd: f.cwd || '', name: f.name || '', state: f.state || '',
       tmuxSession: f.tmux || '',
@@ -120,15 +144,57 @@ function owns(token) {
   return rec && ownsSession(reg, tmuxSessions(), rec.tmuxSession, token) ? rec.tmuxSession : null;
 }
 
-function remove(token) {
+// Delete from the dashboard: stop the session and move its record to the trash. `extra` is kept
+// with it (the sidecar stores the session's category there, to put it back on restore).
+function remove(token, extra) {
   return locked(() => {
     const reg = read(), rec = reg[token];
     // only if the session is still THIS record's — a recycled name would kill a stranger's work
     if (rec && ownsSession(reg, tmuxSessions(), rec.tmuxSession, token)) tmux(['kill-session', '-t', '=' + rec.tmuxSession]);
+    if (rec) {
+      const trash = readTrash();
+      trash[token] = Object.assign({}, rec, extra || {}, { deletedAt: Math.floor(Date.now() / 1000) });
+      writeJson(TRASH, trash);
+    }
     delete reg[token];
     write(reg);
     try { fs.unlinkSync(path.join(PREVIEWS, token + '.ansi')); } catch (_) {}
     return true;
+  });
+}
+
+function trash() {
+  return Object.values(readTrash()).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+}
+
+// Put a deleted record back. It comes back as just used, so it lands among the recent sessions
+// rather than in the collapsed "Older" group. -> the restored record (with its stored extras), or null.
+function untrash(token) {
+  return locked(() => {
+    const t = readTrash(), rec = t[token];
+    if (!rec) return null;
+    delete t[token];
+    const reg = read();
+    // resumed meanwhile under a new token: that record stands, the trashed one just goes
+    const other = Object.values(reg).find((r) => r.claudeSessionId === rec.claudeSessionId);
+    if (!other) {
+      const r = Object.assign({}, rec, { state: '', lastActivity: Math.floor(Date.now() / 1000) });
+      delete r.deletedAt; delete r.category;
+      reg[token] = r;
+      write(reg);
+    }
+    writeJson(TRASH, t);
+    return Object.assign({}, other || reg[token], { category: rec.category || '' });
+  });
+}
+
+function purge(token) {
+  return locked(() => {
+    const t = readTrash();
+    const had = token in t;
+    delete t[token];
+    writeJson(TRASH, t);
+    return had;
   });
 }
 
@@ -176,7 +242,7 @@ function restore(log = (s) => console.error(s)) {
   }
 }
 
-module.exports = { REG, upsert, get, list, owns, remove, snapshot, restore };
+module.exports = { REG, TRASH, upsert, get, list, owns, remove, trash, untrash, purge, snapshot, restore };
 
 // ---------- CLI ----------
 if (require.main === module) {
@@ -196,10 +262,13 @@ if (require.main === module) {
       case 'get': { const r = get(a[0] || ''); if (!r) process.exit(1); out(JSON.stringify(r) + '\n'); break; }
       case 'list': out(JSON.stringify(list()) + '\n'); break;
       case 'delete': if (!a[0]) { console.error('delete: token required'); process.exit(2); } remove(a[0]); out('ok'); break;
+      case 'trash': out(JSON.stringify(trash()) + '\n'); break;
+      case 'untrash': { if (!a[0]) { console.error('untrash: token required'); process.exit(2); } const r = untrash(a[0]); if (!r) process.exit(1); out(r.token); break; }
+      case 'purge': if (!a[0]) { console.error('purge: token required'); process.exit(2); } if (!purge(a[0])) process.exit(1); out('ok'); break;
       case 'owns': { if (!a[0]) { console.error('owns: token required'); process.exit(2); } const s = owns(a[0]); if (!s) process.exit(1); out(s); break; }
       case 'snapshot': snapshot(); break;
       case 'restore': restore(); break;
-      default: console.error('usage: claude-web-registry upsert|get|list|delete|owns|snapshot|restore'); process.exit(2);
+      default: console.error('usage: claude-web-registry upsert|get|list|delete|trash|untrash|purge|owns|snapshot|restore'); process.exit(2);
     }
   } catch (e) { console.error('claude-web-registry:', e.message); process.exit(1); }
 }

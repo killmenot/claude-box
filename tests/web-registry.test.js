@@ -93,3 +93,80 @@ test('preview: live capture is cached and served after the session dies', { skip
   assert.match(dead.ansi, /line-15/);
   assert.deepStrictEqual(await preview('', false), { ansi: '', live: false, ts: 0 });
 });
+
+// ---------- trash: delete moves a record aside, restore brings it back under the same token ----------
+const ageTrash = (tok, sec) => {                         // pretend the delete happened `sec` seconds ago
+  const t = JSON.parse(fs.readFileSync(reg.TRASH, 'utf8'));
+  t[tok].deletedAt -= sec; fs.writeFileSync(reg.TRASH, JSON.stringify(t));
+};
+
+test('trash: delete moves the record (with its category) to the trash; restore puts it back', () => {
+  fs.writeFileSync(reg.REG, '{}'); fs.writeFileSync(reg.TRASH, '{}');
+  const tok = reg.upsert({ cid: 'c-tr', cwd: '/w/alerts', name: 'web-3', state: 'done', title: 'Alerts' });
+  reg.remove(tok, { category: 'cat-1' });
+  assert.strictEqual(reg.get(tok), null);
+  assert.ok(!reg.list().some((r) => r.token === tok));
+  const [t] = reg.trash();
+  assert.strictEqual(t.token, tok);
+  assert.strictEqual(t.title, 'Alerts');
+  assert.strictEqual(t.category, 'cat-1');
+  assert.ok(t.deletedAt > 0);
+
+  const r = reg.untrash(tok);
+  assert.strictEqual(r.token, tok);
+  assert.strictEqual(r.category, 'cat-1');
+  const back = reg.get(tok);
+  assert.strictEqual(back.claudeSessionId, 'c-tr');
+  assert.strictEqual(back.title, 'Alerts');
+  assert.ok(!('deletedAt' in back) && !('category' in back));
+  assert.ok(Date.now() / 1000 - back.lastActivity < 5);  // restored as just used: not in "Older"
+  assert.deepStrictEqual(reg.trash(), []);
+  assert.strictEqual(reg.untrash(tok), null);
+});
+
+test('trash: the stopped process\'s last hook does not resurrect it; a later resume does, same token', () => {
+  fs.writeFileSync(reg.REG, '{}'); fs.writeFileSync(reg.TRASH, '{}');
+  const tok = reg.upsert({ cid: 'c-res', cwd: '/w/a', title: 'Resume me' });
+  reg.remove(tok);
+  assert.strictEqual(reg.upsert({ cid: 'c-res', cwd: '/w/a', state: 'done' }), '');
+  assert.strictEqual(reg.get(tok), null);
+  assert.strictEqual(reg.trash().length, 1);
+
+  ageTrash(tok, 60);                                     // `claude --resume` by hand, a minute later
+  assert.strictEqual(reg.upsert({ cid: 'c-res', cwd: '/w/a', state: 'working' }), tok);
+  assert.strictEqual(reg.get(tok).title, 'Resume me');
+  assert.deepStrictEqual(reg.trash(), []);
+});
+
+test('trash: purge drops an entry; entries past the retention are gone; CLI', () => {
+  fs.writeFileSync(reg.REG, '{}'); fs.writeFileSync(reg.TRASH, '{}');
+  const a = reg.upsert({ cid: 'c-a', cwd: '/w' }), b = reg.upsert({ cid: 'c-b', cwd: '/w' });
+  reg.remove(a); reg.remove(b);
+  assert.strictEqual(reg.purge(a), true);
+  assert.strictEqual(reg.purge(a), false);
+  assert.deepStrictEqual(reg.trash().map((r) => r.token), [b]);
+  ageTrash(b, 31 * 86400);
+  assert.deepStrictEqual(reg.trash(), []);
+  assert.strictEqual(reg.untrash(b), null);
+
+  const cli = path.join(__dirname, '..', 'scripts', 'web-registry.js');
+  const run = (...a) => execFileSync(process.execPath, [cli, ...a], { encoding: 'utf8' });
+  const c = reg.upsert({ cid: 'c-cli', cwd: '/w' });
+  run('delete', c);
+  assert.deepStrictEqual(JSON.parse(run('trash')).map((r) => r.token), [c]);
+  assert.strictEqual(run('untrash', c), c);
+  assert.strictEqual(reg.get(c).claudeSessionId, 'c-cli');
+});
+
+test('trash: restoring a session already resumed under another token keeps that one', () => {
+  fs.writeFileSync(reg.REG, '{}'); fs.writeFileSync(reg.TRASH, '{}');
+  const old = reg.upsert({ cid: 'c-dup', cwd: '/w' });
+  reg.remove(old);
+  // a record for the same conversation written meanwhile (e.g. by an older hook build)
+  const reg0 = JSON.parse(fs.readFileSync(reg.REG, 'utf8'));
+  reg0.newtok = { token: 'newtok', claudeSessionId: 'c-dup', cwd: '/w', lastActivity: 1 };
+  fs.writeFileSync(reg.REG, JSON.stringify(reg0));
+  assert.strictEqual(reg.untrash(old).token, 'newtok');
+  assert.strictEqual(reg.get(old), null);
+  assert.deepStrictEqual(reg.trash(), []);
+});
