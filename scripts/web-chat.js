@@ -206,6 +206,7 @@ function rememberModels(list) {
 // Never with `resume`: a resumed process appends a cost-state record (zeroed totals) to the
 // session's transcript even when nothing is sent.
 async function withProbe(cwd, fn, ms = 30000) {
+  assertDir(cwd);
   await sdkReady;
   if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
   let stop = null, q = null;
@@ -215,6 +216,13 @@ async function withProbe(cwd, fn, ms = 30000) {
     q = sdk.query({ prompt: never, options: { cwd, systemPrompt: { type: 'preset', preset: 'claude_code' }, env: sessionEnv() } });
     return await fn(q);
   } finally { clearTimeout(timer); if (stop) stop(); try { q && q.close(); } catch (_) {} }
+}
+// A missing cwd makes the claude spawn fail with ENOENT, which the SDK reports as a libc mismatch
+// ("native binary … exists but failed to launch"). Say what is actually wrong instead.
+function assertDir(cwd) {
+  let ok = false;
+  try { ok = !cwd || fs.statSync(cwd).isDirectory(); } catch (_) {}
+  if (!ok) throw new Error(`The session's folder ${cwd} no longer exists. Create it again (mkdir -p ${cwd}) to continue the session; its history is kept.`);
 }
 // Ask a claude process for the lists without sending it anything: it starts, answers
 // supportedCommands() / supportedModels() (~1 s) and is closed again.
@@ -296,6 +304,7 @@ class Chat {
     if (this.wire) this.wire.update({ token: this.token, cid: this.cid });
   }
   async start() {
+    assertDir(this.cwd);
     await sdkReady;
     if (!sdk) throw new Error(loadError || 'Agent SDK not loaded');
     if (this.cid && await tmuxAlive(this.name)) throw new Error('This session is open in the console. Switch to chat first (it closes the console).');
