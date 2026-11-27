@@ -453,9 +453,9 @@ WEB_TUNNEL="$([ "$tunnel" = 1 ] && echo 1 || true)" dc up -d ${recreate[@]+"${re
 # from https://<address>:PORT/cert (or import manually). One question, then remembered in .env
 # (CERT_TRUST=1 / no); re-runs only when the certificate itself is replaced.
 echo
-if [ -f home/web-certs/web.crt ] && interactive && [ "$(env_get CERT_TRUST)" != no ]; then
+if [ -f "$box_home/web-certs/web.crt" ] && interactive && [ "$(env_get CERT_TRUST)" != no ]; then
   dst="${CA_CERT_DST:-/usr/local/share/ca-certificates/claude-box.crt}"
-  if ! cmp -s home/web-certs/web.crt "$dst" 2>/dev/null; then
+  if ! cmp -s "$box_home/web-certs/web.crt" "$dst" 2>/dev/null; then
     try=0
     if [ "$(env_get CERT_TRUST)" = 1 ]; then try=1
     else
@@ -464,7 +464,7 @@ if [ -f home/web-certs/web.crt ] && interactive && [ "$(env_get CERT_TRUST)" != 
     fi
     if [ "$try" = 1 ]; then
       echo "  Installing the certificate into the system trust store (sudo)…"
-      if sudo install -m 644 home/web-certs/web.crt "$dst" \
+      if sudo install -m 644 "$box_home/web-certs/web.crt" "$dst" \
          && sudo update-ca-certificates >/dev/null 2>&1; then
         echo "  Trusted. Local browsers: reload the page — the warning is gone (Firefox: import manually)."
       else
