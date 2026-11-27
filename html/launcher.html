@@ -1569,7 +1569,7 @@ var VOICE=(function(){
   var mobile=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   var lang=ls('cb.voiceLang')||'ru-RU';
   var V={supported:!!SR, active:null, rec:null, base:'', finals:'', want:false};
-  var SILENCE_MS=10000, quiet=null;   // no speech this long -> the mic turns itself off
+  var SILENCE_MS=60000, quiet=null;   // no speech this long -> the mic turns itself off
   function hush(){ clearTimeout(quiet); quiet=V.active?setTimeout(function(){ V.stop(true); }, SILENCE_MS):null; }
   V.lang=function(){ return lang; };
   V.label=function(){ for(var i=0;i<LANGS.length;i++) if(LANGS[i][0]===lang) return LANGS[i][1]; return lang; };
