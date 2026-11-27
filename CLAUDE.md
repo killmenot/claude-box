@@ -55,5 +55,10 @@ Guidance for Claude Code (and other agents) working in this repository.
 
 ## Secrets & safety
 
+- **This repo is public: no real work data in it** — no employer or company names, real issue keys,
+  Slack or Jira links and ids, colleagues' names or work e-mail addresses, in code, tests, docs or
+  commit messages. Examples use placeholders (`acme`, `PROJ-123`, `example.com`).
+  `tests/private-words.test.js` checks this against a local list (`~/.config/claude-box/private-words`).
+
 - Never read, print, or commit `.env` or `certs/*.crt` (they are gitignored and
   permission-denied). `.env.example` is the public template — keep it English and secret-free.

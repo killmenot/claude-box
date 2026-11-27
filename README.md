@@ -158,6 +158,10 @@ bash tests/run.sh --linux       # every suite on Linux, inside the test box's im
 
 The Linux run is where the web server really lives (tmux, `/proc`); the host run checks `./claude-box`
 against the host's own tools (BSD userland on macOS). Suites that need a tool the host lacks (tmux) skip.
+`tests/private-words.test.js` keeps private words (an employer's name, issue keys, Slack ids) out of
+the repo: it fails when a tracked file, or a commit not pushed yet, matches a regex from a list that
+stays on your machine (`~/.config/claude-box/private-words`, or a gitignored `.private-words`); without
+the list it skips.
 The suites on their own:
 
 ```bash
