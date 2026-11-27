@@ -4134,7 +4134,7 @@ function trashGroup(){
 }
 function loadTrash(){
   return fetch('trash').then(function(r){ return r.ok?r.json():null; }).then(function(rows){
-    if(!rows) return; TRASH=visibleRows(rows); renderList(); }).catch(function(){});
+    if(!rows) return; TRASH=rows.filter(function(s){ return !/^\/tmp\/claude-scratch/.test(s.cwd||''); }); renderList(); }).catch(function(){});
 }
 function restoreSession(tok){
   fetch('trash/restore?id='+encodeURIComponent(tok),{method:'POST'})
@@ -4146,12 +4146,16 @@ function restoreSession(tok){
       return Promise.all([loadCats(), tick(true), loadTrash()]).then(function(){ openSession(o.token); });
     }).catch(function(){ alert('Failed to restore session'); });
 }
+// for good: what would be lost is listed first (sessions/inspect knows trashed sessions too)
 function purgeSession(tok){
   var s=TRASH.filter(function(x){ return x.token===tok; })[0];
-  if(!confirm('Delete "'+(s?dispName(s):tok)+'" forever? It can no longer be restored from the launcher.')) return;
-  fetch('trash/purge?id='+encodeURIComponent(tok),{method:'POST'})
-    .then(function(){ TRASH=TRASH.filter(function(x){ return x.token!==tok; }); renderList(true); loadTrash(); })
-    .catch(function(){ alert('Failed to delete session'); });
+  sessInfo(tok).then(function(o){
+    if(o.error) throw new Error(o.error);
+    if(!confirm('Delete "'+(s?dispName(s):tok)+'" forever? Its conversation is deleted for good.'+lossText(o))) return;
+    return fetch('trash/purge?id='+encodeURIComponent(tok),{method:'POST'})
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(x){ if(!r.ok) throw new Error(x.error||'failed'); }); })
+      .then(function(){ TRASH=TRASH.filter(function(x){ return x.token!==tok; }); renderList(true); loadTrash(); });
+  }).catch(function(e){ alert('Delete failed: '+e.message); });
 }
 function isClosed(id, defClosed){ return (id in CLOSED) ? CLOSED[id] : !!defClosed; }
 function group(id, label, tip, arr, defClosed, catId){
@@ -4502,14 +4506,20 @@ function sessRestore(tok){
   sessOp('restore', tok).then(function(){ tick(); setTimeout(function(){ openSession(tok); }, 700); if($('setd').classList.contains('on') && SETCUR==='storage') showSetSec('storage'); })
     .catch(function(e){ alert('Restore failed: '+e.message); });
 }
+// Delete moves a session to the Trash: it stops, leaves the list, and nothing on disk changes.
+// Its folder and conversation go only with "Delete forever" in the Trash (purgeSession).
 function delSession(tok){
-  sessInfo(tok).then(function(o){
-    if(o.error) throw new Error(o.error);
-    var s=BYTOK[tok];
-    if(!confirm('Delete "'+sessName(tok)+'"? Its conversation is deleted for good.'+(s&&s.live?' It is running: it will be stopped.':'')+lossText(o))) return;
-    if(PANES[tok]) dropIframe(PANES[tok]);
-    return sessOp('remove', tok, true).then(function(){ sessGone(tok); if($('setd').classList.contains('on') && SETCUR==='storage') showSetSec('storage'); });
-  }).catch(function(e){ alert('Delete failed: '+e.message); });
+  var s=BYTOK[tok];
+  if(!confirm('Move "'+sessName(tok)+'" to the Trash?'+(s&&s.live?' It is running: it will be stopped.':'')+
+              '\n\nIts folder and conversation stay as they are. Restore it from the Trash at the bottom of the list (kept 30 days), or delete it there for good.')) return;
+  if(PANES[tok]) dropIframe(PANES[tok]);
+  fetch('delete?id='+encodeURIComponent(tok),{method:'POST'})
+    .then(function(r){ return r.ok?r.json():null; })
+    .then(function(o){
+      if(!(o&&o.ok)){ alert('Failed to delete session'); return; }
+      sessGone(tok); loadTrash();
+      if($('setd').classList.contains('on') && SETCUR==='storage') showSetSec('storage');
+    }).catch(function(){ alert('Failed to delete session'); });
 }
 
 // ======================= workspace page: a file manager over /workspace =======================

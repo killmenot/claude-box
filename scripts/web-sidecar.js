@@ -778,7 +778,11 @@ const handler = (req, res) => {
       if (!m) { json(res, 400, { ok: false }); return; }
       const tok = safeDecode(m[1]);
       try {
-        if (path === '/trash/purge') { const ok = registry.purge(tok); json(res, ok ? 200 : 404, { ok }); return; }
+        if (path === '/trash/purge') {          // for good: the folder and the conversation go too (web-archive.js)
+          archiveReady();
+          archive.remove(tok, true).then((r) => json(res, 200, r), (e) => json(res, 404, { ok: false, error: e.message }));
+          return;
+        }
         const rec = registry.untrash(tok);
         if (!rec) { json(res, 404, { ok: false, error: 'not in the trash' }); return; }
         const cats = readCats();                 // back into its category, if that still exists

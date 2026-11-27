@@ -4,8 +4,10 @@
 //   GET  /sessions/storage                 every session with its folder, the folder's size, archived or not
 //   POST /sessions/archive  {id, force}    the folder goes, the conversation stays (gzipped), restorable
 //   POST /sessions/restore  {id}           the conversation back in place, a task's worktrees cut again
-//   POST /sessions/remove   {id, force}    the folder and the conversation go
+//   POST /sessions/remove   {id, force}    the folder and the conversation go, for good
 // Without force, archive/remove only report what would be lost ({confirm: true, issues}) and do nothing.
+// Delete in the UI moves a session to the trash first (web-registry.js: nothing on disk changes);
+// remove is "Delete forever", for a session in the trash as well as a listed one.
 //
 // Whose folder may go: only a session's own folder under /workspace/tasks/<x> or /workspace/tmp/<x>,
 // and only when no other (not archived) session works in it. A project folder (/workspace/<repo>) and
@@ -71,8 +73,15 @@ async function losses(f) {
   }
   return issues;
 }
+// a listed session, or one in the trash (trashed: true)
+function recordOf(token, all) {
+  const rec = all.find((r) => r.token === token);
+  if (rec) return rec;
+  const t = deps.registry.trash ? deps.registry.trash().find((r) => r.token === token) : null;
+  return t ? Object.assign({}, t, { trashed: true }) : null;
+}
 async function inspect(token) {
-  const all = deps.registry.list(), rec = all.find((r) => r.token === token);
+  const all = deps.registry.list(), rec = recordOf(token, all);
   if (!rec) throw new Error('no such session');
   const f = rec.archived ? null : folderOf(rec.cwd);
   const shared = f ? sharedWith(rec, f, all) : [];
@@ -150,7 +159,8 @@ async function remove(token, force) {
   const t = rec.claudeSessionId && deps.transcriptPath(rec.claudeSessionId, rec.cwd);
   if (t) { try { fs.rmSync(t, { force: true }); } catch (_) {} }
   dropLeftovers(rec.claudeSessionId);
-  deps.registry.remove(token);
+  if (!rec.trashed) deps.registry.remove(token);     // off the list (and its tmux stopped)...
+  if (deps.registry.purge) deps.registry.purge(token);   // ...and out of the trash: nothing to restore
   return { ok: true, freed: info.size };
 }
 

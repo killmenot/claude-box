@@ -113,7 +113,11 @@ session's own folder (a task's worktrees go through the task archive, so the bra
 `/workspace/repos`; a temp folder is deleted) and gzips the conversation into
 `home/.claude/web-archive/`. Archived sessions sit in the closed **Archived** group at the bottom of the
 sidebar; a click or **Restore…** brings the conversation back and makes the folder again. **Delete…**
-removes the session, its conversation and checkpoints, and its own folder. Only a folder under
+moves the session to the **Trash** at the bottom of the sidebar: it stops and leaves the list, and
+nothing on disk changes. From the Trash, ↺ restores it (into its category; an archived one comes back
+archived), and ✕ **deletes it forever**: the session, its conversation and checkpoints, and its own
+folder. The Trash keeps a session 30 days (`CLAUDE_WEB_TRASH_DAYS`); after that only its entry is
+dropped, its files stay where they are. Only a folder under
 `/workspace/tasks/` or `/workspace/tmp/` that no other session uses is ever removed, never a project
 folder; when work would be lost (uncommitted changes, commits on no remote, files of a temp folder) the
 dialog lists it and asks first. Nothing is archived or deleted automatically. **Settings → Storage**

@@ -18,14 +18,15 @@ process.env.GIT_CONFIG_NOSYSTEM = '1';
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const a = require('../scripts/web-archive.js');
 
-const reg = {}, tasksCalls = [];
+const reg = {}, trash = {}, tasksCalls = [];
 const T = path.join(HOME, '.claude', 'projects', 'p');
 fs.mkdirSync(T, { recursive: true });
 const transcript = (cid) => path.join(T, cid + '.jsonl');
 a.init({
   registry: { list: () => Object.values(reg).map((r) => Object.assign({}, r)), get: (t) => reg[t] || null,
     patch: (t, f) => { for (const [k, v] of Object.entries(f)) { if (v === null) delete reg[t][k]; else reg[t][k] = v; } return reg[t]; },
-    remove: (t) => { delete reg[t]; } },
+    remove: (t) => { trash[t] = Object.assign({}, reg[t], { deletedAt: 1 }); delete reg[t]; },
+    trash: () => Object.values(trash).map((r) => Object.assign({}, r)), purge: (t) => { const had = !!trash[t]; delete trash[t]; return had; } },
   tasks: { archive: async (slug) => { tasksCalls.push('archive ' + slug); return { archived: true }; },
     reopen: async (slug) => { tasksCalls.push('reopen ' + slug); }, forget: (slug) => { tasksCalls.push('forget ' + slug); } },
   transcriptPath: (cid) => (fs.existsSync(transcript(cid)) ? transcript(cid) : null),
@@ -86,6 +87,7 @@ test('a task folder goes through the task archive (branches kept); delete remove
   assert.deepStrictEqual(tasksCalls, ['archive proj-7', 'reopen proj-7']);
   await a.remove('t1', true);
   assert.ok(!reg.t1, 'record gone');
+  assert.ok(!trash.t1, 'not left in the trash either');
   assert.ok(!fs.existsSync(transcript('cid-7')), 'conversation gone');
   assert.ok(!fs.existsSync(path.join(HOME, '.claude', 'file-history', 'cid-7')), 'checkpoints gone');
   assert.ok(tasksCalls.includes('forget proj-7'));
@@ -100,4 +102,21 @@ test('a session in a project folder: delete keeps the folder', async () => {
   await a.remove('p1', true);
   assert.ok(fs.existsSync(path.join(d, 'keep.txt')), 'project folder untouched');
   assert.ok(!fs.existsSync(transcript('cid-p')));
+});
+
+test('Delete forever from the trash: the folder and the conversation go, the trash entry too', async () => {
+  const d = path.join(WS, 'tmp', 'scratch-9');
+  fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(path.join(d, 'notes.txt'), 'x');
+  session('x1', d, 'cid-9');
+  trash.x1 = Object.assign({}, reg.x1, { deletedAt: 1 }); delete reg.x1;      // Delete: moved to the trash
+  assert.ok(fs.existsSync(d) && fs.existsSync(transcript('cid-9')), 'the trash changes nothing on disk');
+  const info = await a.inspect('x1');
+  assert.strictEqual(info.folder.dir, d);
+  assert.ok(info.issues.some((i) => /deleted, not kept/.test(i)));
+  const r = await a.remove('x1', false);
+  assert.strictEqual(r.confirm, true, 'losses are confirmed first');
+  await a.remove('x1', true);
+  assert.ok(!fs.existsSync(d), 'folder gone');
+  assert.ok(!fs.existsSync(transcript('cid-9')), 'conversation gone');
+  assert.ok(!trash.x1, 'trash entry gone');
 });
