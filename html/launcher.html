@@ -2041,6 +2041,19 @@ function ctxRender(){
   items=items.filter(function(it){ return !hid[it.key] && it.url; });
   if(!p || !items.length || INBOX.open){ bar.classList.add('hidden'); bar.innerHTML=''; bar.dataset.sig=''; return; }
   var by={pr:[], slack:[], jira:[]}; items.forEach(function(it){ if(by[it.kind]) by[it.kind].push(it); });
+  // PRs by how much they want attention: changes requested -> review needed -> failed CI -> other
+  // open -> drafts -> merged/closed last. Newer first inside a class.
+  function rank(it){
+    if(it.state==='merged'||it.state==='closed') return 50;
+    if(it.state==='draft') return 40;
+    if(it.review==='changes') return 10;
+    if(it.review==='review') return 20;
+    if(it.ci==='fail') return 30;
+    return 35;
+  }
+  ['pr','slack','jira'].forEach(function(k){
+    by[k].sort(function(a,b){ return rank(a)-rank(b) || (b.number||0)-(a.number||0); });
+  });
   var many=Object.keys(by).some(function(k){ return by[k].length>1; });
   var h='';
   if(!many) h='<div class="crow">'+['pr','slack','jira'].map(function(k){ return by[k].map(ctxChip).join(''); }).join('')+'</div>';
