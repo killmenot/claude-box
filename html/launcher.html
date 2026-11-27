@@ -947,7 +947,8 @@
   .ctxm .tip .h{font-weight:600;margin-bottom:3px}
   .ctxm .tip .r{display:flex;justify-content:space-between;gap:10px;font-variant-numeric:tabular-nums}
   .ctxm .tip .f{margin-top:4px;opacity:.75;font-family:var(--sans)}
-  .sendbtn{width:32px;height:32px;border-radius:50%;border:0;background:var(--ink);color:var(--panel);cursor:pointer;font-size:16px;display:inline-flex;align-items:center;justify-content:center}
+  .sendbtn{width:32px;height:32px;border-radius:50%;border:0;background:var(--ink);color:var(--panel);cursor:pointer;font-size:16px;display:inline-flex;align-items:center;justify-content:center;padding:0}
+  .sendbtn svg{width:14px;height:14px;display:block}
   .sendbtn:disabled{opacity:.3;cursor:default}
   /* voice input */
   .micbtn{width:32px;height:32px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--slate);
@@ -1674,7 +1675,7 @@ function buildChat(p){
     '<span class="stat"><i></i><span></span></span><button class="modelbtn hidden" type="button" title="Model for this session"></button><span class="ctxm hidden" tabindex="0" role="button" title="Context usage"></span><span class="barsp"></span>'+
     (VOICE.supported ? '<button class="langbtn" type="button" title="Voice input language"></button>'+
       '<button class="micbtn" type="button" title="Voice input"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>' : '')+
-    '<button class="sendbtn stopbtn hidden" type="button" title="Stop (Esc)">■</button>'+
+    '<button class="sendbtn stopbtn hidden" type="button" title="Stop (Esc)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>'+
     '<button class="sendbtn go" type="button" title="Send (Enter)" disabled>↑</button></div></div></div></div>';
   views.appendChild(c);
   p.el=c; p.log=c.querySelector('.log'); p.inner=c.querySelector('.inner'); p.inner.dataset.key=p.wire;
