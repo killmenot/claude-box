@@ -905,21 +905,27 @@ function extendBack(entry, chat, minPrompts) {
   if (!f) { entry.atStart = true; return; }
   let size; try { size = fs.statSync(f).size; } catch (_) { entry.atStart = true; return; }
   if (entry.file !== f) { Object.assign(entry, { file: f, size, front: size, items: [], extras: new Map(), times: new Map(), agents: new Map(), atStart: false, capped: false, read: 0 }); }
-  const prompts = () => entry.items.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
-  const enough = () => prompts() >= minPrompts || entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES;
+  // the lines of this call go to `win` (merged once at the end), so they count toward the page and
+  // the caps as they come: counting entry.items alone walked every first open to the 4 MB cap
   const win = [];
+  const have = entry.items.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
+  let winPrompts = 0;
+  const items = () => entry.items.length + win.length;
+  const enough = () => have + winPrompts >= minPrompts || items() >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES;
   while (!entry.atStart && !enough()) {
     if (entry.front <= 0) { entry.atStart = true; break; }
     const prev = prevLineStart(f, entry.front);
     const l = readLineText(f, prev, entry.front);
     entry.read += entry.front - prev;
+    const n = win.length;
     consumeLine(l || '', { times: entry.times, agents: entry.agents, extras: entry.extras, win });
+    if (win.length > n && isPrompt(win[win.length - 1])) winPrompts++;
     entry.front = prev;
     if (prev <= 0) entry.atStart = true;      // isMeta stays: scheduled/cron turns are real user turns and must be visible
   }
   // a byte/item cap (not the file start) stopped the walk: deeper history exists, the next
   // "earlier" request for a boundary behind the cap goes to seekPage
-  if (!entry.atStart && (entry.items.length >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES)) entry.capped = true;
+  if (!entry.atStart && (items() >= READER_MAX_ITEMS || entry.read >= READER_MAX_BYTES)) entry.capped = true;
   if (win.length) { win.reverse(); entry.items = win.concat(entry.items); }
 }
 // The page the browser shows: the last PAGE_PROMPTS prompts counting from the end, or — with
@@ -934,11 +940,19 @@ function tailPage(chat, beforeUuid) {
     if (size !== entry.size) entry.file = null;
   }
   extendBack(entry, chat, PAGE_PROMPTS);
-  let end = beforeUuid ? entry.items.findIndex((i) => i.uuid === beforeUuid) : entry.items.length;
+  const count = (arr) => arr.reduce((n, i) => n + (isPrompt(i) ? 1 : 0), 0);
+  const at = () => entry.items.findIndex((i) => i.uuid === beforeUuid);
+  let end = beforeUuid ? at() : entry.items.length;
   let guard = 0;
   while (beforeUuid && end < 0 && !entry.atStart && !entry.capped && guard++ < 8) {   // the boundary page was evicted: read further back
-    extendBack(entry, chat, PAGE_PROMPTS * (guard + 1));
-    end = entry.items.findIndex((i) => i.uuid === beforeUuid);
+    extendBack(entry, chat, count(entry.items) + PAGE_PROMPTS * (guard + 1));
+    end = at();
+  }
+  // the reader stops as soon as it holds a page, so the boundary may sit at its very front:
+  // read the page that goes under it
+  if (beforeUuid && end >= 0 && !entry.atStart && !entry.capped) {
+    const under = count(entry.items.slice(0, end));
+    if (under < PAGE_PROMPTS) { extendBack(entry, chat, count(entry.items) + PAGE_PROMPTS - under); end = at(); }
   }
   if (beforeUuid && end < 0) return seekPage(chat, beforeUuid);
   const stop = end < 0 ? entry.items.length : end;
@@ -976,9 +990,10 @@ function seekPage(chat, beforeUuid) {
   let size; try { size = fs.statSync(f).size; } catch (_) { return lost; }
   // phase 1: locate the boundary line's start offset (backward, window by window, a small carry
   // covers a needle that straddles a window edge)
-  const NEEDLE = `"uuid":"${beforeUuid}"`;
-  const carryLen = NEEDLE.length - 1;
-  let at = -1, front = size, scanned = 0, carry = '';
+  // The search runs on the raw bytes: a decoded window's string index is not a byte offset once
+  // the text holds non-ASCII (Cyrillic, emoji), and a wrong offset dropped messages off the page.
+  const NEEDLE = Buffer.from(`"uuid":"${beforeUuid}"`);
+  let at = -1, front = size, scanned = 0, carry = Buffer.alloc(0);
   while (front > 0 && scanned < SEEK_MAX_BYTES) {
     const start = Math.max(0, front - WINDOW);
     const fd = fs.openSync(f, 'r');
@@ -986,15 +1001,11 @@ function seekPage(chat, beforeUuid) {
     try { buf = Buffer.alloc(front - start); fs.readSync(fd, buf, 0, buf.length, start); }
     finally { fs.closeSync(fd); }
     scanned += buf.length;
-    const text = buf.toString('utf8') + carry;
-    carry = carryLen ? buf.toString('utf8', 0, Math.min(carryLen, buf.length)) : '';
-    const idx = text.indexOf(NEEDLE);
-    if (idx >= 0 && idx < buf.length + carryLen) {
-      const lineStart = text.lastIndexOf('\n', idx) + 1;
-      at = start + lineStart;                    // carry only extends past the window end
-      if (lineStart >= buf.length) at = -1;      // match landed fully in the carry: look deeper
-      else break;
-    }
+    const hay = carry.length ? Buffer.concat([buf, carry]) : buf;   // carry: the later window's head
+    const idx = hay.indexOf(NEEDLE);
+    // a match that starts in the carry lies wholly in the later window, which was searched already
+    if (idx >= 0 && idx < buf.length) { at = prevLineStart(f, start + idx + 1); break; }   // its line's start
+    carry = buf.subarray(0, Math.min(NEEDLE.length - 1, buf.length));
     front = start;
   }
   if (at < 0) return lost;
