@@ -39,6 +39,24 @@ test('sessionTitles: bounded cold scan finds tail titles, offsets persisted', as
   assert.strictEqual(t2.custom, 'Renamed');
 });
 
+test('sessionTitles: a small transcript is not re-read on every call', () => {
+  const sid = 'c-small', f = path.join(proj, sid + '.jsonl');
+  // many ai-title lines, as a long session has: one decode per match made this quadratic
+  fs.writeFileSync(f, Array.from({ length: 300 }, (_, i) => `{"type":"ai-title","aiTitle":"Title ${i}"}\n` + filler).join(''));
+  const reads = [], orig = fs.readSync;
+  fs.readSync = function (fd, buf, off, len, pos) { reads.push([pos, len]); return orig.apply(fs, arguments); };
+  try {
+    assert.strictEqual(wc.sessionTitles(sid, '/w/x').ai, 'Title 299');
+    const size = fs.statSync(f).size;
+    assert.strictEqual(wc.sessionTitles(sid, '/w/x').ai, 'Title 299');
+    assert.strictEqual(reads.length, 1, 'an unchanged file is not read again');
+    fs.appendFileSync(f, `{"type":"ai-title","aiTitle":"Later"}\n`);
+    assert.strictEqual(wc.sessionTitles(sid, '/w/x').ai, 'Later');
+    assert.strictEqual(reads.length, 2);
+    assert.ok(reads[1][0] >= size - 1024, 'an append is read from the last offset, not from byte 0');
+  } finally { fs.readSync = orig; }
+});
+
 test('transcriptExtras: incremental across repeated calls and appends', () => {
   fs.writeFileSync(file, filler.repeat(600) +
     `{"uuid":"u1","timestamp":"2026-11-24T10:00:00Z","type":"system","subtype":"local_command","parentUuid":"p1","content":"<local-command-stdout>hi</local-command-stdout>"}\n`);

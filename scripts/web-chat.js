@@ -1008,20 +1008,20 @@ function sessionTitles(cid, cwd) {
       const regions = [];
       if (t.size === 0 && st.size > TITLE_COLD_HEAD + TITLE_COLD_TAIL) {        // cold, huge: head + tail
         regions.push([0, TITLE_COLD_HEAD], [st.size - TITLE_COLD_TAIL, st.size]);
-        t.size = st.size; t.partial = '';
       } else {
-        const start = Math.max(0, t.size - 1024) - (t.partial ? t.partial.length : 0);  // overlap: a line cut last time
-        regions.push([Math.max(0, start), st.size]);
+        regions.push([Math.max(0, t.size - 1024), st.size]);                     // overlap: a line cut last time
       }
       for (const [from, to] of regions) {
         const buf = Buffer.alloc(to - from); fs.readSync(fd, buf, 0, buf.length, from);
-        let m; TITLE_RE.lastIndex = 0;
-        while ((m = TITLE_RE.exec(buf.toString('utf8')))) {
+        // decode once: a decode in the loop condition re-reads the whole buffer for every match
+        const text = buf.toString('utf8'); let m; TITLE_RE.lastIndex = 0;
+        while ((m = TITLE_RE.exec(text))) {
           let v; try { v = JSON.parse('"' + m[2] + '"'); } catch (_) { v = m[2]; }
           if (m[1] === 'custom-title') t.custom = v; else t.ai = v;
         }
       }
     } finally { fs.closeSync(fd); }
+    t.size = st.size;                  // the next call reads only what is appended after this
     saveTitles();
   }
   return t;
