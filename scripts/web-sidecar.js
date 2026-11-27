@@ -360,9 +360,10 @@ const handler = (req, res) => {
         const act = o && o.act;
         if (req.method === 'POST' && act === 'start') {
           if (jiraLogin && jiraLogin.child) { json(res, 200, { url: jiraLogin.url || '' }); return; }
-          // Use `script -q -c` to run the command in a pseudo-terminal and capture output
-          // -q: quiet mode (no header/trailer), -c: command to run, -f: output to stdout
-          const child = spawn('script', ['-q', '-f', '-', '-c', 'claude mcp login atlassian'], {
+          // the login needs a TTY and `script` gives it one; the output still comes on script's stdout. The typescript file goes to
+          // /dev/null: util-linux takes "-" as a file NAME, which wrote the whole sign-in (with the
+          // pasted redirect URL) into a file "-" in the server's folder, /workspace.
+          const child = spawn('script', ['-q', '-c', 'claude mcp login atlassian', '/dev/null'], {
             stdio: ['pipe', 'pipe', 'pipe'],
             env: Object.assign({}, process.env, { TERM: 'xterm-256color' })
           });
