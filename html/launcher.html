@@ -143,6 +143,15 @@
   .row .del:hover{color:var(--err);background:var(--panel)}
   .row:hover .del{display:inline-block}
   .row:hover .when{display:none}
+  /* trash: deleted sessions, restored or dropped with the buttons on hover */
+  .row.trashed{cursor:default}
+  .row.trashed .nm{color:var(--slate)}
+  .row .tacts{display:none;flex:0 0 auto;gap:2px}
+  .row:hover .tacts{display:inline-flex}
+  .row .tacts button{background:transparent;border:0;border-radius:6px;color:var(--slate);font-size:12px;line-height:1;padding:4px 5px;cursor:pointer}
+  .row .tacts button:hover{background:var(--panel);color:var(--ink)}
+  .row .tacts button.purge:hover{color:var(--err)}
+  @media (hover:none){ .row.trashed .tacts{display:inline-flex} .row.trashed .when{display:none} }
   .empty{color:var(--slate);padding:14px 18px;font-size:13px}
   /* categories */
   .grp.cat{color:var(--ink)}
@@ -1181,6 +1190,7 @@ var MAXCONSOLES=8;     // console iframes kept warm (each holds a websocket + a 
 var newSeq=0;
 var CLOSED=JSON.parse(ls('cb.closed')||'{}');
 var CATS={cats:[], map:{}};   // sidebar categories (server-side, shared by all devices)
+var TRASH=[];                 // deleted sessions (server-side trash, see loadTrash)
 var DRAGGING=false;
 var views=$('views');
 
@@ -1358,7 +1368,8 @@ function buildChat(p){
     if(cmdKey(p,e)) return;
     if(e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); VOICE.stop(true); send(p); }
     else if(e.key==='Escape' && VOICE.active===p){ e.preventDefault(); VOICE.stop(true); }
-    else if(e.key==='Escape' && (p.state==='running'||p.state==='requires_action')){ e.preventDefault(); wsSend({op:'interrupt', key:p.wire}); }
+    // "starting" too: a resumed session can hang there for minutes waiting on the model
+    else if(e.key==='Escape' && (p.state==='running'||p.state==='starting'||p.state==='requires_action')){ e.preventDefault(); wsSend({op:'interrupt', key:p.wire}); }
   });
   p.go.addEventListener('click', function(){ VOICE.stop(true); send(p); });
   p.mic=c.querySelector('.micbtn'); p.voiceEl=c.querySelector('.voice'); p.langb=c.querySelector('.langbtn');
@@ -2920,7 +2931,8 @@ function renderList(force){
   var rows=ROWS, now=Date.now()/1000;
   var pend=Object.keys(PANES).filter(function(k){ return /^(new-|shell:)/.test(k); });
   var sig=JSON.stringify([ACTIVE,pend,CLOSED,CATS,rows.map(function(s){
-    return [s.token,statusClass(s),dispName(s),s.cwd,fmt(s.lastActivity),s.mode]; })]);
+    return [s.token,statusClass(s),dispName(s),s.cwd,fmt(s.lastActivity),s.mode]; }),
+    TRASH.map(function(s){ return [s.token,dispName(s),fmt(s.deletedAt)]; })]);
   if(!force && sig===LISTSIG) return; LISTSIG=sig;
   var catIds={}; CATS.cats.forEach(function(c){ catIds[c.id]=1; });
   var inCat={}, rest=[];
@@ -2951,9 +2963,48 @@ function renderList(force){
   if(old.length) h+=group('older', 'Older', 'inactive for more than 3 days', old, true);
   if(!rows.length && !pend.length) h+='<div class="empty">No sessions yet — start a new one above.</div>';
   h+='</div>';
+  if(TRASH.length) h+=trashGroup();
   $('list').innerHTML=h;
 }
 function mx(arr){ return Math.max.apply(null, arr.map(function(s){ return s.lastActivity||0; })); }
+// Deleted sessions: collapsed by default; each row can be restored (it comes back with its
+// history, in its category) or dropped for good. The server keeps them 30 days.
+function trashGroup(){
+  var closed=isClosed('trash', true);
+  var h='<div class="grp'+(closed?' closed':'')+'" data-grp="trash" title="Deleted sessions, kept for 30 days">'+
+        '<span class="chev">▾</span><span class="nm">Trash</span><span class="n">'+TRASH.length+'</span></div>';
+  if(closed) return h;
+  TRASH.forEach(function(s){
+    var dn=dispName(s);
+    h+='<div class="row stop trashed" data-trash="'+esc(s.token)+'" title="'+esc(dn+(s.cwd?'\n'+s.cwd:'')+'\nDeleted '+fmtAgo(s.deletedAt*1000))+'">'+
+       '<span class="dot"></span><span class="nm">'+esc(dn)+'</span>'+
+       '<span class="when">'+fmt(s.deletedAt)+'</span>'+
+       '<span class="tacts"><button type="button" data-act="restore" data-tok="'+esc(s.token)+'" title="Restore and open">↺</button>'+
+       '<button type="button" class="purge" data-act="purge" data-tok="'+esc(s.token)+'" title="Delete forever">✕</button></span></div>';
+  });
+  return h;
+}
+function loadTrash(){
+  return fetch('trash').then(function(r){ return r.ok?r.json():null; }).then(function(rows){
+    if(!rows) return; TRASH=visibleRows(rows); renderList(); }).catch(function(){});
+}
+function restoreSession(tok){
+  fetch('trash/restore?id='+encodeURIComponent(tok),{method:'POST'})
+    .then(function(r){ return r.json().catch(function(){ return null; }); })
+    .then(function(o){
+      if(!(o&&o.ok)){ alert('Failed to restore session'+(o&&o.error?': '+o.error:'')); loadTrash(); return; }
+      TRASH=TRASH.filter(function(s){ return s.token!==tok; });
+      // the session list first (openSession needs its cwd and mode), then open it
+      return Promise.all([loadCats(), tick(true), loadTrash()]).then(function(){ openSession(o.token); });
+    }).catch(function(){ alert('Failed to restore session'); });
+}
+function purgeSession(tok){
+  var s=TRASH.filter(function(x){ return x.token===tok; })[0];
+  if(!confirm('Delete "'+(s?dispName(s):tok)+'" forever? It can no longer be restored from the launcher.')) return;
+  fetch('trash/purge?id='+encodeURIComponent(tok),{method:'POST'})
+    .then(function(){ TRASH=TRASH.filter(function(x){ return x.token!==tok; }); renderList(true); loadTrash(); })
+    .catch(function(){ alert('Failed to delete session'); });
+}
 function isClosed(id, defClosed){ return (id in CLOSED) ? CLOSED[id] : !!defClosed; }
 function group(id, label, tip, arr, defClosed, catId){
   var closed = isClosed(id, defClosed);
@@ -3227,12 +3278,14 @@ $('list').addEventListener('click', function(e){
   var act=e.target.closest('[data-act]');
   if(act){ e.preventDefault(); e.stopPropagation();
     var a=act.getAttribute('data-act'), cid=act.getAttribute('data-cat');
-    if(a==='newcat') newCategory(); else if(a==='rencat') renameCategory(cid); else if(a==='delcat') deleteCategory(cid);
+    if(a==='restore') restoreSession(act.getAttribute('data-tok')); else if(a==='purge') purgeSession(act.getAttribute('data-tok'));
+    else if(a==='newcat') newCategory(); else if(a==='rencat') renameCategory(cid); else if(a==='delcat') deleteCategory(cid);
     else if(a==='catup') moveCategory(cid, -1); else if(a==='catdown') moveCategory(cid, 1);
     return; }
   var g=e.target.closest('.grp');
   if(g){ var id=g.getAttribute('data-grp'); CLOSED[id]=!g.classList.contains('closed');
-         ls('cb.closed', JSON.stringify(CLOSED)); renderList(true); return; }
+         ls('cb.closed', JSON.stringify(CLOSED)); renderList(true); if(id==='trash' && !CLOSED[id]) loadTrash(); return; }
+  if(e.target.closest('.trashed')) return;
   var row=e.target.closest('.row'); if(!row) return;
   if(e.metaKey||e.ctrlKey||e.shiftKey||e.button===1) return;     // open in a new tab
   e.preventDefault();
@@ -3243,7 +3296,8 @@ $('list').addEventListener('click', function(e){
 });
 function delSession(tok){
   var s=BYTOK[tok]; var dn=s?dispName(s):tok;
-  if(!confirm('Delete session "'+dn+'"?'+(s&&s.live?' It is running — it will be stopped.':''))) return;
+  if(!confirm('Move session "'+dn+'" to the Trash?'+(s&&s.live?' It is running — it will be stopped.':'')+
+              '\n\nYou can restore it from the Trash at the bottom of the list for 30 days.')) return;
   if(PANES[tok]) dropIframe(PANES[tok]);
   fetch('delete?id='+encodeURIComponent(tok),{method:'POST'})
     .then(function(r){ return r.ok?r.json():null; })
@@ -3252,7 +3306,7 @@ function delSession(tok){
       var was=(ACTIVE===tok); if(PANES[tok]) dropPane(PANES[tok]);
       if(CATS.map[tok]){ delete CATS.map[tok]; saveCats(); }
       if(was) showBlank();
-      tick();
+      tick(); loadTrash();
     }).catch(function(){ alert('Failed to delete session'); });
 }
 
@@ -4119,20 +4173,20 @@ if(window.speechSynthesis) speechSynthesis.onvoiceschanged=function(){};
 voiceBtn(); voicePoll(); setInterval(voicePoll, 3000); setInterval(voiceBtn, 30000);
 
 // ======================= polling =======================
-function tick(){
-  if(document.hidden) return;
+function tick(force){
+  if(document.hidden && !force) return Promise.resolve();
   followConsoles();
-  fetch('sessions').then(function(r){ return r.ok?r.json():null; }).then(function(rows){
+  return fetch('sessions').then(function(r){ return r.ok?r.json():null; }).then(function(rows){
     if(!rows) return;
     ROWS=visibleRows(rows); BYTOK={};
     ROWS.forEach(function(s){ BYTOK[s.token]=s; });
     renderList(); renderTop(); notifyTick(ROWS); if(rpOn()) rpRender();
   }).catch(function(){});
 }
-setInterval(tick, 2000);
+setInterval(function(){ tick(); }, 2000);
 setInterval(function(){ if(!document.hidden){ followConsoles(); if(PANES[ACTIVE]&&PANES[ACTIVE].mode==='console') renderTop(); } }, 800);
-document.addEventListener('visibilitychange', function(){ if(!document.hidden){ tick(); loadCats(); } });
-loadCats();
+document.addEventListener('visibilitychange', function(){ if(!document.hidden){ tick(); loadCats(); loadTrash(); } });
+loadCats(); loadTrash();
 $('menubtn').addEventListener('click', function(){ $('app').classList.toggle('drawer'); });
 $('scrim').addEventListener('click', function(){ $('app').classList.remove('drawer'); });
 
