@@ -94,6 +94,15 @@ check "setup: tilde path expanded and created"     "$HOME/code/projects" "$(val 
 check "setup: still a single PROJECT_DIR line"     1 "$(grep -c '^PROJECT_DIR=' "$repo/.env")"
 rm -f "$HOME/.gitconfig"
 
+# --- 3b. Docker access: root-equivalent, so asked and off unless the answer is y ---
+export DOCKER_SOCK_FILE="$tmp/dockersock"; touch "$tmp/dockersock"
+out="$(tty_run "\n\n" --setup)"
+check "docker: Enter keeps it off"                 0 "$(val DOCKER_ACCESS)"
+check "docker: the question says root-equivalent"  1 "$(printf '%s' "$out" | grep -c 'root-equivalent on this machine')"
+out="$(tty_run "\ny\n" --setup)"
+check "docker: y turns it on"                      1 "$(val DOCKER_ACCESS)"
+unset DOCKER_SOCK_FILE
+
 # --- 3c. certificate trust (sudo stubbed; CERT_TRUST preset in .env) ---
 rm "$repo/.env"; mkdir -p "$repo/home/web-certs"; echo dummy-cert > "$repo/home/web-certs/web.crt"
 export DOCKER_SOCK_FILE="$tmp/dockersock"; touch "$tmp/dockersock"
@@ -129,6 +138,7 @@ printf 'PROJECT_DIR=%s\nWEB_TERMINAL_PASSWORD=abcdefgh\n' "$repo/workspace" > "$
 bash "$repo/claude-box" --no-proxy </dev/null >/dev/null 2>&1
 check "--no-proxy: proxy overlay used"             1 "$(dlog | grep -c 'up -d web' | tr -d ' ')"
 check "--no-proxy: overlay file passed"            1 "$(dlog | grep -c 'docker-compose.no-proxy.yml up -d web')"
+check "no tty: Docker access never granted"        no "$([ "$(val DOCKER_ACCESS)" = 1 ] && echo yes || echo no)"
 : > "$tmp/docker.log"
 bash "$repo/claude-box" --stop </dev/null >/dev/null 2>&1
 check "--stop: removes the web container"          1 "$(dlog | grep -c 'compose -f docker-compose.yml rm -sf web')"

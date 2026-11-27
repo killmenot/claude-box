@@ -240,15 +240,20 @@ setup_docker() {
     env_set DOCKER_ACCESS 0
     return 0
   fi
+  # root-equivalent on the host: only a person says yes (Enter keeps it off); without a terminal it
+  # stays off and unanswered, so the next interactive start asks
+  interactive || return 0
   local a gid
   echo
-  a="$(ask 'Allow the box to run Docker containers on this host (dev env, test stacks)? [Y/n]' Y)"
+  echo "Docker: the box can run containers on this host (test stacks: redis, postgres…). That gives it"
+  echo "  the host's Docker socket, which is root-equivalent on this machine."
+  a="$(ask '  Allow it? [y/N]' n)"
   gid="$( [ -n "$sock" ] && stat -c %g "$sock" 2>/dev/null || echo 999)"
   case "$a" in
-    n|N) env_set DOCKER_ACCESS 0; env_set DOCKER_GID "$gid" ;;
-    *)   env_set DOCKER_ACCESS 1; env_set DOCKER_GID "$gid"
-         echo "  Note: Docker access is root-equivalent on this machine — grant only where everyone"
-         echo "  using the box is trusted. Test: docker ps inside the box." ;;
+    y|Y|yes|YES) env_set DOCKER_ACCESS 1; env_set DOCKER_GID "$gid"
+                 echo "  Docker access on. Grant it only where everyone using the box is trusted. Test: docker ps inside the box." ;;
+    *)           env_set DOCKER_ACCESS 0; env_set DOCKER_GID "$gid"
+                 echo "  Docker access off (./claude-box --docker turns it on)." ;;
   esac
 }
 
