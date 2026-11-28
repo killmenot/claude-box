@@ -31,6 +31,7 @@ Guidance for Claude Code (and other agents) working in this repository.
   `scripts/web-cdp-filter.js` — one session's DevTools view of the box browser: only its own window's tabs (web-browser.js serves it at `127.0.0.1:9334/s/<session>`).
   `scripts/web-context.js` — the session's context strip: PRs, Slack threads and Jira issues found in its transcript and task folder, with facts from gh and the Today snapshot (`/context`).
   `scripts/web-code.js` — the session's Code tab: code-server (only with `./claude-box --vscode`) on a private unix socket, proxied at `/code/`.
+  `scripts/web-plugins.js` — the box's plugin marketplaces / plugins from `PLUGIN_MARKETPLACES` / `PLUGINS`, synced via `claude plugin` at start and hourly.
   `scripts/claude-default.sh` — starts console `claude` with the default model and, in a task folder, its repos as `--add-dir`.
 - `claude-defaults/` — seeded into `~/.claude` at startup: `settings.json` (once), `mcp.json` (merged every start),
   `skills/<name>/` (copied every start unless the user deleted the `.claude-box-managed` marker), e.g. `skills/pr-review`.

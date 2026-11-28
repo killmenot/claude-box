@@ -276,6 +276,8 @@ async function run() {
   let apiToken = '';
   try { apiToken = writeApiToken(); } catch (e) { warn('api token:', e.message); }
   try { seedDefaults(); } catch (e) { warn('seeding defaults failed:', e.message); }
+  // PLUGIN_MARKETPLACES / PLUGINS from the env file: added and pulled in the background (web-plugins.js)
+  try { require('./web-plugins.js').start(env); } catch (e) { warn('plugins:', e.message); }
   setupTls();
   const tunnel = startTunnel();
 
