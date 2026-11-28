@@ -20,6 +20,8 @@ fi
 
 # Docker access (docker-compose.docker.yml): the box user joins the group that owns the socket, so
 # `docker` works without root whatever that group's id is on this host (991 in Colima, 999, ...).
+# This is the only place that group is set: the overlay has no group_add and nothing is stored in
+# the env file. --init-groups below picks the membership up from /etc/group.
 sock=/var/run/docker.sock
 if [ "$(id -u)" = "0" ] && [ -S "$sock" ]; then
   sg="$(stat -c %g "$sock")"

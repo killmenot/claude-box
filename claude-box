@@ -228,14 +228,20 @@ seed_git_identity() {
   return 0
 }
 
+# Docker access on the host (docker-compose.docker.yml): the one setting this writes is DOCKER_ACCESS
+# in the env file, 1 or 0. It is the remembered answer: once it is there, starts do not ask again
+# (--setup asks again; --docker / --no-docker change it). It is read from the env file only, so set
+# it there or with those flags. The socket's group id is not stored: the entrypoint (web-entry.sh)
+# looks it up at every start and adds the box user to that group, whatever this host calls it.
 setup_docker() {
   if [ "$force_setup" = 0 ] && [ -n "$(env_get DOCKER_ACCESS)" ]; then return 0; fi
   local sock="${DOCKER_SOCK_FILE:-/var/run/docker.sock}"
   # macOS (Colima, Docker Desktop): the daemon and its /var/run/docker.sock live inside a VM, which
   # is where compose resolves the mount; the Mac itself has no such file. A working `docker info`
-  # is the test there. The entrypoint gives the box user the socket's group at start either way.
+  # is the test there. (DOCKER_SOCK_FILE: another socket path, for the tests.)
   if [ ! -e "$sock" ] && [ "$(uname -s)" = Darwin ] && docker info >/dev/null 2>&1; then sock=''; fi
   if [ -n "$sock" ] && [ ! -e "$sock" ]; then
+    # nothing to grant; 0 is remembered so the question does not come back on every start
     echo "  Docker: no socket on this machine — containers on the host are not available."
     env_set DOCKER_ACCESS 0
     return 0
@@ -243,16 +249,15 @@ setup_docker() {
   # root-equivalent on the host: only a person says yes (Enter keeps it off); without a terminal it
   # stays off and unanswered, so the next interactive start asks
   interactive || return 0
-  local a gid
+  local a
   echo
   echo "Docker: the box can run containers on this host (test stacks: redis, postgres…). That gives it"
   echo "  the host's Docker socket, which is root-equivalent on this machine."
   a="$(ask '  Allow it? [y/N]' n)"
-  gid="$( [ -n "$sock" ] && stat -c %g "$sock" 2>/dev/null || echo 999)"
   case "$a" in
-    y|Y|yes|YES) env_set DOCKER_ACCESS 1; env_set DOCKER_GID "$gid"
+    y|Y|yes|YES) env_set DOCKER_ACCESS 1
                  echo "  Docker access on. Grant it only where everyone using the box is trusted. Test: docker ps inside the box." ;;
-    *)           env_set DOCKER_ACCESS 0; env_set DOCKER_GID "$gid"
+    *)           env_set DOCKER_ACCESS 0
                  echo "  Docker access off (./claude-box --docker turns it on)." ;;
   esac
 }

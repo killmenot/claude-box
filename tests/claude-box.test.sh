@@ -101,6 +101,7 @@ check "docker: Enter keeps it off"                 0 "$(val DOCKER_ACCESS)"
 check "docker: the question says root-equivalent"  1 "$(printf '%s' "$out" | grep -c 'root-equivalent on this machine')"
 out="$(tty_run "\ny\n" --setup)"
 check "docker: y turns it on"                      1 "$(val DOCKER_ACCESS)"
+check "docker: no group id stored (entrypoint's job)" 0 "$(grep -c '^DOCKER_GID=' "$repo/.env")"
 unset DOCKER_SOCK_FILE
 
 # --- 3c. certificate trust (sudo stubbed; CERT_TRUST preset in .env) ---
